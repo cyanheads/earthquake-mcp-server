@@ -1,6 +1,6 @@
 # earthquake-mcp-server - Directory Structure
 
-Generated on: 2026-05-29 05:00:22
+Generated on: 2026-06-02 14:10:09
 
 ```text
 earthquake-mcp-server/
@@ -28,12 +28,14 @@ earthquake-mcp-server/
 │   ├── build.ts
 │   ├── check-docs-sync.ts
 │   ├── check-framework-antipatterns.ts
+│   ├── check-skill-versions.ts
 │   ├── check-skills-sync.ts
 │   ├── clean.ts
 │   ├── devcheck.ts
 │   ├── lint-mcp.ts
 │   ├── lint-packaging.ts
 │   ├── list-skills.ts
+│   ├── release-github.ts
 │   ├── split-changelog.ts
 │   └── tree.ts
 ├── skills/
@@ -60,6 +62,8 @@ earthquake-mcp-server/
 │   ├── api-errors/
 │   │   └── SKILL.md
 │   ├── api-linter/
+│   │   └── SKILL.md
+│   ├── api-mirror/
 │   │   └── SKILL.md
 │   ├── api-services/
 │   │   ├── references/
@@ -88,6 +92,13 @@ earthquake-mcp-server/
 │   ├── git-wrapup/
 │   │   └── SKILL.md
 │   ├── maintenance/
+│   │   └── SKILL.md
+│   ├── orchestrations/
+│   │   ├── workflows/
+│   │   │   ├── field-test-fix.md
+│   │   │   ├── fix-wrapup-release.md
+│   │   │   ├── greenfield-build.md
+│   │   │   └── maintenance-release.md
 │   │   └── SKILL.md
 │   ├── polish-docs-meta/
 │   │   ├── references/
@@ -135,13 +146,20 @@ earthquake-mcp-server/
 ├── tests/
 │   ├── prompts/
 │   ├── resources/
+│   │   ├── earthquake-event-edge-cases.resource.test.ts
 │   │   ├── earthquake-event.resource.test.ts
+│   │   ├── earthquake-feed-edge-cases.resource.test.ts
 │   │   └── earthquake-feed.resource.test.ts
 │   └── tools/
+│       ├── earthquake-count-edge-cases.test.ts
 │       ├── earthquake-count.tool.test.ts
+│       ├── earthquake-get-event-edge-cases.test.ts
 │       ├── earthquake-get-event.tool.test.ts
+│       ├── earthquake-get-feed-edge-cases.test.ts
 │       ├── earthquake-get-feed.tool.test.ts
-│       └── earthquake-search.tool.test.ts
+│       ├── earthquake-search-edge-cases.test.ts
+│       ├── earthquake-search.tool.test.ts
+│       └── schemas.test.ts
 ├── .dockerignore
 ├── .env.example
 ├── .gitignore

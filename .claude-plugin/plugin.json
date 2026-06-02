@@ -11,7 +11,7 @@
   "mcpServers": {
     "@cyanheads/earthquake-mcp-server": {
       "command": "npx",
-      "args": ["-y", "@cyanheads/earthquake-mcp-server", "run", "start:stdio"],
+      "args": ["-y", "@cyanheads/earthquake-mcp-server"],
       "env": {
         "MCP_TRANSPORT_TYPE": "stdio"
       }
