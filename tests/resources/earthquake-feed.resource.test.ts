@@ -62,28 +62,32 @@ describe('earthquakeFeedResource', () => {
     expect(mockGetFeed).toHaveBeenCalledWith('2.5', 'day', ctx);
   });
 
-  it('throws not_found for invalid magnitude_tier', async () => {
+  it('throws validationError for invalid magnitude_tier', async () => {
+    const { McpError, JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
     const ctx = createMockContext();
     const params = earthquakeFeedResource.params.parse({
       magnitude_tier: 'invalid',
       time_window: 'day',
     });
 
-    await expect(earthquakeFeedResource.handler(params, ctx)).rejects.toThrow(
-      'Unknown magnitude tier',
-    );
+    await expect(earthquakeFeedResource.handler(params, ctx)).rejects.toMatchObject({
+      message: expect.stringContaining('Unknown magnitude tier'),
+      code: JsonRpcErrorCode.ValidationError,
+    } satisfies Partial<InstanceType<typeof McpError>>);
   });
 
-  it('throws not_found for invalid time_window', async () => {
+  it('throws validationError for invalid time_window', async () => {
+    const { McpError, JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
     const ctx = createMockContext();
     const params = earthquakeFeedResource.params.parse({
       magnitude_tier: '2.5',
       time_window: 'decade',
     });
 
-    await expect(earthquakeFeedResource.handler(params, ctx)).rejects.toThrow(
-      'Unknown time window',
-    );
+    await expect(earthquakeFeedResource.handler(params, ctx)).rejects.toMatchObject({
+      message: expect.stringContaining('Unknown time window'),
+      code: JsonRpcErrorCode.ValidationError,
+    } satisfies Partial<InstanceType<typeof McpError>>);
   });
 
   it('accepts all valid magnitude tiers', async () => {

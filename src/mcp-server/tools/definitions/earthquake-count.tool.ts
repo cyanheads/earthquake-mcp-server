@@ -4,7 +4,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getEmscService } from '@/services/emsc/emsc-service.js';
 import type { EarthquakeQueryParams } from '@/services/usgs/types.js';
 import { getUsgsService } from '@/services/usgs/usgs-service.js';
@@ -180,10 +180,20 @@ export const earthquakeCount = tool('earthquake_count', {
       ...(input.min_significance != null ? { minSignificance: input.min_significance } : {}),
     };
 
-    const result =
-      input.source === 'emsc'
-        ? await getEmscService().countEvents(params, ctx)
-        : await getUsgsService().countEvents(params, ctx);
+    let result: Awaited<ReturnType<typeof getUsgsService.prototype.countEvents>>;
+    try {
+      result =
+        input.source === 'emsc'
+          ? await getEmscService().countEvents(params, ctx)
+          : await getUsgsService().countEvents(params, ctx);
+    } catch (err) {
+      if (err instanceof McpError && err.code === JsonRpcErrorCode.ServiceUnavailable) {
+        throw ctx.fail('source_unavailable', err.message, {
+          ...ctx.recoveryFor('source_unavailable'),
+        });
+      }
+      throw err;
+    }
 
     ctx.log.info('Count completed', {
       source: input.source,

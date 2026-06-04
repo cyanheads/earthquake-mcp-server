@@ -74,6 +74,44 @@ describe('earthquakeCount — radius validation edge cases', () => {
   });
 });
 
+describe('earthquakeCount — source_unavailable error contract', () => {
+  let mockUsgsCount: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockUsgsCount = vi.fn();
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      countEvents: mockUsgsCount,
+    } as unknown as usgsModule.UsgsService);
+  });
+
+  it('converts ServiceUnavailable McpError to typed contract error with data.reason', async () => {
+    const { McpError, JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
+    mockUsgsCount.mockRejectedValue(
+      new McpError(JsonRpcErrorCode.ServiceUnavailable, 'USGS count endpoint is down', {}),
+    );
+
+    const ctx = createMockContext({ errors: earthquakeCount.errors });
+    const input = earthquakeCount.input.parse({ min_magnitude: 5.0 });
+    await expect(earthquakeCount.handler(input, ctx)).rejects.toMatchObject({
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      data: { reason: 'source_unavailable' },
+    });
+  });
+
+  it('re-throws non-ServiceUnavailable McpError unchanged', async () => {
+    const { McpError, JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
+    mockUsgsCount.mockRejectedValue(
+      new McpError(JsonRpcErrorCode.InternalError, 'Unexpected error', {}),
+    );
+
+    const ctx = createMockContext({ errors: earthquakeCount.errors });
+    const input = earthquakeCount.input.parse({ min_magnitude: 5.0 });
+    await expect(earthquakeCount.handler(input, ctx)).rejects.toMatchObject({
+      code: JsonRpcErrorCode.InternalError,
+    });
+  });
+});
+
 describe('earthquakeCount — EMSC exceeds-limit logic', () => {
   let mockEmscCount: ReturnType<typeof vi.fn>;
 

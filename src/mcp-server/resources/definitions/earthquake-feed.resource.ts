@@ -4,7 +4,7 @@
  */
 
 import { resource, z } from '@cyanheads/mcp-ts-core';
-import { notFound } from '@cyanheads/mcp-ts-core/errors';
+import { validationError } from '@cyanheads/mcp-ts-core/errors';
 import { getUsgsService } from '@/services/usgs/usgs-service.js';
 
 const VALID_TIERS = ['all', '1.0', '2.5', '4.5', 'significant'] as const;
@@ -63,13 +63,13 @@ export const earthquakeFeedResource = resource('earthquake://feed/{magnitude_tie
 
   async handler(params, ctx) {
     if (!isTier(params.magnitude_tier)) {
-      throw notFound(
+      throw validationError(
         `Unknown magnitude tier "${params.magnitude_tier}". Valid tiers: ${VALID_TIERS.join(', ')}.`,
         { magnitude_tier: params.magnitude_tier },
       );
     }
     if (!isWindow(params.time_window)) {
-      throw notFound(
+      throw validationError(
         `Unknown time window "${params.time_window}". Valid windows: ${VALID_WINDOWS.join(', ')}.`,
         { time_window: params.time_window },
       );

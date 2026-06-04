@@ -4,7 +4,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getServerConfig } from '@/config/server-config.js';
 import { EarthquakeEventSchema, formatEvent } from '@/mcp-server/tools/schemas.js';
 import { getEmscService } from '@/services/emsc/emsc-service.js';
@@ -227,10 +227,26 @@ export const earthquakeSearch = tool('earthquake_search', {
       ...(input.min_significance != null ? { minSignificance: input.min_significance } : {}),
     };
 
-    const result =
-      input.source === 'emsc'
-        ? await getEmscService().searchEvents(params, ctx)
-        : await getUsgsService().searchEvents(params, ctx);
+    let result: Awaited<ReturnType<typeof getUsgsService.prototype.searchEvents>>;
+    try {
+      result =
+        input.source === 'emsc'
+          ? await getEmscService().searchEvents(params, ctx)
+          : await getUsgsService().searchEvents(params, ctx);
+    } catch (err) {
+      if (err instanceof McpError && err.code === JsonRpcErrorCode.ServiceUnavailable) {
+        throw ctx.fail('source_unavailable', err.message, {
+          ...ctx.recoveryFor('source_unavailable'),
+        });
+      }
+      // Plain Error from UsgsService.searchEvents query_too_broad path (data.reason set by service)
+      if ((err as { data?: { reason?: string } }).data?.reason === 'query_too_broad') {
+        throw ctx.fail('query_too_broad', (err as Error).message, {
+          ...ctx.recoveryFor('query_too_broad'),
+        });
+      }
+      throw err;
+    }
 
     ctx.log.info('Search completed', { source: input.source, count: result.count });
 
