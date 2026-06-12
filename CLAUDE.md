@@ -2,8 +2,8 @@
 
 **Server:** earthquake-mcp-server
 **Package:** `@cyanheads/earthquake-mcp-server`
-**Version:** 0.1.12
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.9.21`
+**Version:** 0.1.13
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.10.6`
 **Engines:** Bun ≥1.3.0, Node ≥24.0.0
 **MCP SDK:** `@modelcontextprotocol/sdk` ^1.29.0
 **Zod:** ^4.4.3
@@ -274,6 +274,7 @@ Available skills:
 | `api-utils` | Formatting, parsing, security, pagination, scheduling, telemetry helpers |
 | `api-mirror` | MirrorService — persistent local SQLite mirror of a bulk upstream dataset (Tier 3 opt-in) |
 | `api-workers` | Cloudflare Workers runtime |
+| `techniques` | Catalog of reusable response/data-shaping patterns — overflow handling, payload shaping, retrieval — when a payload is too large or awkwardly shaped |
 | `orchestrations` | Chain task skills into a gated multi-phase pipeline — build-out, QA-fix, update-ship — when you can spawn sub-agents |
 | `report-issue-framework` | File bug/feature request against @cyanheads/mcp-ts-core |
 | `report-issue-local` | File bug/feature request against this server's repo |
@@ -299,7 +300,7 @@ When you complete a skill's checklist, check the boxes and add a completion time
 | `bun run lint:mcp` | Validate MCP definitions against spec |
 | `bun run lint:packaging` | Validate env var alignment between `manifest.json` and `server.json` (skipped cleanly when `manifest.json` is absent) |
 | `bun run list-skills` | List skills in `skills/` with name + description |
-| `bun run bundle` | Build and pack as `dist/earthquake-mcp-server.mcpb` for one-click Claude Desktop install |
+| `bun run bundle` | Build, pack, and clean `dist/earthquake-mcp-server.mcpb` for one-click Claude Desktop install |
 | `bun run release:github` | Create GitHub Release from the current tag — attaches `.mcpb` bundle, uses tag subject as title |
 | `bun run start:stdio` | Production mode (stdio) |
 | `bun run start:http` | Production mode (HTTP) |
@@ -308,7 +309,7 @@ When you complete a skill's checklist, check the boxes and add a completion time
 
 ## Bundling
 
-`bun run bundle` produces `dist/earthquake-mcp-server.mcpb` for one-click install in Claude Desktop. MCPB is stdio-only — HTTP and Docker deployments are unaffected. The `release-and-publish` skill attaches the bundle to the GitHub Release at a stable `releases/latest/download/earthquake-mcp-server.mcpb` URL that powers the README install badge.
+`bun run bundle` produces `dist/earthquake-mcp-server.mcpb` for one-click install in Claude Desktop. The pack step is followed by `scripts/clean-mcpb.ts`, which prunes dev dependencies (`mcpb clean`) and strips dependency-shipped agent docs (`node_modules/**` `skills/`, `.claude/`, `.agents/`, `SKILL.md`) that root-anchored `.mcpbignore` patterns cannot reach. MCPB is stdio-only — HTTP and Docker deployments are unaffected. The `release-and-publish` skill attaches the bundle to the GitHub Release at a stable `releases/latest/download/earthquake-mcp-server.mcpb` URL that powers the README install badge.
 
 **Adding an env var requires both files**: `server.json` stdio `environmentVariables[]` (registry discovery) and `manifest.json` `mcp_config.env` (bundle install UX, plus `user_config` if user-prompted). `bun run lint:packaging` (run by `devcheck`) verifies the env var names align.
 
