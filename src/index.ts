@@ -16,6 +16,8 @@ import { initEmscService } from './services/emsc/emsc-service.js';
 import { initUsgsService } from './services/usgs/usgs-service.js';
 
 await createApp({
+  name: 'earthquake-mcp-server',
+  title: 'earthquake-mcp-server',
   tools: [earthquakeGetFeed, earthquakeSearch, earthquakeGetEvent, earthquakeCount],
   resources: [earthquakeFeedResource, earthquakeEventResource],
   prompts: [],
