@@ -1,6 +1,6 @@
 {
   "name": "@cyanheads/earthquake-mcp-server",
-  "version": "0.1.8",
+  "version": "0.1.13",
   "description": "Search USGS and EMSC seismic data — real-time feeds, event queries, and earthquake counts via MCP. STDIO or Streamable HTTP.",
   "author": {
     "name": "cyanheads",
