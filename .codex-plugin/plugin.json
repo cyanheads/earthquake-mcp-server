@@ -1,6 +1,6 @@
 {
-  "name": "@cyanheads/earthquake-mcp-server",
-  "version": "0.1.13",
+  "name": "earthquake-mcp-server",
+  "version": "0.1.14",
   "description": "Search USGS and EMSC seismic data — real-time feeds, event queries, and earthquake counts via MCP. STDIO or Streamable HTTP.",
   "author": {
     "name": "cyanheads",
@@ -13,7 +13,7 @@
   "keywords": ["mcp", "mcp-server", "model-context-protocol", "earthquake", "seismic", "usgs", "emsc"],
   "mcpServers": "./.codex-plugin/mcp.json",
   "interface": {
-    "displayName": "@cyanheads/earthquake-mcp-server",
+    "displayName": "earthquake-mcp-server",
     "shortDescription": "Search USGS and EMSC seismic data — real-time feeds, event queries, and earthquake counts.",
     "longDescription": "MCP server providing access to USGS and EMSC earthquake data. Supports real-time feeds, event queries by location/magnitude/time, and aggregate counts. Deployable via STDIO or Streamable HTTP.",
     "developerName": "cyanheads",
