@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.15](changelog/0.1.x/0.1.15.md) — 2026-06-20
+
+Adopt @cyanheads/mcp-ts-core ^0.10.9 — floating-specifier and plugin-marketplace devcheck guards, fresh-scaffold check skips, ctx.content media collector; re-synced skills + devcheck scripts
+
 ## [0.1.14](changelog/0.1.x/0.1.14.md) — 2026-06-15
 
 Server-level instructions block in createApp(); plugin/codex manifests show the unscoped earthquake-mcp-server identity while install args stay scoped
