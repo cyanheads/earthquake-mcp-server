@@ -4,7 +4,7 @@
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
-import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { EarthquakeEventSchema, formatEvent } from '@/mcp-server/tools/schemas.js';
 import { getUsgsService } from '@/services/usgs/usgs-service.js';
 
@@ -79,7 +79,17 @@ export const earthquakeGetFeed = tool('earthquake_get_feed', {
       time_window: input.time_window,
     });
 
-    const result = await getUsgsService().getFeed(input.magnitude_tier, input.time_window, ctx);
+    let result: Awaited<ReturnType<typeof getUsgsService.prototype.getFeed>>;
+    try {
+      result = await getUsgsService().getFeed(input.magnitude_tier, input.time_window, ctx);
+    } catch (err) {
+      if (err instanceof McpError && err.code === JsonRpcErrorCode.ServiceUnavailable) {
+        throw ctx.fail('feed_unavailable', err.message, {
+          ...ctx.recoveryFor('feed_unavailable'),
+        });
+      }
+      throw err;
+    }
 
     ctx.log.info('Feed fetched', {
       count: result.count,

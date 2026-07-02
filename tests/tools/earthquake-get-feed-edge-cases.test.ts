@@ -180,3 +180,50 @@ describe('earthquakeGetFeed — format edge cases', () => {
     expect(text).toContain('7');
   });
 });
+
+describe('earthquakeGetFeed — feed_unavailable error contract (issue #14)', () => {
+  let mockGetFeed: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockGetFeed = vi.fn();
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      getFeed: mockGetFeed,
+    } as unknown as usgsModule.UsgsService);
+  });
+
+  it('converts ServiceUnavailable McpError to typed contract error with data.reason', async () => {
+    const { McpError, JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
+    mockGetFeed.mockRejectedValue(
+      new McpError(JsonRpcErrorCode.ServiceUnavailable, 'USGS feed returned HTML', {}),
+    );
+
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
+    const input = earthquakeGetFeed.input.parse({});
+    await expect(earthquakeGetFeed.handler(input, ctx)).rejects.toMatchObject({
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      data: { reason: 'feed_unavailable' },
+    });
+  });
+
+  it('re-throws non-ServiceUnavailable McpError unchanged', async () => {
+    const { McpError, JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
+    mockGetFeed.mockRejectedValue(new McpError(JsonRpcErrorCode.Timeout, 'Feed timed out', {}));
+
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
+    const input = earthquakeGetFeed.input.parse({});
+    await expect(earthquakeGetFeed.handler(input, ctx)).rejects.toMatchObject({
+      code: JsonRpcErrorCode.Timeout,
+    });
+    await expect(earthquakeGetFeed.handler(input, ctx)).rejects.not.toMatchObject({
+      data: { reason: 'feed_unavailable' },
+    });
+  });
+
+  it('re-throws plain errors unchanged', async () => {
+    mockGetFeed.mockRejectedValue(new Error('boom'));
+
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
+    const input = earthquakeGetFeed.input.parse({});
+    await expect(earthquakeGetFeed.handler(input, ctx)).rejects.toThrow('boom');
+  });
+});
