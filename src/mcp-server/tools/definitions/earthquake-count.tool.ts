@@ -5,6 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { buildQueryParams } from '@/mcp-server/tools/query-params.js';
 import { getEmscService } from '@/services/emsc/emsc-service.js';
 import type { EarthquakeQueryParams } from '@/services/usgs/types.js';
 import { getUsgsService } from '@/services/usgs/usgs-service.js';
@@ -28,7 +29,8 @@ export const earthquakeCount = tool('earthquake_count', {
       .optional()
       .describe(
         'Start of time range as ISO 8601 (e.g. "2026-01-01" or "2026-05-23T00:00:00"). ' +
-          'Defaults to 30 days before end_time if omitted.',
+          'Defaults to 30 days before end_time (or before the current time) if omitted — ' +
+          'applied server-side so USGS and EMSC honor the same window.',
       ),
     end_time: z
       .string()
@@ -164,21 +166,8 @@ export const earthquakeCount = tool('earthquake_count', {
       min_magnitude: input.min_magnitude,
     });
 
-    // Use conditional spreads to satisfy exactOptionalPropertyTypes
-    const params: EarthquakeQueryParams = {
-      ...(input.start_time != null ? { startTime: input.start_time } : {}),
-      ...(input.end_time != null ? { endTime: input.end_time } : {}),
-      ...(input.min_magnitude != null ? { minMagnitude: input.min_magnitude } : {}),
-      ...(input.max_magnitude != null ? { maxMagnitude: input.max_magnitude } : {}),
-      ...(input.latitude != null ? { latitude: input.latitude } : {}),
-      ...(input.longitude != null ? { longitude: input.longitude } : {}),
-      ...(input.radius_km != null ? { radiusKm: input.radius_km } : {}),
-      ...(input.min_depth_km != null ? { minDepthKm: input.min_depth_km } : {}),
-      ...(input.max_depth_km != null ? { maxDepthKm: input.max_depth_km } : {}),
-      ...(input.alert_level != null ? { alertLevel: input.alert_level } : {}),
-      ...(input.min_felt != null ? { minFelt: input.min_felt } : {}),
-      ...(input.min_significance != null ? { minSignificance: input.min_significance } : {}),
-    };
+    // Shared builder applies the documented 30-day start-time default server-side
+    const params: EarthquakeQueryParams = buildQueryParams(input);
 
     let result: Awaited<ReturnType<typeof getUsgsService.prototype.countEvents>>;
     try {

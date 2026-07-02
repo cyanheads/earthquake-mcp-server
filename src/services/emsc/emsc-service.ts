@@ -56,7 +56,7 @@ function normalizeEmscFeature(f: EmscFeature): EarthquakeEvent {
   return {
     id,
     title: `M ${p.mag ?? '?'} - ${place}`,
-    magnitude: p.mag ?? 0,
+    magnitude: p.mag ?? null,
     magnitude_type: magType,
     time,
     updated,
@@ -89,8 +89,11 @@ export class EmscService {
     this.timeoutMs = timeoutMs;
   }
 
-  /** Query EMSC FDSN event API. */
-  searchEvents(
+  /**
+   * Query EMSC FDSN event API. When results are truncated at the requested limit,
+   * a follow-up count query populates totalCount with the real match total.
+   */
+  async searchEvents(
     params: EarthquakeQueryParams,
     ctx: Context,
   ): Promise<{
@@ -102,7 +105,7 @@ export class EmscService {
     const url = `${this.baseUrl}/fdsnws/event/1/query?format=json&${query}`;
     const reqCtx = makeReqCtx('EmscService.searchEvents', ctx);
 
-    return withRetry(
+    const result = await withRetry(
       async () => {
         const response = await fetchWithTimeout(url, this.timeoutMs, reqCtx, {
           signal: ctx.signal,
@@ -133,6 +136,24 @@ export class EmscService {
         signal: ctx.signal,
       },
     );
+
+    // EMSC's search response carries no match total — the real total comes from
+    // the FDSN count endpoint. Fetch it only when results were truncated at the
+    // limit; a count failure degrades to an absent totalCount rather than
+    // failing the search.
+    const requestedLimit = params.limit ?? 100;
+    if (result.count > 0 && result.count === requestedLimit) {
+      const { limit: _limit, orderBy: _orderBy, ...countParams } = params;
+      try {
+        const { count: totalCount } = await this.countEvents(countParams, ctx);
+        return { ...result, totalCount };
+      } catch (err) {
+        ctx.log.warning('Count sub-call for totalCount failed — returning results without it', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return result;
   }
 
   /** Count events matching a query. */

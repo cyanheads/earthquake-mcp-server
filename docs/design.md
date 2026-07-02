@@ -186,7 +186,7 @@ errors: [
 ```ts
 {
   start_time: z.string().optional()
-    .describe('Start of time range as ISO 8601 (e.g. "2026-01-01" or "2026-05-23T00:00:00"). Defaults to 30 days before end_time if omitted.'),
+    .describe('Start of time range as ISO 8601 (e.g. "2026-01-01" or "2026-05-23T00:00:00"). Defaults to 30 days before end_time (or before the current time) if omitted — applied server-side so USGS and EMSC honor the same window.'),
   end_time: z.string().optional()
     .describe('End of time range as ISO 8601. Defaults to current time if omitted.'),
   min_magnitude: z.number().min(-1).max(10).optional()
@@ -222,11 +222,12 @@ errors: [
 ```ts
 {
   count: z.number().describe('Number of events returned.'),
-  total_count: z.number().optional().describe('Total events matching the query, if the result was limited. Absent when all results fit in the response.'),
   source: z.enum(['usgs', 'emsc']).describe('Data source used.'),
   events: z.array(EarthquakeEventSchema).describe('Matching earthquake events.'),
 }
 ```
+
+**Enrichment (success-path meta, reaches both `structuredContent` and `content[]`):** `totalCount` (full match total, fetched via a follow-up FDSN count sub-call when results are truncated at the limit), `truncated`, `notice` (recovery guidance for empty or capped result sets), and `queryEcho` (effective upstream parameters including the server-resolved start_time default; USGS-only filters omitted for source=emsc).
 
 **Error contract:**
 ```ts
@@ -301,14 +302,14 @@ Fields returned by feeds and search results. These are normalized output fields 
 {
   id: z.string().describe('USGS or EMSC event identifier.'),
   title: z.string().describe('Human-readable event summary, e.g. "M 6.0 - 13 km S of Honaunau-Napoopoo, Hawaii". Derived from properties.title (USGS) or constructed from magnitude and flynn_region (EMSC).'),
-  magnitude: z.number().describe('Preferred magnitude value. Mapped from API field "mag".'),
+  magnitude: z.number().nullable().describe('Preferred magnitude value. Mapped from API field "mag". Null when no magnitude was computed for the event (the title renders it as "M ?").'),
   magnitude_type: z.string().describe('Magnitude type (ml, mww, mw, mb, etc.). Mapped from API field "magType" (USGS) or "magtype" (EMSC).'),
   time: z.string().describe('ISO 8601 UTC origin time. Converted from epoch-millisecond integer in USGS responses.'),
   updated: z.string().describe('ISO 8601 UTC time this record was last updated. Converted from epoch-millisecond integer in USGS responses; mapped from "lastupdate" in EMSC responses.'),
   place: z.string().describe('Nearest named location. Mapped from "place" (USGS) or "flynn_region" (EMSC).'),
   latitude: z.number().describe('Epicenter latitude in decimal degrees. Extracted from geometry.coordinates[1] (USGS) or properties.lat (EMSC).'),
   longitude: z.number().describe('Epicenter longitude in decimal degrees. Extracted from geometry.coordinates[0] (USGS) or properties.lon (EMSC).'),
-  depth_km: z.number().describe('Hypocenter depth in kilometers. Extracted from geometry.coordinates[2] (USGS, positive = depth) or properties.depth (EMSC, positive km). Shallow (<70 km), intermediate (70–300 km), or deep (>300 km).'),
+  depth_km: z.number().nullable().describe('Hypocenter depth in kilometers. Extracted from geometry.coordinates[2] (USGS, positive = depth) or properties.depth (EMSC, positive km). Shallow (<70 km), intermediate (70–300 km), or deep (>300 km). Null for events where depth was not measured.'),
   felt: z.number().nullable().describe('Number of DYFI (Did You Feel It?) responses. Null if no reports. USGS only.'),
   cdi: z.number().nullable().describe('Maximum reported intensity (Community Decimal Intensity, 0–12 scale). USGS only.'),
   mmi: z.number().nullable().describe('Maximum ShakeMap instrumental intensity (Modified Mercalli, 0–12 scale). USGS only.'),
@@ -399,6 +400,7 @@ The `tsunami` flag in event data is a binary USGS indicator that a warning was i
   - No `detail` per-event URL with products block
 - Response shape differs from USGS: properties use `lat`/`lon`/`depth` (lat/lon also duplicated in `geometry.coordinates`), `flynn_region` instead of `place`, `magtype` (lowercase) instead of `magType`, `unid` as primary ID, no `url`/`detail`/`felt`/`cdi`/`mmi`/`alert`/`tsunami`/`sig` fields
 - Count endpoint returns `{"count": N}` only — no `maxAllowed` field
+- No default time window — omitting `starttime` queries the entire catalog (~27 years), unlike USGS's 30-day default. The server always sends an explicit `starttime` so both sources honor the documented 30-day window.
 - Limit: 20,000 events per query (increased from 5,000 in 2023)
 
 ### Magnitude Types Reference

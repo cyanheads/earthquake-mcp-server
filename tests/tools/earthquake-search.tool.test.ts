@@ -195,6 +195,19 @@ describe('earthquakeSearch', () => {
     expect(notice).toContain('earthquake_count');
   });
 
+  it('truncation notice carries the total match count when the service returns it', async () => {
+    const events = Array.from({ length: 5 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
+    mockUsgsSearch.mockResolvedValue({ events, count: 5, totalCount: 4821 });
+
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ limit: 5 });
+    await earthquakeSearch.handler(input, ctx);
+
+    const notice = getEnrichment(ctx).notice as string | undefined;
+    expect(notice).toContain('4821 events match');
+    expect(notice).not.toContain('earthquake_count');
+  });
+
   it('does not populate notice on normal non-empty result', async () => {
     mockUsgsSearch.mockResolvedValue({ events: [sampleEvent], count: 1 });
 
@@ -233,5 +246,151 @@ describe('earthquakeSearch', () => {
     const blocks = earthquakeSearch.format!(output);
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('No events');
+  });
+});
+
+describe('earthquakeSearch — 30-day default time window (issue #12)', () => {
+  let mockUsgsSearch: ReturnType<typeof vi.fn>;
+  let mockEmscSearch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockUsgsSearch = vi.fn().mockResolvedValue({ events: [], count: 0 });
+    mockEmscSearch = vi.fn().mockResolvedValue({ events: [], count: 0 });
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      searchEvents: mockUsgsSearch,
+    } as unknown as usgsModule.UsgsService);
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue({
+      searchEvents: mockEmscSearch,
+    } as unknown as emscModule.EmscService);
+  });
+
+  it('sends an explicit startTime of end_time − 30 days when start_time is omitted', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ end_time: '2026-06-30' });
+    await earthquakeSearch.handler(input, ctx);
+
+    const expected = new Date(new Date('2026-06-30').getTime() - 30 * 86_400_000).toISOString();
+    expect(mockUsgsSearch).toHaveBeenCalledWith(
+      expect.objectContaining({ startTime: expected, endTime: '2026-06-30' }),
+      ctx,
+    );
+  });
+
+  it('sends the same explicit startTime to EMSC — no upstream default divergence', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ source: 'emsc', end_time: '2026-06-30' });
+    await earthquakeSearch.handler(input, ctx);
+
+    const expected = new Date(new Date('2026-06-30').getTime() - 30 * 86_400_000).toISOString();
+    expect(mockEmscSearch).toHaveBeenCalledWith(
+      expect.objectContaining({ startTime: expected }),
+      ctx,
+    );
+  });
+
+  it('passes an explicit start_time through unchanged', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ start_time: '2026-05-31' });
+    await earthquakeSearch.handler(input, ctx);
+
+    expect(mockUsgsSearch).toHaveBeenCalledWith(
+      expect.objectContaining({ startTime: '2026-05-31' }),
+      ctx,
+    );
+  });
+});
+
+describe('earthquakeSearch — queryEcho enrichment (issue #11)', () => {
+  let mockUsgsSearch: ReturnType<typeof vi.fn>;
+  let mockEmscSearch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockUsgsSearch = vi.fn();
+    mockEmscSearch = vi.fn();
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      searchEvents: mockUsgsSearch,
+    } as unknown as usgsModule.UsgsService);
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue({
+      searchEvents: mockEmscSearch,
+    } as unknown as emscModule.EmscService);
+  });
+
+  it('populates queryEcho with effective params including the resolved start_time', async () => {
+    mockUsgsSearch.mockResolvedValue({ events: [sampleEvent], count: 1 });
+
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ end_time: '2026-06-30', min_magnitude: 5 });
+    await earthquakeSearch.handler(input, ctx);
+
+    const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
+    expect(echo).toMatchObject({
+      start_time: new Date(new Date('2026-06-30').getTime() - 30 * 86_400_000).toISOString(),
+      end_time: '2026-06-30',
+      min_magnitude: 5,
+      source: 'usgs',
+      limit: 100,
+      order_by: 'time',
+    });
+  });
+
+  it('populates queryEcho on the empty-result path too', async () => {
+    mockUsgsSearch.mockResolvedValue({ events: [], count: 0 });
+
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ min_magnitude: 9.5 });
+    await earthquakeSearch.handler(input, ctx);
+
+    const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
+    expect(echo).toBeDefined();
+    expect(echo.min_magnitude).toBe(9.5);
+    expect(echo.source).toBe('usgs');
+  });
+
+  it('includes USGS-only filters in the echo for source=usgs', async () => {
+    mockUsgsSearch.mockResolvedValue({ events: [], count: 0 });
+
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({
+      alert_level: 'yellow',
+      min_felt: 10,
+      min_significance: 600,
+    });
+    await earthquakeSearch.handler(input, ctx);
+
+    const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
+    expect(echo).toMatchObject({ alert_level: 'yellow', min_felt: 10, min_significance: 600 });
+  });
+
+  it('omits USGS-only filters from the echo for source=emsc (not sent upstream)', async () => {
+    mockEmscSearch.mockResolvedValue({ events: [], count: 0 });
+
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({
+      source: 'emsc',
+      alert_level: 'yellow',
+      min_felt: 10,
+      min_significance: 600,
+    });
+    await earthquakeSearch.handler(input, ctx);
+
+    const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
+    expect(echo.source).toBe('emsc');
+    expect(echo).not.toHaveProperty('alert_level');
+    expect(echo).not.toHaveProperty('min_felt');
+    expect(echo).not.toHaveProperty('min_significance');
+  });
+
+  it('renders queryEcho as a markdown trailer line, not a JSON blob', () => {
+    const render = earthquakeSearch.enrichmentTrailer?.queryEcho?.render;
+    expect(render).toBeDefined();
+    const text = render!({
+      start_time: '2026-05-31T00:00:00.000Z',
+      source: 'usgs',
+      limit: 100,
+      order_by: 'time',
+    });
+    expect(text).toContain('**Query echo:**');
+    expect(text).toContain('start_time=2026-05-31T00:00:00.000Z');
+    expect(text).toContain('limit=100');
   });
 });

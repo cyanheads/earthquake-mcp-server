@@ -146,3 +146,54 @@ describe('earthquakeCount', () => {
     expect(text).toContain('Not reported by EMSC');
   });
 });
+
+describe('earthquakeCount — 30-day default time window (issue #12)', () => {
+  let mockUsgsCount: ReturnType<typeof vi.fn>;
+  let mockEmscCount: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockUsgsCount = vi.fn().mockResolvedValue({ count: 0, maxAllowed: 20000, exceedsLimit: false });
+    mockEmscCount = vi.fn().mockResolvedValue({ count: 0, maxAllowed: null, exceedsLimit: false });
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      countEvents: mockUsgsCount,
+    } as unknown as usgsModule.UsgsService);
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue({
+      countEvents: mockEmscCount,
+    } as unknown as emscModule.EmscService);
+  });
+
+  it('sends an explicit startTime of end_time − 30 days when start_time is omitted', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeCount.input.parse({ end_time: '2026-06-30' });
+    await earthquakeCount.handler(input, ctx);
+
+    const expected = new Date(new Date('2026-06-30').getTime() - 30 * 86_400_000).toISOString();
+    expect(mockUsgsCount).toHaveBeenCalledWith(
+      expect.objectContaining({ startTime: expected }),
+      ctx,
+    );
+  });
+
+  it('sends the same explicit startTime to EMSC instead of querying the full catalog', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeCount.input.parse({ source: 'emsc', end_time: '2026-06-30' });
+    await earthquakeCount.handler(input, ctx);
+
+    const expected = new Date(new Date('2026-06-30').getTime() - 30 * 86_400_000).toISOString();
+    expect(mockEmscCount).toHaveBeenCalledWith(
+      expect.objectContaining({ startTime: expected }),
+      ctx,
+    );
+  });
+
+  it('passes an explicit start_time through unchanged', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeCount.input.parse({ source: 'emsc', start_time: '2026-05-31' });
+    await earthquakeCount.handler(input, ctx);
+
+    expect(mockEmscCount).toHaveBeenCalledWith(
+      expect.objectContaining({ startTime: '2026-05-31' }),
+      ctx,
+    );
+  });
+});

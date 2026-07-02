@@ -267,3 +267,37 @@ describe('formatEvent', () => {
     expect(text).not.toContain('Significance:');
   });
 });
+
+describe('EarthquakeEventSchema — null magnitude (issue #13)', () => {
+  it('accepts magnitude: null for events where no magnitude was computed', () => {
+    const parsed = EarthquakeEventSchema.parse({
+      ...sparseEvent,
+      title: 'M ? - 234 km SE of Attu Station, Alaska',
+      magnitude: null,
+      magnitude_type: 'unknown',
+    });
+    expect(parsed.magnitude).toBeNull();
+  });
+
+  it('still accepts a real magnitude 0 (M0 microquakes exist)', () => {
+    const parsed = EarthquakeEventSchema.parse({ ...sparseEvent, magnitude: 0 });
+    expect(parsed.magnitude).toBe(0);
+  });
+
+  it('formatEvent renders null magnitude as "unknown", not 0', () => {
+    const lines = formatEvent({
+      ...sparseEvent,
+      title: 'M ? - 234 km SE of Attu Station, Alaska',
+      magnitude: null,
+      magnitude_type: 'unknown',
+    });
+    const text = lines.join('\n');
+    expect(text).toContain('**Magnitude:** unknown (unknown)');
+    expect(text).not.toContain('**Magnitude:** 0');
+  });
+
+  it('formatEvent renders magnitude 0 as the number 0', () => {
+    const lines = formatEvent({ ...sparseEvent, magnitude: 0 });
+    expect(lines.join('\n')).toContain('**Magnitude:** 0 (ml)');
+  });
+});

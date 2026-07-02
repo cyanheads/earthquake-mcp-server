@@ -11,7 +11,12 @@ export const EarthquakeEventSchema = z.object({
   title: z
     .string()
     .describe('Human-readable event summary, e.g. "M 6.0 - 13 km S of Honaunau-Napoopoo, Hawaii".'),
-  magnitude: z.number().describe('Preferred magnitude value.'),
+  magnitude: z
+    .number()
+    .nullable()
+    .describe(
+      'Preferred magnitude value. Null when no magnitude was computed for the event (the title renders it as "M ?").',
+    ),
   magnitude_type: z.string().describe('Magnitude type (ml, mww, mw, mb, etc.).'),
   time: z.string().describe('ISO 8601 UTC origin time.'),
   updated: z.string().describe('ISO 8601 UTC time this record was last updated.'),
@@ -69,7 +74,7 @@ export function formatEvent(event: EarthquakeEventOutput): string[] {
   const lines: string[] = [];
   lines.push(`## ${event.title}`);
   lines.push(
-    `**ID:** ${event.id} | **Magnitude:** ${event.magnitude} (${event.magnitude_type}) | **Depth:** ${event.depth_km !== null ? `${event.depth_km} km` : 'unknown'}`,
+    `**ID:** ${event.id} | **Magnitude:** ${event.magnitude !== null ? event.magnitude : 'unknown'} (${event.magnitude_type}) | **Depth:** ${event.depth_km !== null ? `${event.depth_km} km` : 'unknown'}`,
   );
   lines.push(`**Place:** ${event.place}`);
   lines.push(

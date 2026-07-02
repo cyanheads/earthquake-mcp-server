@@ -43,7 +43,12 @@ export const earthquakeFeedResource = resource('earthquake://feed/{magnitude_tie
           .object({
             id: z.string().describe('USGS event identifier.'),
             title: z.string().describe('Human-readable event summary.'),
-            magnitude: z.number().describe('Preferred magnitude value.'),
+            magnitude: z
+              .number()
+              .nullable()
+              .describe(
+                'Preferred magnitude value. Null when no magnitude was computed for the event.',
+              ),
             time: z.string().describe('ISO 8601 UTC origin time.'),
             place: z.string().describe('Nearest named location.'),
             latitude: z.number().describe('Epicenter latitude in decimal degrees.'),

@@ -58,7 +58,7 @@ function normalizeUsgsFeature(f: UsgsFeature): EarthquakeEvent {
   return {
     id: f.id,
     title: p.title ?? `M ${p.mag ?? '?'} - ${p.place ?? 'Unknown location'}`,
-    magnitude: p.mag ?? 0,
+    magnitude: p.mag ?? null,
     magnitude_type: p.magType ?? 'unknown',
     time: epochMsToIso(p.time),
     updated: epochMsToIso(p.updated),
@@ -142,8 +142,11 @@ export class UsgsService {
     );
   }
 
-  /** Query USGS FDSN event API. */
-  searchEvents(
+  /**
+   * Query USGS FDSN event API. When results are truncated at the requested limit,
+   * a follow-up count query populates totalCount with the real match total.
+   */
+  async searchEvents(
     params: EarthquakeQueryParams,
     ctx: Context,
   ): Promise<{
@@ -155,7 +158,7 @@ export class UsgsService {
     const url = `${this.baseUrl}/fdsnws/event/1/query?format=geojson&${query}`;
     const reqCtx = makeReqCtx('UsgsService.searchEvents', ctx);
 
-    return withRetry(
+    const result = await withRetry(
       async () => {
         const response = await fetchWithTimeout(url, this.timeoutMs, reqCtx, {
           signal: ctx.signal,
@@ -190,12 +193,10 @@ export class UsgsService {
 
         const data = JSON.parse(text) as UsgsFeatureCollection;
         const events = data.features.map(normalizeUsgsFeature);
-        const requestedLimit = params.limit ?? 100;
 
         return {
           events,
           count: events.length,
-          ...(data.metadata.count > requestedLimit ? { totalCount: data.metadata.count } : {}),
         };
       },
       {
@@ -205,6 +206,24 @@ export class UsgsService {
         signal: ctx.signal,
       },
     );
+
+    // The query response's metadata.count is the returned-event count, not the
+    // database total — the real total comes from the FDSN count endpoint. Fetch
+    // it only when results were truncated at the limit; a count failure degrades
+    // to an absent totalCount rather than failing the search.
+    const requestedLimit = params.limit ?? 100;
+    if (result.count > 0 && result.count === requestedLimit) {
+      const { limit: _limit, orderBy: _orderBy, ...countParams } = params;
+      try {
+        const { count: totalCount } = await this.countEvents(countParams, ctx);
+        return { ...result, totalCount };
+      } catch (err) {
+        ctx.log.warning('Count sub-call for totalCount failed — returning results without it', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    return result;
   }
 
   /** Fetch a single event by USGS event ID. */

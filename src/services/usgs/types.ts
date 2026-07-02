@@ -14,7 +14,7 @@ export interface EarthquakeEvent {
   id: string;
   latitude: number;
   longitude: number;
-  magnitude: number;
+  magnitude: number | null;
   magnitude_type: string;
   mmi: number | null;
   place: string;
