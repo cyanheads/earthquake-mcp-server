@@ -1,6 +1,6 @@
 # earthquake-mcp-server - Directory Structure
 
-Generated on: 2026-06-20 11:07:03
+Generated on: 2026-07-02 12:47:59
 
 ```text
 earthquake-mcp-server/
@@ -141,6 +141,7 @@ earthquake-mcp-server/
 │   │       │   ├── earthquake-get-event.tool.ts
 │   │       │   ├── earthquake-get-feed.tool.ts
 │   │       │   └── earthquake-search.tool.ts
+│   │       ├── query-params.ts
 │   │       └── schemas.ts
 │   ├── services/
 │   │   ├── emsc/
@@ -156,6 +157,9 @@ earthquake-mcp-server/
 │   │   ├── earthquake-event.resource.test.ts
 │   │   ├── earthquake-feed-edge-cases.resource.test.ts
 │   │   └── earthquake-feed.resource.test.ts
+│   ├── services/
+│   │   ├── emsc-service.test.ts
+│   │   └── usgs-service.test.ts
 │   └── tools/
 │       ├── earthquake-count-edge-cases.test.ts
 │       ├── earthquake-count.tool.test.ts
@@ -165,6 +169,7 @@ earthquake-mcp-server/
 │       ├── earthquake-get-feed.tool.test.ts
 │       ├── earthquake-search-edge-cases.test.ts
 │       ├── earthquake-search.tool.test.ts
+│       ├── query-params.test.ts
 │       └── schemas.test.ts
 ├── .dockerignore
 ├── .env.example

@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.1.16](changelog/0.1.x/0.1.16.md) — 2026-07-02 · 🛡️ Security
+
+Explicit 30-day start_time default for both sources, nullable magnitude, queryEcho enrichment + real totalCount via FDSN count sub-call, feed_unavailable contract wired; js-yaml advisory cleared
+
 ## [0.1.15](changelog/0.1.x/0.1.15.md) — 2026-06-20
 
 Adopt @cyanheads/mcp-ts-core ^0.10.9 — floating-specifier and plugin-marketplace devcheck guards, fresh-scaffold check skips, ctx.content media collector; re-synced skills + devcheck scripts
