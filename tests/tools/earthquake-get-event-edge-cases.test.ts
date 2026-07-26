@@ -121,6 +121,7 @@ describe('earthquakeGetEvent — security', () => {
     const xssEvent: EarthquakeEventOutput = {
       ...reviewedEvent,
       title: '<img src=x onerror=alert(1)>',
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: adversarial test string — must stay literal
       place: '${__proto__.polluted}',
     };
     // format() must not throw and must not eval the injection
