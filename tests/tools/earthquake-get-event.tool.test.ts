@@ -89,6 +89,28 @@ describe('earthquakeGetEvent', () => {
     await expect(earthquakeGetEvent.handler(input, ctx)).rejects.toThrow();
   });
 
+  it('puts the contract recovery hint on the not_found error (issue #15)', async () => {
+    const { McpError } = await import('@cyanheads/mcp-ts-core/errors');
+    mockGetEvent.mockRejectedValue(
+      new McpError(-32001, 'No earthquake event found for ID "bad-id"', { eventId: 'bad-id' }),
+    );
+
+    const ctx = createMockContext({ errors: earthquakeGetEvent.errors });
+    const input = earthquakeGetEvent.input.parse({ event_id: 'not-a-real-event-id-2026' });
+    const err = (await earthquakeGetEvent.handler(input, ctx).catch((e) => e)) as InstanceType<
+      typeof McpError
+    >;
+
+    // structuredContent surface: data.recovery.hint, resolved from the contract.
+    // The handler factory mirrors this same hint into content[] as a "Recovery:" line.
+    const contractHint = earthquakeGetEvent.errors?.find((e) => e.reason === 'not_found')?.recovery;
+    expect(contractHint).toBeDefined();
+    expect((err.data as { reason?: string }).reason).toBe('not_found');
+    expect((err.data as { recovery?: { hint?: string } }).recovery?.hint).toBe(contractHint);
+    expect((err.data as { recovery?: { hint?: string } }).recovery?.hint).toContain('us6000sznj');
+    expect(err.message).toContain('not-a-real-event-id-2026');
+  });
+
   it('handles sparse event (null optional fields) without crashing', async () => {
     mockGetEvent.mockResolvedValue(sparseEvent);
 

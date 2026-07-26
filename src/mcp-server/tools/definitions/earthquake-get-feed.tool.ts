@@ -117,8 +117,18 @@ export const earthquakeGetFeed = tool('earthquake_get_feed', {
     {
       reason: 'feed_unavailable',
       code: JsonRpcErrorCode.ServiceUnavailable,
-      when: 'USGS feed endpoint returns non-2xx or times out.',
+      when: 'USGS feed endpoint returns a 5xx, HTML, or is unreachable.',
+      retryable: true,
       recovery: 'Try a smaller time_window, or use earthquake_search as a fallback.',
+    },
+    {
+      reason: 'feed_timeout',
+      code: JsonRpcErrorCode.Timeout,
+      when: 'USGS feed endpoint did not answer before the request deadline.',
+      retryable: true,
+      recovery:
+        'Retry the call, or request a smaller time_window — the "month" and "all" feeds are ' +
+        'the largest documents and the slowest to transfer.',
     },
   ],
 
@@ -137,6 +147,13 @@ export const earthquakeGetFeed = tool('earthquake_get_feed', {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.ServiceUnavailable) {
         throw ctx.fail('feed_unavailable', err.message, {
           ...ctx.recoveryFor('feed_unavailable'),
+        });
+      }
+      // A timeout classifies as Timeout, not ServiceUnavailable — it needs its own
+      // branch or it bypasses the contract and reaches the caller with no recovery hint.
+      if (err instanceof McpError && err.code === JsonRpcErrorCode.Timeout) {
+        throw ctx.fail('feed_timeout', err.message, {
+          ...ctx.recoveryFor('feed_timeout'),
         });
       }
       throw err;

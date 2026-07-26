@@ -54,6 +54,7 @@ export const earthquakeGetEvent = tool('earthquake_get_event', {
         throw ctx.fail(
           'not_found',
           `No earthquake event found for ID "${input.event_id}". Verify the ID from a feed or search result.`,
+          { ...ctx.recoveryFor('not_found') },
         );
       }
       throw err;

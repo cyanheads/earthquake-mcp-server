@@ -205,14 +205,16 @@ describe('earthquakeGetFeed — feed_unavailable error contract (issue #14)', ()
     });
   });
 
-  it('re-throws non-ServiceUnavailable McpError unchanged', async () => {
+  // A Timeout is deliberately NOT an unmapped code — it has its own feed_timeout
+  // reason, covered in timeout-contract.test.ts. NotFound has no contract entry.
+  it('re-throws an McpError with no matching contract reason unchanged', async () => {
     const { McpError, JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    mockGetFeed.mockRejectedValue(new McpError(JsonRpcErrorCode.Timeout, 'Feed timed out', {}));
+    mockGetFeed.mockRejectedValue(new McpError(JsonRpcErrorCode.NotFound, 'Feed not found', {}));
 
     const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
     const input = earthquakeGetFeed.input.parse({});
     await expect(earthquakeGetFeed.handler(input, ctx)).rejects.toMatchObject({
-      code: JsonRpcErrorCode.Timeout,
+      code: JsonRpcErrorCode.NotFound,
     });
     await expect(earthquakeGetFeed.handler(input, ctx)).rejects.not.toMatchObject({
       data: { reason: 'feed_unavailable' },
