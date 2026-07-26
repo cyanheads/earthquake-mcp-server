@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.1](changelog/0.3.x/0.3.1.md) — 2026-07-26
+
+event_type surfaced on every event and filterable on search/count (USGS-only); earthquake_get_event and its resource return a detail projection of USGS analysis products; an unparseable upstream 4xx gets its own error reason instead of a raw rethrow; get_event declares source_unavailable/source_timeout contracts
+
 ## [0.3.0](changelog/0.3.x/0.3.0.md) — 2026-07-26 · ⚠️ Breaking
 
 status and tsunami are now nullable and null for every EMSC event (breaking); EMSC docs/schemas corrected to an independent global catalog; ignoredFilters enrichment and an upstream_rejected error contract on search/count; get_event's not_found now carries a recovery hint; mcp-ts-core ^0.10.17
