@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.0](changelog/0.3.x/0.3.0.md) — 2026-07-26 · ⚠️ Breaking
+
+status and tsunami are now nullable and null for every EMSC event (breaking); EMSC docs/schemas corrected to an independent global catalog; ignoredFilters enrichment and an upstream_rejected error contract on search/count; get_event's not_found now carries a recovery hint; mcp-ts-core ^0.10.17
+
 ## [0.2.0](changelog/0.2.x/0.2.0.md) — 2026-07-26 · ⚠️ Breaking
 
 earthquake_get_feed now pages (breaking: count/events scope to the page, not the whole feed); earthquake_search adds offset paging; earthquake_count echoes its resolved window; unreachable query_too_broad contract removed; EMSC 204 zero-match fix; mcp-ts-core ^0.10.16 maintenance
