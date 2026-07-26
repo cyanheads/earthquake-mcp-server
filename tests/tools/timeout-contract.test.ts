@@ -19,6 +19,7 @@ import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { fetchWithTimeout, requestContextService } from '@cyanheads/mcp-ts-core/utils';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { earthquakeEventResource } from '@/mcp-server/resources/definitions/earthquake-event.resource.js';
 import { earthquakeCount } from '@/mcp-server/tools/definitions/earthquake-count.tool.js';
 import { earthquakeGetEvent } from '@/mcp-server/tools/definitions/earthquake-get-event.tool.js';
 import { earthquakeGetFeed } from '@/mcp-server/tools/definitions/earthquake-get-feed.tool.js';
@@ -35,7 +36,7 @@ const upstreamTimeout = () =>
 const contractRecovery = (
   errors: readonly { reason: string; recovery: string }[] | undefined,
   reason: string,
-) => errors?.find((e) => e.reason === reason)?.recovery;
+) => errors?.find((e: { reason: string }) => e.reason === reason)?.recovery;
 
 describe('fetchWithTimeout — framework timeout classification', () => {
   let server: Server;
@@ -136,9 +137,7 @@ describe('tool contracts — an upstream timeout lands on a declared reason', ()
     });
   });
 
-  it('earthquake_get_event lets a timeout bubble on the baseline Timeout code', async () => {
-    // This tool declares only not_found; Timeout is a baseline code that bubbles
-    // unclassified by design, so there is no reason to remap onto.
+  it('earthquake_get_event maps a timeout to source_timeout with the contract hint', async () => {
     vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
       getEvent: vi.fn().mockRejectedValue(upstreamTimeout()),
     } as unknown as usgsModule.UsgsService);
@@ -148,7 +147,43 @@ describe('tool contracts — an upstream timeout lands on a declared reason', ()
 
     await expect(earthquakeGetEvent.handler(input, ctx)).rejects.toMatchObject({
       code: JsonRpcErrorCode.Timeout,
-      data: { errorSource: 'FetchTimeout' },
+      data: {
+        reason: 'source_timeout',
+        recovery: { hint: contractRecovery(earthquakeGetEvent.errors, 'source_timeout') },
+      },
     });
+  });
+
+  it('earthquake-event resource maps a timeout to source_timeout with the contract hint', async () => {
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      getEvent: vi.fn().mockRejectedValue(upstreamTimeout()),
+    } as unknown as usgsModule.UsgsService);
+
+    const ctx = createMockContext({ errors: earthquakeEventResource.errors });
+    const params = earthquakeEventResource.params.parse({ event_id: 'us6000sznj' });
+
+    await expect(earthquakeEventResource.handler(params, ctx)).rejects.toMatchObject({
+      code: JsonRpcErrorCode.Timeout,
+      data: {
+        reason: 'source_timeout',
+        recovery: { hint: contractRecovery(earthquakeEventResource.errors, 'source_timeout') },
+      },
+    });
+  });
+
+  it('every definition that reaches an upstream declares a timeout reason', () => {
+    // A tool or resource with no timeout reason lets the framework's Timeout code
+    // bubble with no recovery hint — the gap issue #28 closed on the event lookup.
+    const declared = [
+      earthquakeSearch.errors,
+      earthquakeCount.errors,
+      earthquakeGetFeed.errors,
+      earthquakeGetEvent.errors,
+      earthquakeEventResource.errors,
+    ];
+    for (const errors of declared) {
+      expect(errors?.some((e) => e.code === JsonRpcErrorCode.Timeout)).toBe(true);
+      expect(errors?.some((e) => e.code === JsonRpcErrorCode.ServiceUnavailable)).toBe(true);
+    }
   });
 });

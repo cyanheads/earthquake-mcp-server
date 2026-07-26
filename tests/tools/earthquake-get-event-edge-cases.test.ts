@@ -72,21 +72,33 @@ describe('earthquakeGetEvent — not_found error handling', () => {
     });
   });
 
-  it('preserves non-NotFound McpErrors without wrapping in not_found', async () => {
+  it('routes a service outage to source_unavailable, never to not_found (issue #28)', async () => {
     const { McpError, JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    const serviceUnavailableErr = new McpError(
-      JsonRpcErrorCode.ServiceUnavailable,
-      'USGS is down',
-      {},
+    mockGetEvent.mockRejectedValue(
+      new McpError(JsonRpcErrorCode.ServiceUnavailable, 'USGS is down', {}),
     );
-    mockGetEvent.mockRejectedValue(serviceUnavailableErr);
+
+    const ctx = createMockContext({ errors: earthquakeGetEvent.errors });
+    const input = earthquakeGetEvent.input.parse({ event_id: 'ci38457511' });
+    const err = (await earthquakeGetEvent.handler(input, ctx).catch((e: unknown) => e)) as {
+      code: number;
+      data: { reason?: string };
+    };
+
+    expect(err.code).toBe(JsonRpcErrorCode.ServiceUnavailable);
+    expect(err.data.reason).toBe('source_unavailable');
+  });
+
+  it('re-throws an undeclared McpError code unchanged', async () => {
+    const { McpError, JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
+    const rateLimitedErr = new McpError(JsonRpcErrorCode.RateLimited, 'Slow down', {});
+    mockGetEvent.mockRejectedValue(rateLimitedErr);
 
     const ctx = createMockContext({ errors: earthquakeGetEvent.errors });
     const input = earthquakeGetEvent.input.parse({ event_id: 'ci38457511' });
     const err = await earthquakeGetEvent.handler(input, ctx).catch((e: unknown) => e);
 
-    // Should re-throw the original McpError, not wrap it in not_found
-    expect(err).toBe(serviceUnavailableErr);
+    expect(err).toBe(rateLimitedErr);
   });
 });
 
