@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.1.16-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/earthquake-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/earthquake-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/earthquake-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.2.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/earthquake-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/earthquake-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/earthquake-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -46,6 +46,8 @@ Fetch a USGS pre-computed real-time earthquake feed by magnitude tier and time w
 - Five magnitude tiers: `all` (microseisms), `1.0`, `2.5`, `4.5`, and `significant` (USGS-curated by magnitude, felt reports, and PAGER impact)
 - Four time windows: `hour`, `day`, `week`, `month`
 - Returns event list with counts and the source feed URL
+- Paged with an opaque `cursor`: `limit` bounds a page (default 100, max 1000), `totalCount` reports the whole feed, and `nextCursor` retrieves the rest — the broad tiers run past 10,000 events for `month`
+- The cursor is opaque because these feeds have no upstream paging parameter and USGS regenerates them about once a minute; a numeric offset across two calls would skip or repeat events
 - Best for real-time "what's happening now" queries; use `earthquake_search` for historical or filtered queries
 
 ---
@@ -59,7 +61,9 @@ Search earthquakes by time range, magnitude, depth, location radius, PAGER alert
 - USGS-specific filters: PAGER alert level (`green`/`yellow`/`orange`/`red`), DYFI felt reports count, significance score
 - Location-based queries: provide `latitude`, `longitude`, and `radius_km` together
 - Sort by time (newest first) or magnitude (largest first), ascending or descending
-- Results capped at 20,000 events per query; use `earthquake_count` first to gauge result size
+- One call returns at most 20,000 events; page beyond that with `offset`, forwarded straight to the upstream FDSN `offset` parameter on both sources
+- `offset` counts from 1, matching both upstream APIs — a capped result carries `totalCount` and the `nextOffset` to pass on the following call
+- Use `earthquake_count` first to gauge result size
 - USGS-specific filters are silently ignored when `source=emsc`
 
 ---
@@ -70,7 +74,8 @@ Count earthquakes matching filters without fetching full records.
 
 - Lightweight alternative to `earthquake_search` for statistical queries ("how many M5+ events in 2025?")
 - Same filter surface as `earthquake_search`: time, magnitude, depth, location radius, PAGER, DYFI, significance
-- Returns `exceeds_limit` flag when count exceeds 20,000 — signals that a full search would be truncated
+- Returns `exceeds_limit` flag when count exceeds 20,000 — signals a full search needs paging
+- Echoes the effective query back as `queryEcho`, including the resolved time window — omitting `start_time` counts only the last 30 days
 - USGS returns the `max_allowed` cap (20,000); EMSC count endpoint does not expose this field (`max_allowed` will be null)
 
 ---
@@ -87,7 +92,7 @@ Fetch complete detail for a specific earthquake by USGS event ID.
 
 | Type | URI pattern | Description |
 |:---|:---|:---|
-| Resource | `earthquake://feed/{magnitude_tier}/{time_window}` | USGS real-time earthquake feed as injectable context |
+| Resource | `earthquake://feed/{magnitude_tier}/{time_window}` | USGS real-time earthquake feed as injectable context — returns the whole feed, so use the `earthquake_get_feed` tool for the broad tiers |
 | Resource | `earthquake://event/{event_id}` | Full USGS earthquake event detail by ID as injectable context |
 
 ## Features

@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.2.0](changelog/0.2.x/0.2.0.md) — 2026-07-26 · ⚠️ Breaking
+
+earthquake_get_feed now pages (breaking: count/events scope to the page, not the whole feed); earthquake_search adds offset paging; earthquake_count echoes its resolved window; unreachable query_too_broad contract removed; EMSC 204 zero-match fix; mcp-ts-core ^0.10.16 maintenance
+
 ## [0.1.16](changelog/0.1.x/0.1.16.md) — 2026-07-02 · 🛡️ Security
 
 Explicit 30-day start_time default for both sources, nullable magnitude, queryEcho enrichment + real totalCount via FDSN count sub-call, feed_unavailable contract wired; js-yaml advisory cleared
