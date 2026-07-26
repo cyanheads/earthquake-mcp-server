@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.2.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/earthquake-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/earthquake-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/earthquake-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.3.0-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/earthquake-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/earthquake-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/earthquake-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -56,7 +56,7 @@ Fetch a USGS pre-computed real-time earthquake feed by magnitude tier and time w
 
 Search earthquakes by time range, magnitude, depth, location radius, PAGER alert level, or felt reports.
 
-- Dual-source: USGS (global, richer metadata) or EMSC (European-Mediterranean, independent catalog for cross-verification)
+- Dual-source: USGS (global, richer metadata) or EMSC (an independent global catalog from the European-Mediterranean Seismological Centre, for cross-verification anywhere)
 - Full FDSN ComCat query API parameters: time range, magnitude, depth, location radius
 - USGS-specific filters: PAGER alert level (`green`/`yellow`/`orange`/`red`), DYFI felt reports count, significance score
 - Location-based queries: provide `latitude`, `longitude`, and `radius_km` together
@@ -64,7 +64,7 @@ Search earthquakes by time range, magnitude, depth, location radius, PAGER alert
 - One call returns at most 20,000 events; page beyond that with `offset`, forwarded straight to the upstream FDSN `offset` parameter on both sources
 - `offset` counts from 1, matching both upstream APIs — a capped result carries `totalCount` and the `nextOffset` to pass on the following call
 - Use `earthquake_count` first to gauge result size
-- USGS-specific filters are silently ignored when `source=emsc`
+- USGS-specific filters are not supported by EMSC — when `source=emsc` they are dropped and named in `ignoredFilters`, so an unconstrained result set is never mistaken for a filtered one
 
 ---
 
@@ -77,6 +77,7 @@ Count earthquakes matching filters without fetching full records.
 - Returns `exceeds_limit` flag when count exceeds 20,000 — signals a full search needs paging
 - Echoes the effective query back as `queryEcho`, including the resolved time window — omitting `start_time` counts only the last 30 days
 - USGS returns the `max_allowed` cap (20,000); EMSC count endpoint does not expose this field (`max_allowed` will be null)
+- USGS-specific filters are dropped and named in `ignoredFilters` when `source=emsc`, the same as on `earthquake_search`
 
 ---
 
@@ -108,7 +109,7 @@ Built on [`@cyanheads/mcp-ts-core`](https://github.com/cyanheads/mcp-ts-core):
 
 Earthquake-specific:
 
-- Two independent data sources: USGS ComCat (global, full metadata) and EMSC SeismicPortal (European-Mediterranean, independent catalog)
+- Two independent global data sources: USGS ComCat (full metadata) and EMSC SeismicPortal (an independent catalog from the European-Mediterranean Seismological Centre, with no PAGER/DYFI/ShakeMap metadata and station coverage densest around Europe and the Mediterranean)
 - USGS real-time GeoJSON feeds (CDN-cached, fast availability) plus FDSN event query API
 - EMSC FDSN-WS event and count endpoints
 - No API key required — both USGS and EMSC are fully public
@@ -117,7 +118,10 @@ Agent-friendly output:
 
 - Source attribution on every response (`usgs` / `emsc`) so agents can reason about data provenance
 - `exceeds_limit` flag on count responses surfaces truncation risk before a full search
-- USGS-specific fields (`alert_level`, `felt`, `mmi`, `tsunami`) clearly labeled as USGS-only to prevent misattribution on EMSC results
+- Fields a source does not publish come back `null`, never as a fabricated zero — `tsunami` and `status` are null on EMSC events, and the rendered text says "not published by source" rather than "no tsunami" or "reviewed"
+- `source_catalog` and `auth` carry provenance (which catalog and which authoritative agency produced a solution) so agents can weigh two sources against each other
+- USGS-only filters dropped for an EMSC query are named in `ignoredFilters` on both `earthquake_search` and `earthquake_count`
+- An upstream 4xx surfaces the service's own explanation (the offending parameter and its accepted format) in the error message, not just a status code
 
 ## Getting started
 
