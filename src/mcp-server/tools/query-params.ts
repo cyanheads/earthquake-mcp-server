@@ -12,6 +12,7 @@ import type { EarthquakeQueryParams } from '@/services/usgs/types.js';
 export interface EarthquakeFilterInput {
   alert_level?: 'green' | 'yellow' | 'orange' | 'red' | undefined;
   end_time?: string | undefined;
+  event_type?: string | undefined;
   latitude?: number | undefined;
   longitude?: number | undefined;
   max_depth_km?: number | undefined;
@@ -24,8 +25,13 @@ export interface EarthquakeFilterInput {
   start_time?: string | undefined;
 }
 
-/** Filters only the USGS FDSN API implements — EMSC has no equivalent parameter. */
-const USGS_ONLY_FILTERS = ['alert_level', 'min_felt', 'min_significance'] as const;
+/**
+ * Filters only the USGS FDSN API implements — EMSC has no equivalent parameter.
+ * `event_type` is here because EMSC's endpoint rejects an `eventtype` parameter
+ * outright with HTTP 400, so forwarding it would fail the query rather than
+ * merely go unapplied.
+ */
+const USGS_ONLY_FILTERS = ['alert_level', 'event_type', 'min_felt', 'min_significance'] as const;
 
 /**
  * Name the USGS-only filters the caller supplied that will not reach the upstream
@@ -73,5 +79,6 @@ export function buildQueryParams(input: EarthquakeFilterInput): EarthquakeQueryP
     ...(input.alert_level != null ? { alertLevel: input.alert_level } : {}),
     ...(input.min_felt != null ? { minFelt: input.min_felt } : {}),
     ...(input.min_significance != null ? { minSignificance: input.min_significance } : {}),
+    ...(input.event_type != null ? { eventType: input.event_type } : {}),
   };
 }

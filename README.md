@@ -58,7 +58,8 @@ Search earthquakes by time range, magnitude, depth, location radius, PAGER alert
 
 - Dual-source: USGS (global, richer metadata) or EMSC (an independent global catalog from the European-Mediterranean Seismological Centre, for cross-verification anywhere)
 - Full FDSN ComCat query API parameters: time range, magnitude, depth, location radius
-- USGS-specific filters: PAGER alert level (`green`/`yellow`/`orange`/`red`), DYFI felt reports count, significance score
+- USGS-specific filters: PAGER alert level (`green`/`yellow`/`orange`/`red`), DYFI felt reports count, significance score, event type
+- Every event carries its upstream `event_type` — USGS spells it out (`earthquake`, `quarry blast`, `explosion`, `ice quake`), EMSC publishes a code (`ke` known earthquake, `ue` unknown event) — and the `event_type` filter narrows to one of them on USGS
 - Location-based queries: provide `latitude`, `longitude`, and `radius_km` together
 - Sort by time (newest first) or magnitude (largest first), ascending or descending
 - One call returns at most 20,000 events; page beyond that with `offset`, forwarded straight to the upstream FDSN `offset` parameter on both sources
@@ -73,7 +74,8 @@ Search earthquakes by time range, magnitude, depth, location radius, PAGER alert
 Count earthquakes matching filters without fetching full records.
 
 - Lightweight alternative to `earthquake_search` for statistical queries ("how many M5+ events in 2025?")
-- Same filter surface as `earthquake_search`: time, magnitude, depth, location radius, PAGER, DYFI, significance
+- Same filter surface as `earthquake_search`: time, magnitude, depth, location radius, PAGER, DYFI, significance, event type
+- A radius over a mining region counts quarry blasts alongside earthquakes — pass `event_type="earthquake"` on USGS to exclude them
 - Returns `exceeds_limit` flag when count exceeds 20,000 — signals a full search needs paging
 - Echoes the effective query back as `queryEcho`, including the resolved time window — omitting `start_time` counts only the last 30 days
 - USGS returns the `max_allowed` cap (20,000); EMSC count endpoint does not expose this field (`max_allowed` will be null)
@@ -85,7 +87,9 @@ Count earthquakes matching filters without fetching full records.
 
 Fetch complete detail for a specific earthquake by USGS event ID.
 
-- Returns the full USGS property set: felt reports count (DYFI), ShakeMap maximum intensity (MMI), PAGER alert level, tsunami flag, and magnitude type
+- Returns the normalized event a search result already carries, plus `detail` — a projection of the analysis products only the single-event response holds
+- `detail` groups: PAGER alert and report link, ShakeMap peak MMI/PGA/PGV and intensity map, DYFI response count and max CDI, moment-tensor scalar moment and nodal planes, landslide and liquefaction alerts, origin quality (azimuthal gap, station count, location and depth uncertainty), finite-fault rupture length and width
+- A group is omitted when USGS produced no such product — a small automatic event usually has none, a large reviewed one has most of them
 - Event IDs appear in the `id` field of `earthquake_get_feed` and `earthquake_search` results (e.g. `us6000sznj`, `hv74966427`)
 - USGS-only — EMSC events have no per-event detail endpoint
 
@@ -94,7 +98,7 @@ Fetch complete detail for a specific earthquake by USGS event ID.
 | Type | URI pattern | Description |
 |:---|:---|:---|
 | Resource | `earthquake://feed/{magnitude_tier}/{time_window}` | USGS real-time earthquake feed as injectable context — returns the whole feed, so use the `earthquake_get_feed` tool for the broad tiers |
-| Resource | `earthquake://event/{event_id}` | Full USGS earthquake event detail by ID as injectable context |
+| Resource | `earthquake://event/{event_id}` | Full USGS earthquake event detail by ID as injectable context, including the same `detail` product projection as `earthquake_get_event` |
 
 ## Features
 
@@ -121,7 +125,8 @@ Agent-friendly output:
 - Fields a source does not publish come back `null`, never as a fabricated zero — `tsunami` and `status` are null on EMSC events, and the rendered text says "not published by source" rather than "no tsunami" or "reviewed"
 - `source_catalog` and `auth` carry provenance (which catalog and which authoritative agency produced a solution) so agents can weigh two sources against each other
 - USGS-only filters dropped for an EMSC query are named in `ignoredFilters` on both `earthquake_search` and `earthquake_count`
-- An upstream 4xx surfaces the service's own explanation (the offending parameter and its accepted format) in the error message, not just a status code
+- An upstream rejection surfaces the service's own explanation (the offending parameter and its accepted format) in the error message, not just a status code; when the service explains nothing, the error says so under its own reason rather than passing the raw upstream body through
+- `event_type` travels with every event, so a quarry blast or explosion is never silently read as an earthquake
 
 ## Getting started
 

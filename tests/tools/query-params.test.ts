@@ -4,7 +4,11 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { buildQueryParams, defaultStartTime } from '@/mcp-server/tools/query-params.js';
+import {
+  buildQueryParams,
+  defaultStartTime,
+  ignoredUsgsFilters,
+} from '@/mcp-server/tools/query-params.js';
 
 const DAY_MS = 86_400_000;
 
@@ -57,6 +61,7 @@ describe('buildQueryParams', () => {
       alert_level: 'yellow',
       min_felt: 10,
       min_significance: 600,
+      event_type: 'quarry blast',
     });
     expect(params).toEqual({
       startTime: '2026-01-01',
@@ -71,11 +76,39 @@ describe('buildQueryParams', () => {
       alertLevel: 'yellow',
       minFelt: 10,
       minSignificance: 600,
+      eventType: 'quarry blast',
     });
   });
 
   it('omits absent optional filters instead of sending undefined', () => {
     const params = buildQueryParams({ start_time: '2026-01-01' });
     expect(Object.keys(params)).toEqual(['startTime']);
+  });
+});
+
+describe('ignoredUsgsFilters', () => {
+  it('names event_type among the USGS-only filters an EMSC query drops (issue #24)', () => {
+    // EMSC's FDSN endpoint has no eventtype parameter and answers one with HTTP 400,
+    // so the filter has to be reported as ignored rather than forwarded.
+    expect(ignoredUsgsFilters({ event_type: 'earthquake' }, 'emsc')).toEqual(['event_type']);
+  });
+
+  it('reports event_type alongside the other USGS-only filters', () => {
+    expect(
+      ignoredUsgsFilters(
+        { alert_level: 'red', event_type: 'earthquake', min_felt: 5, min_significance: 600 },
+        'emsc',
+      ),
+    ).toEqual(['alert_level', 'event_type', 'min_felt', 'min_significance']);
+  });
+
+  it('reports nothing for a USGS query, where every filter is sent', () => {
+    expect(ignoredUsgsFilters({ event_type: 'earthquake', alert_level: 'red' }, 'usgs')).toEqual(
+      [],
+    );
+  });
+
+  it('reports nothing when no USGS-only filter was supplied', () => {
+    expect(ignoredUsgsFilters({ min_magnitude: 5 }, 'emsc')).toEqual([]);
   });
 });

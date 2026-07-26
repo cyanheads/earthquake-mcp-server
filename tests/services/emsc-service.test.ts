@@ -255,3 +255,77 @@ describe('EmscService.searchEvents — 204 No Content is an empty match set', ()
     vi.unstubAllGlobals();
   });
 });
+
+describe('EmscService — event type normalization (issue #24)', () => {
+  it('carries a non-"ke" evtype through, the only place EMSC publishes the classification', async () => {
+    // EMSC builds its title from magnitude and region alone, so evtype is unrecoverable
+    // once dropped. "ue" (unknown event) is the code that appears alongside the dominant "ke".
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(jsonResponse([makeFeature('20260726_0000042', 3.1, { evtype: 'ue' })])),
+    );
+
+    const service = makeService();
+    const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
+
+    expect(result.events[0]?.event_type).toBe('ue');
+    expect(result.events[0]?.title).not.toContain('ue');
+    vi.unstubAllGlobals();
+  });
+
+  it('carries the dominant "ke" code through as well', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(jsonResponse([makeFeature('20260726_0000043', 5.2, { evtype: 'ke' })])),
+    );
+
+    const service = makeService();
+    const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
+
+    expect(result.events[0]?.event_type).toBe('ke');
+    vi.unstubAllGlobals();
+  });
+
+  it('omits event_type when the payload publishes no evtype', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse([makeFeature('20260726_0000044', 2.0)])),
+    );
+
+    const service = makeService();
+    const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
+
+    expect(result.events[0]).not.toHaveProperty('event_type');
+    vi.unstubAllGlobals();
+  });
+
+  it('never sends eventtype upstream — EMSC answers an unknown parameter with HTTP 400', async () => {
+    // A Response body is single-use, so each call gets its own instance.
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ type: 'FeatureCollection', features: [], count: 0 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.searchEvents(
+      { limit: 5, eventType: 'earthquake' },
+      createMockContext() as Context,
+    );
+    await service.countEvents({ eventType: 'earthquake' }, createMockContext() as Context);
+
+    for (const call of fetchMock.mock.calls) {
+      expect(String(call[0])).not.toContain('eventtype');
+      expect(String(call[0])).not.toContain('evtype');
+    }
+    vi.unstubAllGlobals();
+  });
+});

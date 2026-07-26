@@ -242,3 +242,270 @@ describe('UsgsService — non-2xx surfaces as a status-mapped error (issue #20)'
     vi.unstubAllGlobals();
   });
 });
+
+describe('UsgsService — event type normalization and filter (issue #24)', () => {
+  it.each(['quarry blast', 'explosion', 'ice quake'])(
+    'carries the upstream %s classification through normalization',
+    async (type) => {
+      const feature = makeFeature('ci40000000', 1.5);
+      feature.properties.type = type;
+      feature.properties.title = `M 1.5 ${type} - 6 km S of Mojave, CA`;
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([feature])));
+
+      const service = makeService();
+      const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
+
+      expect(result.events[0]?.event_type).toBe(type);
+      vi.unstubAllGlobals();
+    },
+  );
+
+  it('omits event_type when the payload carries no type', async () => {
+    const feature = makeFeature('us1', 4.5);
+    delete feature.properties.type;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([feature])));
+
+    const service = makeService();
+    const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
+
+    expect(result.events[0]).not.toHaveProperty('event_type');
+    vi.unstubAllGlobals();
+  });
+
+  it('forwards eventType as the FDSN eventtype parameter', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(geojsonResponse([makeFeature('us1', 5)]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.searchEvents(
+      { limit: 5, eventType: 'quarry blast' },
+      createMockContext() as Context,
+    );
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('eventtype=quarry+blast');
+    vi.unstubAllGlobals();
+  });
+
+  it('omits eventtype from the querystring when no filter was supplied', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(geojsonResponse([makeFeature('us1', 5)]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.searchEvents({ limit: 5 }, createMockContext() as Context);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain('eventtype=');
+    vi.unstubAllGlobals();
+  });
+});
+
+/**
+ * Shapes below mirror the live single-event response for the M7.5 Noto Peninsula
+ * event (us6000m0xl): every product property is a string, and content files are
+ * keyed by filename with the URL nested under `url`.
+ */
+function productRichFeature(): UsgsFeature {
+  const feature = makeFeature('us6000m0xl', 7.5);
+  feature.properties.products = {
+    losspager: [
+      {
+        properties: { alertlevel: 'red', maxmmi: '9' },
+        contents: {
+          'json/losses.json': { url: 'https://earthquake.usgs.gov/…/json/losses.json' },
+          'onepager.pdf': { url: 'https://earthquake.usgs.gov/…/onepager.pdf' },
+        },
+      },
+    ],
+    shakemap: [
+      {
+        properties: { maxmmi: '8.793', maxpga: '1.669', maxpgv: '120.336' },
+        contents: {
+          'download/intensity.jpg': { url: 'https://earthquake.usgs.gov/…/intensity.jpg' },
+          'download/intensity_overlay.png': { url: 'https://earthquake.usgs.gov/…/overlay.png' },
+        },
+      },
+    ],
+    dyfi: [
+      {
+        properties: { 'num-responses': '420', numResp: '420', maxmmi: '8.9' },
+        contents: {
+          'us6000m0xl_ciim.jpg': { url: 'https://earthquake.usgs.gov/…/us6000m0xl_ciim.jpg' },
+          'us6000m0xl_ciim_geo.jpg': { url: 'https://earthquake.usgs.gov/…/ciim_geo.jpg' },
+        },
+      },
+    ],
+    'moment-tensor': [
+      {
+        properties: {
+          'scalar-moment': '2.27E+20',
+          'derived-depth': '15.5',
+          'nodal-plane-1-strike': '49.23',
+          'nodal-plane-1-dip': '41.32',
+          'nodal-plane-1-rake': '102.5',
+          'nodal-plane-2-strike': '212.78',
+          'nodal-plane-2-dip': '49.86',
+          'nodal-plane-2-rake': '79.22',
+        },
+      },
+    ],
+    'ground-failure': [
+      { properties: { 'landslide-alert': 'orange', 'liquefaction-alert': 'red' } },
+    ],
+    origin: [
+      {
+        properties: {
+          'azimuthal-gap': '36',
+          'num-stations-used': '282',
+          'horizontal-error': '4.03',
+          'vertical-error': '1.807',
+          'review-status': 'reviewed',
+        },
+      },
+    ],
+    'finite-fault': [
+      {
+        properties: { 'model-length': '175.0000', 'model-width': '45.0000' },
+        contents: { 'FFM.geojson': { url: 'https://earthquake.usgs.gov/…/FFM.geojson' } },
+      },
+    ],
+    'phase-data': [{ properties: { 'azimuthal-gap': '36' } }],
+  };
+  return feature;
+}
+
+/** A bare automatic event: only origin and phase-data, every impact product absent. */
+function bareFeature(): UsgsFeature {
+  const feature = makeFeature('hv75008152', 2.1);
+  feature.properties.status = 'automatic';
+  feature.properties.products = {
+    origin: [{ properties: { 'azimuthal-gap': '178', 'num-stations-used': '9' } }],
+    'phase-data': [{ properties: { 'azimuthal-gap': '178' } }],
+  };
+  return feature;
+}
+
+describe('UsgsService.getEvent — product projection (issue #25)', () => {
+  it('projects every product group from a product-rich event', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([productRichFeature()])));
+
+    const service = makeService();
+    const { event, detail } = await service.getEvent('us6000m0xl', createMockContext() as Context);
+
+    expect(event.id).toBe('us6000m0xl');
+    expect(detail).toEqual({
+      losspager: {
+        alert_level: 'red',
+        report_url: 'https://earthquake.usgs.gov/…/onepager.pdf',
+      },
+      shakemap: {
+        max_mmi: 8.793,
+        max_pga: 1.669,
+        max_pgv: 120.336,
+        intensity_map_url: 'https://earthquake.usgs.gov/…/intensity.jpg',
+      },
+      dyfi: {
+        responses: 420,
+        max_cdi: 8.9,
+        map_url: 'https://earthquake.usgs.gov/…/us6000m0xl_ciim.jpg',
+      },
+      moment_tensor: {
+        scalar_moment_nm: 2.27e20,
+        derived_depth_km: 15.5,
+        nodal_plane_1: { strike: 49.23, dip: 41.32, rake: 102.5 },
+        nodal_plane_2: { strike: 212.78, dip: 49.86, rake: 79.22 },
+      },
+      ground_failure: { landslide_alert: 'orange', liquefaction_alert: 'red' },
+      origin: {
+        azimuthal_gap_deg: 36,
+        num_stations_used: 282,
+        horizontal_error_km: 4.03,
+        depth_error_km: 1.807,
+        review_status: 'reviewed',
+      },
+      finite_fault: {
+        rupture_length_km: 175,
+        rupture_width_km: 45,
+        model_url: 'https://earthquake.usgs.gov/…/FFM.geojson',
+      },
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it('omits absent product groups on a bare automatic event rather than nulling them', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([bareFeature()])));
+
+    const service = makeService();
+    const { detail } = await service.getEvent('hv75008152', createMockContext() as Context);
+
+    expect(detail).toEqual({ origin: { azimuthal_gap_deg: 178, num_stations_used: 9 } });
+    for (const group of [
+      'losspager',
+      'shakemap',
+      'dyfi',
+      'moment_tensor',
+      'ground_failure',
+      'finite_fault',
+    ]) {
+      expect(detail).not.toHaveProperty(group);
+    }
+    vi.unstubAllGlobals();
+  });
+
+  it('leaves detail absent entirely when the event carries no products', async () => {
+    const feature = makeFeature('nc12345678', 1.1);
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([feature])));
+
+    const service = makeService();
+    const result = await service.getEvent('nc12345678', createMockContext() as Context);
+
+    expect(result).not.toHaveProperty('detail');
+    expect(result.event.id).toBe('nc12345678');
+    vi.unstubAllGlobals();
+  });
+
+  it('drops a nodal plane missing one of its three angles', async () => {
+    const feature = makeFeature('us1', 6.2);
+    feature.properties.products = {
+      'moment-tensor': [
+        {
+          properties: {
+            'scalar-moment': '1.5E+18',
+            'nodal-plane-1-strike': '49.23',
+            'nodal-plane-1-dip': '41.32',
+          },
+        },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([feature])));
+
+    const service = makeService();
+    const { detail } = await service.getEvent('us1', createMockContext() as Context);
+
+    expect(detail?.moment_tensor).toEqual({ scalar_moment_nm: 1.5e18 });
+    vi.unstubAllGlobals();
+  });
+
+  it('skips an unparseable numeric property instead of emitting NaN', async () => {
+    const feature = makeFeature('us1', 6.2);
+    feature.properties.products = {
+      shakemap: [{ properties: { maxmmi: 'n/a', maxpga: '1.5' } }],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([feature])));
+
+    const service = makeService();
+    const { detail } = await service.getEvent('us1', createMockContext() as Context);
+
+    expect(detail?.shakemap).toEqual({ max_pga: 1.5 });
+    vi.unstubAllGlobals();
+  });
+
+  it('leaves list normalization untouched — products never reach a search result', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([productRichFeature()])));
+
+    const service = makeService();
+    const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
+
+    expect(result.events[0]).not.toHaveProperty('detail');
+    expect(result.events[0]).not.toHaveProperty('products');
+    vi.unstubAllGlobals();
+  });
+});

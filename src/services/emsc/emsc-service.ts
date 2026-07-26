@@ -73,6 +73,9 @@ function normalizeEmscFeature(f: EmscFeature): EarthquakeEvent {
     // What EMSC does publish about provenance, so callers can judge it themselves
     ...(p.source_catalog ? { source_catalog: p.source_catalog } : {}),
     ...(p.auth ? { auth: p.auth } : {}),
+    // EMSC's title is built from magnitude and region alone, so evtype is the only
+    // place the classification survives — carry it through or it is unrecoverable.
+    ...(p.evtype ? { event_type: p.evtype } : {}),
   };
 }
 
@@ -227,7 +230,9 @@ export class EmscService {
     }
     if (params.minDepthKm != null) q.set('mindepth', String(params.minDepthKm));
     if (params.maxDepthKm != null) q.set('maxdepth', String(params.maxDepthKm));
-    // EMSC does not support alertlevel, minfelt, minsig — silently omit
+    // EMSC does not support alertlevel, minfelt, minsig, eventtype — silently omit.
+    // Its endpoint has no eventtype parameter at all and answers one with HTTP 400
+    // "Unknown request parameters(s)", so sending it would fail the whole query.
     if (params.limit != null) q.set('limit', String(params.limit));
     // FDSN offset is 1-based — offset=1 is the first match, and 0 is rejected.
     if (params.offset != null) q.set('offset', String(params.offset));

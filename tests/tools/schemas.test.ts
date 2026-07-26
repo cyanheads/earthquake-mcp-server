@@ -4,8 +4,13 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import type { EarthquakeEventOutput } from '@/mcp-server/tools/schemas.js';
-import { EarthquakeEventSchema, formatEvent } from '@/mcp-server/tools/schemas.js';
+import type { EarthquakeDetailOutput, EarthquakeEventOutput } from '@/mcp-server/tools/schemas.js';
+import {
+  EarthquakeDetailSchema,
+  EarthquakeEventSchema,
+  formatEvent,
+  formatEventDetail,
+} from '@/mcp-server/tools/schemas.js';
 
 const fullEvent: EarthquakeEventOutput = {
   id: 'us6000sznj',
@@ -346,6 +351,7 @@ describe('formatEvent — null impact fields reach content[] (issue #17)', () =>
       tsunami: null,
       source_catalog: 'EMSC-RTS',
       auth: 'NDI',
+      event_type: 'ke',
     };
 
     /** Rendered fragment that proves each structuredContent field reached content[]. */
@@ -369,6 +375,7 @@ describe('formatEvent — null impact fields reach content[] (issue #17)', () =>
       status: '**Provenance:** Status: not published by source',
       source_catalog: 'Catalog: EMSC-RTS',
       auth: 'Agency: NDI',
+      event_type: '**Event type:** ke',
     };
 
     // Absent from this event, so absent from both surfaces — that is parity too
@@ -415,5 +422,136 @@ describe('EarthquakeEventSchema — null magnitude (issue #13)', () => {
   it('formatEvent renders magnitude 0 as the number 0', () => {
     const lines = formatEvent({ ...sparseEvent, magnitude: 0 });
     expect(lines.join('\n')).toContain('**Magnitude:** 0 (ml)');
+  });
+});
+
+describe('EarthquakeEventSchema — event_type (issue #24)', () => {
+  it('accepts an event with no event_type — not every source publishes one', () => {
+    const result = EarthquakeEventSchema.safeParse(sparseEvent);
+    expect(result.success).toBe(true);
+    expect(result.data?.event_type).toBeUndefined();
+  });
+
+  it.each(['quarry blast', 'explosion', 'ice quake', 'ue'])(
+    'renders %s so a non-tectonic record cannot read as seismicity',
+    (eventType) => {
+      const text = formatEvent({ ...fullEvent, event_type: eventType }).join('\n');
+      expect(text).toContain(`**Event type:** ${eventType}`);
+    },
+  );
+
+  it('leaves the plain "earthquake" classification out of the rendered text', () => {
+    const text = formatEvent({ ...fullEvent, event_type: 'earthquake' }).join('\n');
+    expect(text).not.toContain('**Event type:**');
+  });
+
+  it('omits the line entirely when the source published no classification', () => {
+    const text = formatEvent(sparseEvent).join('\n');
+    expect(text).not.toContain('**Event type:**');
+  });
+});
+
+describe('formatEventDetail (issue #25)', () => {
+  const fullDetail: EarthquakeDetailOutput = {
+    losspager: {
+      alert_level: 'red',
+      report_url: 'https://earthquake.usgs.gov/product/losspager/us6000m0xl/us/1/onepager.pdf',
+    },
+    shakemap: {
+      max_mmi: 8.793,
+      max_pga: 1.669,
+      max_pgv: 120.336,
+      intensity_map_url:
+        'https://earthquake.usgs.gov/product/shakemap/us6000m0xl/us/1/download/intensity.jpg',
+    },
+    dyfi: {
+      responses: 420,
+      max_cdi: 8.9,
+      map_url: 'https://earthquake.usgs.gov/product/dyfi/us6000m0xl/us/1/us6000m0xl_ciim.jpg',
+    },
+    moment_tensor: {
+      scalar_moment_nm: 2.27e20,
+      derived_depth_km: 15.5,
+      nodal_plane_1: { strike: 49.23, dip: 41.32, rake: 102.5 },
+      nodal_plane_2: { strike: 212.78, dip: 49.86, rake: 79.22 },
+    },
+    ground_failure: { landslide_alert: 'orange', liquefaction_alert: 'red' },
+    origin: {
+      azimuthal_gap_deg: 36,
+      num_stations_used: 282,
+      horizontal_error_km: 4.03,
+      depth_error_km: 1.807,
+      review_status: 'reviewed',
+    },
+    finite_fault: {
+      rupture_length_km: 175,
+      rupture_width_km: 45,
+      model_url: 'https://earthquake.usgs.gov/product/finite-fault/us6000m0xl/us/1/FFM.geojson',
+    },
+  };
+
+  it('renders every leaf of the detail schema, so content[] matches structuredContent', () => {
+    const text = formatEventDetail(fullDetail).join('\n');
+    for (const fragment of [
+      'red',
+      'onepager.pdf',
+      '8.793',
+      '1.669',
+      '120.336',
+      'download/intensity.jpg',
+      '420',
+      '8.9',
+      '_ciim.jpg',
+      String(2.27e20),
+      '15.5',
+      'strike 49.23°, dip 41.32°, rake 102.5°',
+      'strike 212.78°, dip 49.86°, rake 79.22°',
+      'orange',
+      '36',
+      '282',
+      '4.03',
+      '1.807',
+      'reviewed',
+      '175',
+      '45',
+      'FFM.geojson',
+    ]) {
+      expect(text, `missing "${fragment}" from the rendered detail`).toContain(fragment);
+    }
+  });
+
+  it('says a bare event has no products rather than rendering zeros', () => {
+    const text = formatEventDetail(undefined).join('\n');
+    expect(text).toContain('No analysis products on this event');
+    expect(text).not.toContain('**PAGER:**');
+    expect(text).not.toContain('**ShakeMap:**');
+  });
+
+  it('treats an empty projection the same as an absent one', () => {
+    expect(formatEventDetail({}).join('\n')).toContain('No analysis products on this event');
+  });
+
+  it('renders only the groups the event carries', () => {
+    const text = formatEventDetail({ origin: { azimuthal_gap_deg: 178 } }).join('\n');
+    expect(text).toContain('**Origin quality:** Azimuthal gap: 178°');
+    expect(text).not.toContain('**PAGER:**');
+    expect(text).not.toContain('**Finite fault:**');
+  });
+
+  it('names a missing field inside a present group instead of implying zero', () => {
+    const text = formatEventDetail({ dyfi: { responses: 12 } }).join('\n');
+    expect(text).toContain('Responses: 12');
+    expect(text).toContain('Max CDI: not published');
+  });
+
+  it('drops a nodal plane clause when the solution carries none', () => {
+    const text = formatEventDetail({ moment_tensor: { scalar_moment_nm: 1.5e18 } }).join('\n');
+    expect(text).toContain(`Scalar moment: ${1.5e18} N·m`);
+    expect(text).toContain('Derived depth: not published');
+    expect(text).not.toContain('Nodal plane');
+  });
+
+  it('parses as a valid EarthquakeDetailSchema value', () => {
+    expect(EarthquakeDetailSchema.safeParse(fullDetail).success).toBe(true);
   });
 });

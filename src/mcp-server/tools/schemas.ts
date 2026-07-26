@@ -83,6 +83,15 @@ export const EarthquakeEventSchema = z.object({
     .describe(
       'Code of the agency or network the source names as authoritative for this solution, e.g. "NEIC", "BMKG", "NDI" from EMSC or "us", "ci", "ak" from USGS. Absent when the source reports none.',
     ),
+  event_type: z
+    .string()
+    .optional()
+    .describe(
+      'Upstream event classification. USGS spells it out — "earthquake", "quarry blast", ' +
+        '"explosion", "ice quake" — while EMSC publishes a two-letter evtype code, "ke" for a ' +
+        'known earthquake and "ue" for an unknown event. Not every record in either catalog is a ' +
+        'tectonic earthquake. Absent when the source publishes no classification.',
+    ),
   event_url: z.string().optional().describe('USGS event page URL. Present for USGS events only.'),
   detail_url: z
     .string()
@@ -93,6 +102,240 @@ export const EarthquakeEventSchema = z.object({
 /** Inferred from EarthquakeEventSchema — the output type for a normalized earthquake event. */
 export type EarthquakeEventOutput = z.infer<typeof EarthquakeEventSchema>;
 
+/** One nodal plane of a moment-tensor solution. */
+const NodalPlaneSchema = z.object({
+  strike: z.number().describe('Fault plane strike in degrees clockwise from north (0–360).'),
+  dip: z.number().describe('Fault plane dip in degrees from horizontal (0–90).'),
+  rake: z
+    .number()
+    .describe(
+      'Slip direction in degrees (-180 to 180). Near 90 is reverse faulting, near -90 normal, near 0 or 180 strike-slip.',
+    ),
+});
+
+/**
+ * Curated projection of the analysis products USGS attaches to a single-event
+ * response. Every group is optional and omitted when the event carries no such
+ * product — absence means "not produced for this event", never zero.
+ */
+export const EarthquakeDetailSchema = z.object({
+  losspager: z
+    .object({
+      alert_level: z
+        .string()
+        .optional()
+        .describe('PAGER impact alert level — "green", "yellow", "orange", or "red".'),
+      report_url: z
+        .string()
+        .optional()
+        .describe('URL of the PAGER one-page PDF summary of estimated impact.'),
+    })
+    .optional()
+    .describe(
+      'PAGER impact assessment. Estimated fatality and economic-loss brackets live in a separate ' +
+        'content file and are not part of this response — fetch report_url for them.',
+    ),
+  shakemap: z
+    .object({
+      max_mmi: z
+        .number()
+        .optional()
+        .describe(
+          'Maximum modeled shaking intensity across the ShakeMap grid (Modified Mercalli).',
+        ),
+      max_pga: z
+        .number()
+        .optional()
+        .describe('Maximum modeled peak ground acceleration, in percent of g.'),
+      max_pgv: z.number().optional().describe('Maximum modeled peak ground velocity, in cm/s.'),
+      intensity_map_url: z
+        .string()
+        .optional()
+        .describe('URL of the rendered ShakeMap intensity map image.'),
+    })
+    .optional()
+    .describe('ShakeMap modeled ground-motion summary. Absent when no ShakeMap was produced.'),
+  dyfi: z
+    .object({
+      responses: z
+        .number()
+        .optional()
+        .describe('Number of "Did You Feel It?" reports the public submitted.'),
+      max_cdi: z
+        .number()
+        .optional()
+        .describe('Maximum Community Decimal Intensity derived from those reports (0–12 scale).'),
+      map_url: z.string().optional().describe('URL of the rendered DYFI intensity map image.'),
+    })
+    .optional()
+    .describe('Felt-report summary. Absent when no DYFI product exists for the event.'),
+  moment_tensor: z
+    .object({
+      scalar_moment_nm: z
+        .number()
+        .optional()
+        .describe('Scalar seismic moment in newton-metres — the physical size of the rupture.'),
+      derived_depth_km: z
+        .number()
+        .optional()
+        .describe('Centroid depth in kilometers derived from the moment-tensor inversion.'),
+      nodal_plane_1: NodalPlaneSchema.optional().describe(
+        'First nodal plane of the focal mechanism. Either plane can be the true fault.',
+      ),
+      nodal_plane_2: NodalPlaneSchema.optional().describe(
+        'Second nodal plane — the auxiliary solution, indistinguishable from the first on seismic data alone.',
+      ),
+    })
+    .optional()
+    .describe('Focal-mechanism solution. Absent for events with no moment-tensor inversion.'),
+  ground_failure: z
+    .object({
+      landslide_alert: z
+        .string()
+        .optional()
+        .describe('Landslide hazard alert level — "green", "yellow", "orange", or "red".'),
+      liquefaction_alert: z
+        .string()
+        .optional()
+        .describe('Liquefaction hazard alert level — "green", "yellow", "orange", or "red".'),
+    })
+    .optional()
+    .describe('Secondary-hazard alert levels. Absent when no ground-failure model was run.'),
+  origin: z
+    .object({
+      azimuthal_gap_deg: z
+        .number()
+        .optional()
+        .describe(
+          'Largest azimuthal gap between stations, in degrees. Gaps above ~180 make the location poorly constrained.',
+        ),
+      num_stations_used: z
+        .number()
+        .optional()
+        .describe('Number of seismic stations used in the location solution.'),
+      horizontal_error_km: z
+        .number()
+        .optional()
+        .describe('Horizontal location uncertainty in kilometers.'),
+      depth_error_km: z.number().optional().describe('Depth uncertainty in kilometers.'),
+      review_status: z
+        .string()
+        .optional()
+        .describe('Review state of the origin solution as the contributing network published it.'),
+    })
+    .optional()
+    .describe('Location-quality metrics for the preferred origin.'),
+  finite_fault: z
+    .object({
+      rupture_length_km: z
+        .number()
+        .optional()
+        .describe('Modeled rupture length along strike, in kilometers.'),
+      rupture_width_km: z
+        .number()
+        .optional()
+        .describe('Modeled rupture width down dip, in kilometers.'),
+      model_url: z.string().optional().describe('URL of the finite-fault rupture model file.'),
+    })
+    .optional()
+    .describe('Finite-fault rupture model. Produced only for large events.'),
+});
+
+/** Inferred from EarthquakeDetailSchema — the product projection for a single event. */
+export type EarthquakeDetailOutput = z.infer<typeof EarthquakeDetailSchema>;
+
+/** Render a projected field with its unit, or say the product omitted it. Never implies zero. */
+function detailValue(value: number | string | undefined, unit = ''): string {
+  return value == null ? 'not published' : `${value}${unit}`;
+}
+
+/**
+ * Render the product projection as markdown lines. Renders every schema field for
+ * format-parity, and says so plainly when a group is absent rather than implying zero.
+ */
+export function formatEventDetail(detail: EarthquakeDetailOutput | undefined): string[] {
+  const lines: string[] = ['', '### Analysis products'];
+  if (detail == null || Object.keys(detail).length === 0) {
+    lines.push(
+      '_No analysis products on this event — USGS publishes them for larger or reviewed events._',
+    );
+    return lines;
+  }
+
+  const pager = detail.losspager;
+  if (pager) {
+    lines.push(
+      `**PAGER:** Alert level: ${detailValue(pager.alert_level)}` +
+        (pager.report_url ? ` | Report: ${pager.report_url}` : ''),
+    );
+  }
+
+  const shakemap = detail.shakemap;
+  if (shakemap) {
+    lines.push(
+      `**ShakeMap:** Max MMI: ${detailValue(shakemap.max_mmi)} | ` +
+        `Max PGA: ${detailValue(shakemap.max_pga, ' %g')} | ` +
+        `Max PGV: ${detailValue(shakemap.max_pgv, ' cm/s')}` +
+        (shakemap.intensity_map_url ? ` | Intensity map: ${shakemap.intensity_map_url}` : ''),
+    );
+  }
+
+  const dyfi = detail.dyfi;
+  if (dyfi) {
+    lines.push(
+      `**DYFI:** Responses: ${detailValue(dyfi.responses)} | ` +
+        `Max CDI: ${detailValue(dyfi.max_cdi)}` +
+        (dyfi.map_url ? ` | Map: ${dyfi.map_url}` : ''),
+    );
+  }
+
+  const tensor = detail.moment_tensor;
+  if (tensor) {
+    const planes = [tensor.nodal_plane_1, tensor.nodal_plane_2]
+      .map((plane, index) =>
+        plane
+          ? `Nodal plane ${index + 1}: strike ${plane.strike}°, dip ${plane.dip}°, rake ${plane.rake}°`
+          : undefined,
+      )
+      .filter((text) => text != null);
+    lines.push(
+      `**Moment tensor:** Scalar moment: ${detailValue(tensor.scalar_moment_nm, ' N·m')} | ` +
+        `Derived depth: ${detailValue(tensor.derived_depth_km, ' km')}` +
+        (planes.length > 0 ? ` | ${planes.join(' | ')}` : ''),
+    );
+  }
+
+  const failure = detail.ground_failure;
+  if (failure) {
+    lines.push(
+      `**Ground failure:** Landslide alert: ${detailValue(failure.landslide_alert)} | ` +
+        `Liquefaction alert: ${detailValue(failure.liquefaction_alert)}`,
+    );
+  }
+
+  const origin = detail.origin;
+  if (origin) {
+    lines.push(
+      `**Origin quality:** Azimuthal gap: ${detailValue(origin.azimuthal_gap_deg, '°')} | ` +
+        `Stations used: ${detailValue(origin.num_stations_used)} | ` +
+        `Horizontal error: ${detailValue(origin.horizontal_error_km, ' km')} | ` +
+        `Depth error: ${detailValue(origin.depth_error_km, ' km')} | ` +
+        `Review status: ${detailValue(origin.review_status)}`,
+    );
+  }
+
+  const fault = detail.finite_fault;
+  if (fault) {
+    lines.push(
+      `**Finite fault:** Rupture length: ${detailValue(fault.rupture_length_km, ' km')} | ` +
+        `Rupture width: ${detailValue(fault.rupture_width_km, ' km')}` +
+        (fault.model_url ? ` | Model: ${fault.model_url}` : ''),
+    );
+  }
+
+  return lines;
+}
+
 /** Format a single earthquake event as markdown lines. Renders all schema fields for format-parity. */
 export function formatEvent(event: EarthquakeEventOutput): string[] {
   const lines: string[] = [];
@@ -101,6 +344,12 @@ export function formatEvent(event: EarthquakeEventOutput): string[] {
     `**ID:** ${event.id} | **Magnitude:** ${event.magnitude !== null ? event.magnitude : 'unknown'} (${event.magnitude_type}) | **Depth:** ${event.depth_km !== null ? `${event.depth_km} km` : 'unknown'}`,
   );
   lines.push(`**Place:** ${event.place}`);
+  // USGS titles carry the classification for non-earthquakes, EMSC titles never do.
+  // Rendering anything other than a plain "earthquake" keeps quarry blasts and
+  // explosions from reading as seismicity in the text-only surface.
+  if (event.event_type != null && event.event_type !== 'earthquake') {
+    lines.push(`**Event type:** ${event.event_type}`);
+  }
   lines.push(`**Time:** ${event.time} | **Updated:** ${event.updated}`);
   lines.push(`**Location:** ${event.latitude.toFixed(4)}°, ${event.longitude.toFixed(4)}°`);
 
