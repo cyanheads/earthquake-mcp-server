@@ -105,8 +105,9 @@ describe('extractFdsnReason', () => {
 });
 
 describe('upstreamRejection', () => {
-  const upstream = (status: number, body: unknown) =>
-    new McpError(JsonRpcErrorCode.InvalidParams, `Fetch failed. Status: ${status}`, {
+  /** Shaped like what `fetchWithTimeout` raises: the framework's status-mapped code plus the captured body. */
+  const upstream = (status: number, body: unknown, code = JsonRpcErrorCode.InvalidParams) =>
+    new McpError(code, `Fetch failed. Status: ${status}`, {
       status,
       statusText: 'Bad Request',
       body,
@@ -121,14 +122,58 @@ describe('upstreamRejection', () => {
   });
 
   it('ignores a 5xx — that failure class is source_unavailable, not a bad parameter', () => {
-    expect(upstreamRejection(upstream(503, 'Error 503: upstream down'))).toBeUndefined();
+    expect(
+      upstreamRejection(
+        upstream(503, 'Error 503: upstream down', JsonRpcErrorCode.ServiceUnavailable),
+      ),
+    ).toBeUndefined();
   });
 
-  it('ignores a 4xx whose body says nothing actionable', () => {
+  it('reports a rejection with no reason rather than dropping it (issue #27)', () => {
+    // Boilerplate-only body: the stamp, the echoed request, nothing else.
     expect(
-      upstreamRejection(upstream(400, 'Error 400: Bad Request\n\nRequest:\n/query')),
-    ).toBeUndefined();
-    expect(upstreamRejection(upstream(400, undefined))).toBeUndefined();
+      upstreamRejection(
+        upstream(400, 'Error 400: Bad Request\n\nRequest:\nhttp://ws2/query?format=json'),
+      ),
+    ).toEqual({ status: 400 });
+  });
+
+  it('reports a rejection with no reason for an HTML error page from a CDN or WAF', () => {
+    expect(
+      upstreamRejection(
+        upstream(400, '<!DOCTYPE html>\n<html><body>400 Bad Request</body></html>'),
+      ),
+    ).toEqual({ status: 400 });
+  });
+
+  it('reports a rejection with no reason when no body was captured at all', () => {
+    expect(upstreamRejection(upstream(400, undefined))).toEqual({ status: 400 });
+  });
+
+  it('never relabels a 404 — that is a misconfigured base URL, not a bad parameter', () => {
+    // Body carries an incidentally-extractable line; the NotFound code must still win.
+    const notFound = upstream(
+      404,
+      'Error 404: Not Found\n\nNo such resource here\n\nRequest:\n/query',
+      JsonRpcErrorCode.NotFound,
+    );
+    expect(upstreamRejection(notFound)).toBeUndefined();
+  });
+
+  it.each([
+    ['401 Unauthorized', 401, JsonRpcErrorCode.Unauthorized],
+    ['403 Forbidden', 403, JsonRpcErrorCode.Forbidden],
+    ['429 Rate limited', 429, JsonRpcErrorCode.RateLimited],
+  ] as const)('leaves %s to its own failure class', (_label, status, code) => {
+    expect(upstreamRejection(upstream(status, 'Error: blocked', code))).toBeUndefined();
+  });
+
+  it('recognizes a 422 as a parameter rejection — the framework maps it to ValidationError', () => {
+    expect(
+      upstreamRejection(
+        upstream(422, 'Error 422: minmag > maxmag', JsonRpcErrorCode.ValidationError),
+      ),
+    ).toEqual({ status: 422, reason: 'minmag > maxmag' });
   });
 
   it('ignores errors that are not McpError', () => {

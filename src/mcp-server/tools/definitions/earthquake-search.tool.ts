@@ -20,8 +20,10 @@ export const earthquakeSearch = tool('earthquake_search', {
     'Supports USGS (global, richer metadata: PAGER, DYFI, ShakeMap) and EMSC, an independent global ' +
     'catalog operated by the European-Mediterranean Seismological Centre. ' +
     'For location-based queries, provide latitude, longitude, and radius_km together. ' +
-    'USGS-specific filters (alert_level, min_felt, min_significance) are not sent when source=emsc — ' +
-    'the response names them in ignoredFilters. ' +
+    'Both catalogs include non-tectonic records (quarry blasts, explosions) — every event carries ' +
+    'its event_type, and event_type="earthquake" filters the rest out on USGS. ' +
+    'USGS-specific filters (alert_level, event_type, min_felt, min_significance) are not sent when ' +
+    'source=emsc — the response names them in ignoredFilters. ' +
     'Use earthquake_count first to gauge result size before requesting large result sets. ' +
     'A single call returns at most 20,000 events; larger result sets are retrieved by paging with ' +
     'offset, which is passed straight through to the upstream FDSN API. When a result is capped, ' +
@@ -105,6 +107,15 @@ export const earthquakeSearch = tool('earthquake_search', {
         'Minimum USGS significance score (0–2000+). ' +
           'Combines magnitude, felt reports, and PAGER estimates. ' +
           'Significant events typically score 600+. Only available from USGS.',
+      ),
+    event_type: z
+      .string()
+      .optional()
+      .describe(
+        'Filter by upstream event classification, e.g. "earthquake" to exclude quarry blasts and ' +
+          'explosions, or "quarry blast" to see only those. Matched verbatim against the USGS ' +
+          'catalog, which accepts any string and returns zero matches for an unrecognized one. ' +
+          'Only available from USGS.',
       ),
     source: z
       .enum(['usgs', 'emsc'])
@@ -232,6 +243,10 @@ export const earthquakeSearch = tool('earthquake_search', {
           .number()
           .optional()
           .describe('Significance filter sent upstream. Absent for EMSC — not supported there.'),
+        event_type: z
+          .string()
+          .optional()
+          .describe('Event-type filter sent upstream. Absent for EMSC — not supported there.'),
         source: z.enum(['usgs', 'emsc']).describe('Data source queried.'),
         limit: z.number().describe('Effective result limit sent upstream.'),
         offset: z
@@ -287,10 +302,19 @@ export const earthquakeSearch = tool('earthquake_search', {
     {
       reason: 'upstream_rejected',
       code: JsonRpcErrorCode.InvalidParams,
-      when: 'The source API rejected the query parameters with a 4xx response.',
+      when: 'The source API rejected the query parameters and explained why in its response body.',
       recovery:
         'Read the upstream reason in the error message — it names the offending parameter and ' +
         'the accepted format. Correct that parameter and call again.',
+    },
+    {
+      reason: 'upstream_rejected_no_reason',
+      code: JsonRpcErrorCode.InvalidParams,
+      when: 'The source API rejected the query but its response body carried no usable explanation.',
+      recovery:
+        'The service named no offending parameter. Re-check the parameters you supplied — ' +
+        'time range format, magnitude bounds, and the lat/lon/radius trio are the usual causes — ' +
+        'or retry with the other source to see whether it accepts the same query.',
     },
   ],
 
@@ -349,15 +373,26 @@ export const earthquakeSearch = tool('earthquake_search', {
           ...ctx.recoveryFor('source_timeout'),
         });
       }
-      // A 4xx means the upstream rejected the parameters, and its body says which one.
-      // The framework leaves that body out of the message, so fold it in here — otherwise
-      // content[]-only clients see a bare status code.
+      // A 4xx means the upstream rejected the parameters, and its body usually says
+      // which one. The framework leaves that body out of the message, so fold it in
+      // here — otherwise content[]-only clients see a bare status code. A body with no
+      // usable reason still gets a contract reason of its own, so the raw upstream text
+      // (which echoes an internal hostname) never substitutes for an explanation.
       const rejection = upstreamRejection(err);
       if (rejection) {
+        const source = input.source.toUpperCase();
+        if (rejection.reason != null) {
+          throw ctx.fail(
+            'upstream_rejected',
+            `${source} rejected the query: ${rejection.reason}`,
+            { ...ctx.recoveryFor('upstream_rejected'), status: rejection.status },
+            { cause: err },
+          );
+        }
         throw ctx.fail(
-          'upstream_rejected',
-          `${input.source.toUpperCase()} rejected the query: ${rejection.reason}`,
-          { ...ctx.recoveryFor('upstream_rejected'), status: rejection.status },
+          'upstream_rejected_no_reason',
+          `${source} rejected the query (HTTP ${rejection.status}) — the service gave no reason.`,
+          { ...ctx.recoveryFor('upstream_rejected_no_reason'), status: rejection.status },
           { cause: err },
         );
       }
@@ -385,6 +420,7 @@ export const earthquakeSearch = tool('earthquake_search', {
         ...(isUsgs && params.minSignificance != null
           ? { min_significance: params.minSignificance }
           : {}),
+        ...(isUsgs && params.eventType != null ? { event_type: params.eventType } : {}),
         source: input.source,
         limit,
         ...(input.offset != null ? { offset: input.offset } : {}),

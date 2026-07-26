@@ -341,3 +341,159 @@ describe('earthquakeSearch — format edge cases', () => {
     expect(text).not.toContain('Status: reviewed');
   });
 });
+
+describe('earthquakeSearch — upstream rejection contracts (issue #27)', () => {
+  let mockUsgsSearch: ReturnType<typeof vi.fn>;
+  let mockEmscSearch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockUsgsSearch = vi.fn();
+    mockEmscSearch = vi.fn();
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      searchEvents: mockUsgsSearch,
+    } as unknown as usgsModule.UsgsService);
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue({
+      searchEvents: mockEmscSearch,
+    } as unknown as emscModule.EmscService);
+  });
+
+  /** Shaped like what `fetchWithTimeout` raises on a non-2xx: status-mapped code plus captured body. */
+  const upstream = async (status: number, body: string | undefined, code?: number) => {
+    const { McpError, JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
+    return new McpError(code ?? JsonRpcErrorCode.InvalidParams, `Fetch failed. Status: ${status}`, {
+      status,
+      statusText: 'Bad Request',
+      ...(body !== undefined ? { body, responseBody: body } : {}),
+      errorSource: 'FetchHttpError',
+    });
+  };
+
+  const recovery = (reason: string) =>
+    earthquakeSearch.errors?.find((e) => e.reason === reason)?.recovery;
+
+  it('folds an explained 4xx into upstream_rejected with the service reason', async () => {
+    mockUsgsSearch.mockRejectedValue(
+      await upstream(
+        400,
+        'Error 400: Bad Request\n\nBad starttime value "x". Valid values are ISO-8601 timestamps.\n\nRequest:\n/query',
+      ),
+    );
+
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
+    const input = earthquakeSearch.input.parse({ start_time: 'x' });
+    const err = (await earthquakeSearch.handler(input, ctx).catch((e) => e)) as {
+      message: string;
+      data: { reason?: string; status?: number; recovery?: { hint?: string } };
+    };
+
+    expect(err.data.reason).toBe('upstream_rejected');
+    expect(err.message).toContain('Bad starttime value');
+    expect(err.data.recovery?.hint).toBe(recovery('upstream_rejected'));
+  });
+
+  it.each([
+    [
+      'a boilerplate-only body',
+      'Error 400: Bad Request\n\nRequest:\nhttp://ws2/query?format=json&starttime=x\n\nService version: v 2.2\n',
+    ],
+    ['an HTML error page', '<!DOCTYPE html>\n<html><body>400 Bad Request</body></html>'],
+    ['no captured body at all', undefined],
+  ])('reports %s under upstream_rejected_no_reason, not a raw rethrow', async (_label, body) => {
+    const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
+    mockEmscSearch.mockRejectedValue(await upstream(400, body));
+
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
+    const input = earthquakeSearch.input.parse({ source: 'emsc', min_magnitude: 5 });
+    const err = (await earthquakeSearch.handler(input, ctx).catch((e) => e)) as {
+      code: number;
+      message: string;
+      data: { reason?: string; status?: number; recovery?: { hint?: string } };
+    };
+
+    // structuredContent surface
+    expect(err.code).toBe(JsonRpcErrorCode.InvalidParams);
+    expect(err.data.reason).toBe('upstream_rejected_no_reason');
+    expect(err.data.status).toBe(400);
+    expect(err.data.recovery?.hint).toBe(recovery('upstream_rejected_no_reason'));
+    // content[] surface: rendered as `Error: <message>` plus the mirrored Recovery line
+    expect(err.message).toBe('EMSC rejected the query (HTTP 400) — the service gave no reason.');
+    expect(recovery('upstream_rejected_no_reason')).toBeTruthy();
+  });
+
+  it('never puts the raw upstream body — or its internal hostname — on the wire', async () => {
+    mockEmscSearch.mockRejectedValue(
+      await upstream(
+        400,
+        'Error 400: Bad Request\n\nRequest:\nhttp://ws2/query?format=json\n\nService version: v 2.2\n',
+      ),
+    );
+
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
+    const input = earthquakeSearch.input.parse({ source: 'emsc', min_magnitude: 5 });
+    const err = (await earthquakeSearch.handler(input, ctx).catch((e) => e)) as {
+      message: string;
+      data: Record<string, unknown>;
+    };
+
+    expect(err.message).not.toContain('ws2');
+    expect(JSON.stringify(err.data)).not.toContain('ws2');
+    expect(err.data).not.toHaveProperty('body');
+    expect(err.data).not.toHaveProperty('responseBody');
+  });
+
+  it('leaves a 404 alone — that is a misconfigured base URL, not a bad parameter', async () => {
+    const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
+    const notFoundErr = await upstream(
+      404,
+      'Error 404: Not Found\n\nNo such resource here\n\nRequest:\n/query',
+      JsonRpcErrorCode.NotFound,
+    );
+    mockUsgsSearch.mockRejectedValue(notFoundErr);
+
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
+    const input = earthquakeSearch.input.parse({ min_magnitude: 5 });
+    const err = await earthquakeSearch.handler(input, ctx).catch((e: unknown) => e);
+
+    expect(err).toBe(notFoundErr);
+    expect((err as { data: { reason?: string } }).data.reason).toBeUndefined();
+  });
+});
+
+describe('earthquakeSearch — event_type filter (issue #24)', () => {
+  let mockUsgsSearch: ReturnType<typeof vi.fn>;
+  let mockEmscSearch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockUsgsSearch = vi.fn().mockResolvedValue({ events: [minimalEvent], count: 1 });
+    mockEmscSearch = vi.fn().mockResolvedValue({ events: [minimalEvent], count: 1 });
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      searchEvents: mockUsgsSearch,
+    } as unknown as usgsModule.UsgsService);
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue({
+      searchEvents: mockEmscSearch,
+    } as unknown as emscModule.EmscService);
+  });
+
+  it('forwards event_type to the USGS service and echoes it', async () => {
+    const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ event_type: 'quarry blast' });
+    await earthquakeSearch.handler(input, ctx);
+
+    expect(mockUsgsSearch.mock.calls[0]?.[0]).toMatchObject({ eventType: 'quarry blast' });
+    expect((getEnrichment(ctx).queryEcho as { event_type?: string } | undefined)?.event_type).toBe(
+      'quarry blast',
+    );
+    expect(getEnrichment(ctx).ignoredFilters).toBeUndefined();
+  });
+
+  it('names event_type in ignoredFilters and keeps it out of the echo for EMSC', async () => {
+    const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ source: 'emsc', event_type: 'earthquake' });
+    await earthquakeSearch.handler(input, ctx);
+
+    expect(getEnrichment(ctx).ignoredFilters).toEqual(['event_type']);
+    expect(getEnrichment(ctx).queryEcho).not.toHaveProperty('event_type');
+  });
+});

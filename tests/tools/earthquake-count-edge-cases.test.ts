@@ -210,3 +210,135 @@ describe('earthquakeCount — security', () => {
     expect((err as Error).message).not.toContain('SECRET');
   });
 });
+
+describe('earthquakeCount — upstream rejection contracts (issue #27)', () => {
+  let mockUsgsCount: ReturnType<typeof vi.fn>;
+  let mockEmscCount: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockUsgsCount = vi.fn();
+    mockEmscCount = vi.fn();
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      countEvents: mockUsgsCount,
+    } as unknown as usgsModule.UsgsService);
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue({
+      countEvents: mockEmscCount,
+    } as unknown as emscModule.EmscService);
+  });
+
+  /** Shaped like what `fetchWithTimeout` raises on a non-2xx: status-mapped code plus captured body. */
+  const upstream = async (status: number, body: string | undefined, code?: number) => {
+    const { McpError, JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
+    return new McpError(code ?? JsonRpcErrorCode.InvalidParams, `Fetch failed. Status: ${status}`, {
+      status,
+      statusText: 'Bad Request',
+      ...(body !== undefined ? { body, responseBody: body } : {}),
+      errorSource: 'FetchHttpError',
+    });
+  };
+
+  const recovery = (reason: string) =>
+    earthquakeCount.errors?.find((e) => e.reason === reason)?.recovery;
+
+  it('folds an explained 4xx into upstream_rejected with the service reason', async () => {
+    mockEmscCount.mockRejectedValue(
+      await upstream(
+        400,
+        'Error 400: minmag > maxmag\n\nRequest:\nhttp://ws2/count?format=json\n\nService version: v 2.2\n',
+      ),
+    );
+
+    const ctx = createMockContext({ errors: earthquakeCount.errors });
+    const input = earthquakeCount.input.parse({ source: 'emsc', min_magnitude: 5 });
+    const err = (await earthquakeCount.handler(input, ctx).catch((e) => e)) as {
+      message: string;
+      data: { reason?: string; recovery?: { hint?: string } };
+    };
+
+    expect(err.data.reason).toBe('upstream_rejected');
+    expect(err.message).toContain('minmag > maxmag');
+    expect(err.message).not.toContain('ws2');
+    expect(err.data.recovery?.hint).toBe(recovery('upstream_rejected'));
+  });
+
+  it('reports a boilerplate-only 4xx under upstream_rejected_no_reason', async () => {
+    const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
+    mockEmscCount.mockRejectedValue(
+      await upstream(
+        400,
+        'Error 400: Bad Request\n\nRequest:\nhttp://ws2/count?format=json\n\nService version: v 2.2\n',
+      ),
+    );
+
+    const ctx = createMockContext({ errors: earthquakeCount.errors });
+    const input = earthquakeCount.input.parse({ source: 'emsc', min_magnitude: 5 });
+    const err = (await earthquakeCount.handler(input, ctx).catch((e) => e)) as {
+      code: number;
+      message: string;
+      data: Record<string, unknown> & { reason?: string; recovery?: { hint?: string } };
+    };
+
+    expect(err.code).toBe(JsonRpcErrorCode.InvalidParams);
+    expect(err.data.reason).toBe('upstream_rejected_no_reason');
+    expect(err.data.recovery?.hint).toBe(recovery('upstream_rejected_no_reason'));
+    expect(err.message).toBe('EMSC rejected the query (HTTP 400) — the service gave no reason.');
+    expect(JSON.stringify(err.data)).not.toContain('ws2');
+  });
+
+  it('leaves a 404 alone — that is a misconfigured base URL, not a bad parameter', async () => {
+    const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
+    const notFoundErr = await upstream(
+      404,
+      'Error 404: Not Found\n\nNo such resource here\n\nRequest:\n/count',
+      JsonRpcErrorCode.NotFound,
+    );
+    mockUsgsCount.mockRejectedValue(notFoundErr);
+
+    const ctx = createMockContext({ errors: earthquakeCount.errors });
+    const input = earthquakeCount.input.parse({ min_magnitude: 5 });
+    const err = await earthquakeCount.handler(input, ctx).catch((e: unknown) => e);
+
+    expect(err).toBe(notFoundErr);
+  });
+});
+
+describe('earthquakeCount — event_type filter (issue #24)', () => {
+  let mockUsgsCount: ReturnType<typeof vi.fn>;
+  let mockEmscCount: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockUsgsCount = vi
+      .fn()
+      .mockResolvedValue({ count: 127, maxAllowed: 20000, exceedsLimit: false });
+    mockEmscCount = vi.fn().mockResolvedValue({ count: 40, maxAllowed: null, exceedsLimit: false });
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      countEvents: mockUsgsCount,
+    } as unknown as usgsModule.UsgsService);
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue({
+      countEvents: mockEmscCount,
+    } as unknown as emscModule.EmscService);
+  });
+
+  it('forwards event_type to the USGS service and echoes it', async () => {
+    const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
+    const ctx = createMockContext();
+    const input = earthquakeCount.input.parse({ event_type: 'quarry blast' });
+    const result = await earthquakeCount.handler(input, ctx);
+
+    expect(mockUsgsCount.mock.calls[0]?.[0]).toMatchObject({ eventType: 'quarry blast' });
+    expect(result.count).toBe(127);
+    expect((getEnrichment(ctx).queryEcho as { event_type?: string } | undefined)?.event_type).toBe(
+      'quarry blast',
+    );
+  });
+
+  it('names event_type in ignoredFilters and keeps it out of the echo for EMSC', async () => {
+    const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
+    const ctx = createMockContext();
+    const input = earthquakeCount.input.parse({ source: 'emsc', event_type: 'earthquake' });
+    await earthquakeCount.handler(input, ctx);
+
+    expect(getEnrichment(ctx).ignoredFilters).toEqual(['event_type']);
+    expect(getEnrichment(ctx).queryEcho).not.toHaveProperty('event_type');
+  });
+});

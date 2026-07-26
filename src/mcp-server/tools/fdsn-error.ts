@@ -7,7 +7,7 @@
  * @module mcp-server/tools/fdsn-error
  */
 
-import { McpError } from '@cyanheads/mcp-ts-core/errors';
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 
 /**
  * Boilerplate both FDSN implementations append after the reason — a usage URL, the
@@ -58,19 +58,43 @@ export function extractFdsnReason(body: string): string | undefined {
 }
 
 /**
- * Recognize an upstream 4xx — the source rejected the caller's parameters — and read
- * the reason out of the captured body. Returns undefined for every other failure
- * (5xx, network, timeout, or a 4xx whose body says nothing) so the caller rethrows
- * unchanged.
+ * An upstream rejection of the caller's parameters. `reason` is absent when the body
+ * carried nothing beyond boilerplate — the rejection is still real and still the
+ * caller's parameters, so it must not be reported as if the service explained itself.
  */
-export function upstreamRejection(err: unknown): { status: number; reason: string } | undefined {
+export interface UpstreamRejection {
+  reason?: string;
+  status: number;
+}
+
+/**
+ * Codes the framework assigns to the 4xx statuses that mean "the request itself was
+ * malformed": 400, 422, and the miscellaneous 4xx range. Deliberately narrower than
+ * the whole 400–499 band — 404 classifies as NotFound and, on the FDSN query path,
+ * means the configured base URL does not point at an FDSN service, which is an
+ * operator problem rather than a bad caller parameter. 401/403/409/429 are likewise
+ * their own failure classes and bubble unrelabeled.
+ */
+const REJECTION_CODES = new Set<number>([
+  JsonRpcErrorCode.InvalidParams,
+  JsonRpcErrorCode.InvalidRequest,
+  JsonRpcErrorCode.ValidationError,
+]);
+
+/**
+ * Recognize an upstream rejection of the caller's parameters and read the reason out
+ * of the captured body. Returns undefined for every other failure (5xx, network,
+ * timeout, auth, rate limit, a 404 from a misconfigured base URL) so the caller
+ * rethrows those unchanged.
+ */
+export function upstreamRejection(err: unknown): UpstreamRejection | undefined {
   if (!(err instanceof McpError)) return;
+  if (!REJECTION_CODES.has(err.code)) return;
 
   const status = err.data?.status;
-  const body = err.data?.body;
   if (typeof status !== 'number' || status < 400 || status >= 500) return;
-  if (typeof body !== 'string') return;
 
-  const reason = extractFdsnReason(body);
-  return reason ? { status, reason } : undefined;
+  const body = err.data?.body;
+  const reason = typeof body === 'string' ? extractFdsnReason(body) : undefined;
+  return reason != null ? { status, reason } : { status };
 }
