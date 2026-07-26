@@ -8,7 +8,7 @@ import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { buildQueryParams } from '@/mcp-server/tools/query-params.js';
 import { getEmscService } from '@/services/emsc/emsc-service.js';
 import type { EarthquakeQueryParams } from '@/services/usgs/types.js';
-import { getUsgsService } from '@/services/usgs/usgs-service.js';
+import { getUsgsService, type UsgsService } from '@/services/usgs/usgs-service.js';
 
 export const earthquakeCount = tool('earthquake_count', {
   title: 'Count Earthquakes',
@@ -16,6 +16,8 @@ export const earthquakeCount = tool('earthquake_count', {
     'Count earthquakes matching filters without fetching full records. ' +
     'Use for statistical queries ("how many M5+ earthquakes in 2025?") or to gauge result size ' +
     'before calling earthquake_search. ' +
+    'Omitting start_time counts only the last 30 days, so pass an explicit range for any ' +
+    'period-specific question; queryEcho reports the window and filters the count actually covers. ' +
     'When exceeds_limit is true, the count exceeds 20,000 and a full search would be truncated — ' +
     'narrow filters before fetching. ' +
     'USGS returns the max_allowed cap (20,000); EMSC count endpoint does not return this field ' +
@@ -129,6 +131,67 @@ export const earthquakeCount = tool('earthquake_count', {
       ),
   }),
 
+  // A count is a single number with no context of its own — the window and filters
+  // it covers have to travel with it, including the server-resolved 30-day default.
+  // Populated via ctx.enrich(...) so it reaches structuredContent and content[].
+  enrichment: {
+    queryEcho: z
+      .object({
+        start_time: z
+          .string()
+          .optional()
+          .describe(
+            'Effective query start time sent upstream — server-resolved to a 30-day window when omitted from input.',
+          ),
+        end_time: z
+          .string()
+          .optional()
+          .describe(
+            'Effective query end time. Absent when omitted from input — the upstream defaults to the current time.',
+          ),
+        min_magnitude: z.number().optional().describe('Minimum magnitude filter sent upstream.'),
+        max_magnitude: z.number().optional().describe('Maximum magnitude filter sent upstream.'),
+        latitude: z.number().optional().describe('Radius-search latitude sent upstream.'),
+        longitude: z.number().optional().describe('Radius-search longitude sent upstream.'),
+        radius_km: z
+          .number()
+          .optional()
+          .describe('Search radius in km sent upstream (converted to degrees for EMSC).'),
+        min_depth_km: z.number().optional().describe('Minimum depth filter sent upstream.'),
+        max_depth_km: z.number().optional().describe('Maximum depth filter sent upstream.'),
+        alert_level: z
+          .string()
+          .optional()
+          .describe('PAGER alert filter sent upstream. Absent for EMSC — not supported there.'),
+        min_felt: z
+          .number()
+          .optional()
+          .describe(
+            'DYFI felt-report filter sent upstream. Absent for EMSC — not supported there.',
+          ),
+        min_significance: z
+          .number()
+          .optional()
+          .describe('Significance filter sent upstream. Absent for EMSC — not supported there.'),
+        source: z.enum(['usgs', 'emsc']).describe('Data source queried.'),
+      })
+      .optional()
+      .describe(
+        'Echo of the effective parameters the count covers, including server-resolved defaults. ' +
+          'Read start_time and end_time to know which window the count spans — a filter absent ' +
+          'here was not sent upstream.',
+      ),
+  },
+
+  enrichmentTrailer: {
+    queryEcho: {
+      render: (q) =>
+        `**Query echo:** ${Object.entries(q ?? {})
+          .map(([key, value]) => `${key}=${String(value)}`)
+          .join(' · ')}`,
+    },
+  },
+
   errors: [
     {
       reason: 'invalid_radius',
@@ -169,7 +232,7 @@ export const earthquakeCount = tool('earthquake_count', {
     // Shared builder applies the documented 30-day start-time default server-side
     const params: EarthquakeQueryParams = buildQueryParams(input);
 
-    let result: Awaited<ReturnType<typeof getUsgsService.prototype.countEvents>>;
+    let result: Awaited<ReturnType<UsgsService['countEvents']>>;
     try {
       result =
         input.source === 'emsc'
@@ -188,6 +251,29 @@ export const earthquakeCount = tool('earthquake_count', {
       source: input.source,
       count: result.count,
       exceeds_limit: result.exceedsLimit,
+    });
+
+    // Echo the effective upstream parameters — USGS-only filters are excluded for
+    // EMSC because buildFdsnQuery does not send them.
+    const isUsgs = input.source !== 'emsc';
+    ctx.enrich({
+      queryEcho: {
+        ...(params.startTime != null ? { start_time: params.startTime } : {}),
+        ...(params.endTime != null ? { end_time: params.endTime } : {}),
+        ...(params.minMagnitude != null ? { min_magnitude: params.minMagnitude } : {}),
+        ...(params.maxMagnitude != null ? { max_magnitude: params.maxMagnitude } : {}),
+        ...(params.latitude != null ? { latitude: params.latitude } : {}),
+        ...(params.longitude != null ? { longitude: params.longitude } : {}),
+        ...(params.radiusKm != null ? { radius_km: params.radiusKm } : {}),
+        ...(params.minDepthKm != null ? { min_depth_km: params.minDepthKm } : {}),
+        ...(params.maxDepthKm != null ? { max_depth_km: params.maxDepthKm } : {}),
+        ...(isUsgs && params.alertLevel != null ? { alert_level: params.alertLevel } : {}),
+        ...(isUsgs && params.minFelt != null ? { min_felt: params.minFelt } : {}),
+        ...(isUsgs && params.minSignificance != null
+          ? { min_significance: params.minSignificance }
+          : {}),
+        source: input.source,
+      },
     });
 
     return {

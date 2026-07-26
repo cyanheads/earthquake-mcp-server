@@ -3,7 +3,7 @@
  * @module tests/tools/earthquake-count.tool.test
  */
 
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { earthquakeCount } from '@/mcp-server/tools/definitions/earthquake-count.tool.js';
 import * as emscModule from '@/services/emsc/emsc-service.js';
@@ -195,5 +195,117 @@ describe('earthquakeCount — 30-day default time window (issue #12)', () => {
       expect.objectContaining({ startTime: '2026-05-31' }),
       ctx,
     );
+  });
+});
+
+describe('earthquakeCount — queryEcho enrichment (issue #21)', () => {
+  let mockUsgsCount: ReturnType<typeof vi.fn>;
+  let mockEmscCount: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockUsgsCount = vi
+      .fn()
+      .mockResolvedValue({ count: 185, maxAllowed: 20000, exceedsLimit: false });
+    mockEmscCount = vi.fn().mockResolvedValue({ count: 88, maxAllowed: null, exceedsLimit: false });
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      countEvents: mockUsgsCount,
+    } as unknown as usgsModule.UsgsService);
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue({
+      countEvents: mockEmscCount,
+    } as unknown as emscModule.EmscService);
+  });
+
+  it('discloses the server-resolved 30-day window when start_time is omitted', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeCount.input.parse({ min_magnitude: 5, end_time: '2026-06-30' });
+    await earthquakeCount.handler(input, ctx);
+
+    const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
+    expect(echo).toMatchObject({
+      start_time: new Date(new Date('2026-06-30').getTime() - 30 * 86_400_000).toISOString(),
+      end_time: '2026-06-30',
+      min_magnitude: 5,
+      source: 'usgs',
+    });
+  });
+
+  it('a bare count still carries the window it covers', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeCount.input.parse({ min_magnitude: 5 });
+    await earthquakeCount.handler(input, ctx);
+
+    const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
+    expect(echo.start_time).toBeDefined();
+    expect(typeof echo.start_time).toBe('string');
+  });
+
+  it('passes an explicit start_time through to the echo unchanged', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeCount.input.parse({
+      start_time: '2025-01-01',
+      end_time: '2026-01-01',
+      min_magnitude: 5,
+    });
+    await earthquakeCount.handler(input, ctx);
+
+    const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
+    expect(echo.start_time).toBe('2025-01-01');
+    expect(echo.end_time).toBe('2026-01-01');
+  });
+
+  it('includes USGS-only filters in the echo for source=usgs', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeCount.input.parse({
+      alert_level: 'yellow',
+      min_felt: 10,
+      min_significance: 600,
+    });
+    await earthquakeCount.handler(input, ctx);
+
+    const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
+    expect(echo).toMatchObject({ alert_level: 'yellow', min_felt: 10, min_significance: 600 });
+  });
+
+  it('omits USGS-only filters from the echo for source=emsc (not sent upstream)', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeCount.input.parse({
+      source: 'emsc',
+      alert_level: 'yellow',
+      min_felt: 10,
+      min_significance: 600,
+    });
+    await earthquakeCount.handler(input, ctx);
+
+    const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
+    expect(echo.source).toBe('emsc');
+    expect(echo).not.toHaveProperty('alert_level');
+    expect(echo).not.toHaveProperty('min_felt');
+    expect(echo).not.toHaveProperty('min_significance');
+  });
+
+  it('echoes the radius filters for a location-scoped count', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeCount.input.parse({
+      latitude: 35.0,
+      longitude: 139.0,
+      radius_km: 100,
+    });
+    await earthquakeCount.handler(input, ctx);
+
+    const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
+    expect(echo).toMatchObject({ latitude: 35.0, longitude: 139.0, radius_km: 100 });
+  });
+
+  it('renders queryEcho as a markdown trailer line, not a JSON blob', () => {
+    const render = earthquakeCount.enrichmentTrailer?.queryEcho?.render;
+    expect(render).toBeDefined();
+    const text = render!({
+      start_time: '2026-05-31T00:00:00.000Z',
+      end_time: '2026-06-30',
+      source: 'usgs',
+    });
+    expect(text).toContain('**Query echo:**');
+    expect(text).toContain('start_time=2026-05-31T00:00:00.000Z');
+    expect(text).toContain('end_time=2026-06-30');
   });
 });
