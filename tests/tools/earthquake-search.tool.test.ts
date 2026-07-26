@@ -204,7 +204,7 @@ describe('earthquakeSearch', () => {
     await earthquakeSearch.handler(input, ctx);
 
     const notice = getEnrichment(ctx).notice as string | undefined;
-    expect(notice).toContain('4821 events match');
+    expect(notice).toContain('4821');
     expect(notice).not.toContain('earthquake_count');
   });
 
@@ -380,6 +380,28 @@ describe('earthquakeSearch — queryEcho enrichment (issue #11)', () => {
     expect(echo).not.toHaveProperty('min_significance');
   });
 
+  it('echoes the offset when one was sent upstream', async () => {
+    mockUsgsSearch.mockResolvedValue({ events: [sampleEvent], count: 1 });
+
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ offset: 101 });
+    await earthquakeSearch.handler(input, ctx);
+
+    const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
+    expect(echo.offset).toBe(101);
+  });
+
+  it('omits offset from the echo when the first page was fetched', async () => {
+    mockUsgsSearch.mockResolvedValue({ events: [sampleEvent], count: 1 });
+
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({});
+    await earthquakeSearch.handler(input, ctx);
+
+    const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
+    expect(echo).not.toHaveProperty('offset');
+  });
+
   it('renders queryEcho as a markdown trailer line, not a JSON blob', () => {
     const render = earthquakeSearch.enrichmentTrailer?.queryEcho?.render;
     expect(render).toBeDefined();
@@ -392,5 +414,158 @@ describe('earthquakeSearch — queryEcho enrichment (issue #11)', () => {
     expect(text).toContain('**Query echo:**');
     expect(text).toContain('start_time=2026-05-31T00:00:00.000Z');
     expect(text).toContain('limit=100');
+  });
+});
+
+describe('earthquakeSearch — offset paging (issue #19)', () => {
+  let mockUsgsSearch: ReturnType<typeof vi.fn>;
+  let mockEmscSearch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockUsgsSearch = vi.fn();
+    mockEmscSearch = vi.fn();
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      searchEvents: mockUsgsSearch,
+    } as unknown as usgsModule.UsgsService);
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue({
+      searchEvents: mockEmscSearch,
+    } as unknown as emscModule.EmscService);
+  });
+
+  it('rejects offset=0 — both upstream APIs count from 1', () => {
+    expect(() => earthquakeSearch.input.parse({ offset: 0 })).toThrow();
+  });
+
+  it('accepts offset=1 as the first match', () => {
+    expect(earthquakeSearch.input.parse({ offset: 1 }).offset).toBe(1);
+  });
+
+  it('forwards offset to the USGS service', async () => {
+    mockUsgsSearch.mockResolvedValue({ events: [], count: 0 });
+
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ offset: 20001, limit: 20000 });
+    await earthquakeSearch.handler(input, ctx);
+
+    expect(mockUsgsSearch).toHaveBeenCalledWith(
+      expect.objectContaining({ offset: 20001, limit: 20000 }),
+      ctx,
+    );
+  });
+
+  it('forwards offset to the EMSC service', async () => {
+    mockEmscSearch.mockResolvedValue({ events: [], count: 0 });
+
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ source: 'emsc', offset: 5001 });
+    await earthquakeSearch.handler(input, ctx);
+
+    expect(mockEmscSearch).toHaveBeenCalledWith(expect.objectContaining({ offset: 5001 }), ctx);
+  });
+
+  it('omits offset from the upstream params when the caller did not page', async () => {
+    mockUsgsSearch.mockResolvedValue({ events: [], count: 0 });
+
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({});
+    await earthquakeSearch.handler(input, ctx);
+
+    expect(mockUsgsSearch.mock.calls[0]?.[0]).not.toHaveProperty('offset');
+  });
+
+  it('surfaces nextOffset when a capped result leaves events unretrieved', async () => {
+    const events = Array.from({ length: 5 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
+    mockUsgsSearch.mockResolvedValue({ events, count: 5, totalCount: 4821 });
+
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ limit: 5 });
+    await earthquakeSearch.handler(input, ctx);
+
+    expect(getEnrichment(ctx).truncated).toBe(true);
+    expect(getEnrichment(ctx).nextOffset).toBe(6);
+  });
+
+  it('advances nextOffset from the requested offset, not from 1', async () => {
+    const events = Array.from({ length: 5 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
+    mockUsgsSearch.mockResolvedValue({ events, count: 5, totalCount: 4821 });
+
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ limit: 5, offset: 101 });
+    await earthquakeSearch.handler(input, ctx);
+
+    expect(getEnrichment(ctx).nextOffset).toBe(106);
+  });
+
+  it('omits nextOffset on a full page that exactly exhausts the match set', async () => {
+    const events = Array.from({ length: 5 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
+    mockUsgsSearch.mockResolvedValue({ events, count: 5, totalCount: 10 });
+
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ limit: 5, offset: 6 });
+    await earthquakeSearch.handler(input, ctx);
+
+    expect(getEnrichment(ctx).truncated).toBeUndefined();
+    expect(getEnrichment(ctx).nextOffset).toBeUndefined();
+  });
+
+  it('omits nextOffset when the page was not capped', async () => {
+    mockUsgsSearch.mockResolvedValue({ events: [sampleEvent], count: 1 });
+
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ limit: 100 });
+    await earthquakeSearch.handler(input, ctx);
+
+    expect(getEnrichment(ctx).nextOffset).toBeUndefined();
+  });
+
+  it('truncation notice names offset as the next step, never "increase limit"', async () => {
+    const events = Array.from({ length: 20000 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
+    mockUsgsSearch.mockResolvedValue({ events, count: 20000, totalCount: 78820 });
+
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ limit: 20000 });
+    await earthquakeSearch.handler(input, ctx);
+
+    const notice = getEnrichment(ctx).notice as string;
+    expect(notice).toContain('offset=20001');
+    expect(notice).not.toContain('increase limit');
+  });
+
+  it('truncation notice without a known total still names the next offset', async () => {
+    const events = Array.from({ length: 5 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
+    mockUsgsSearch.mockResolvedValue({ events, count: 5 });
+
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ limit: 5 });
+    await earthquakeSearch.handler(input, ctx);
+
+    const notice = getEnrichment(ctx).notice as string;
+    expect(notice).toContain('offset=6');
+    expect(notice).not.toContain('increase limit');
+  });
+
+  it('an empty page past the end says the previous page was the last', async () => {
+    mockUsgsSearch.mockResolvedValue({ events: [], count: 0 });
+
+    const ctx = createMockContext();
+    const input = earthquakeSearch.input.parse({ offset: 90001 });
+    await earthquakeSearch.handler(input, ctx);
+
+    const notice = getEnrichment(ctx).notice as string;
+    expect(notice).toContain('offset 90001');
+    expect(notice).toContain('last one');
+  });
+});
+
+describe('earthquakeSearch — query_too_broad contract removed (issue #20)', () => {
+  it('no longer declares a query_too_broad error contract', () => {
+    const reasons = earthquakeSearch.errors?.map((e) => e.reason) ?? [];
+    expect(reasons).not.toContain('query_too_broad');
+    expect(reasons).toEqual(expect.arrayContaining(['invalid_radius', 'source_unavailable']));
+  });
+
+  it('does not describe the 20,000 cap as a hard ceiling', () => {
+    expect(earthquakeSearch.description).toContain('offset');
+    expect(earthquakeSearch.description).not.toContain('Results are capped at 20,000');
   });
 });

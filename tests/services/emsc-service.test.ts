@@ -112,3 +112,73 @@ describe('EmscService.searchEvents — totalCount count sub-call (issue #11)', (
     vi.unstubAllGlobals();
   });
 });
+
+describe('EmscService — FDSN offset forwarding (issue #19)', () => {
+  it('sets the 1-based offset on the search querystring', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([makeFeature('20260601_0001', 4.2)]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.searchEvents({ limit: 3, offset: 5001 }, createMockContext() as Context);
+
+    const url = String(fetchMock.mock.calls[0]?.[0]);
+    expect(url).toContain('offset=5001');
+    expect(url).toContain('limit=3');
+    vi.unstubAllGlobals();
+  });
+
+  it('omits offset from the querystring when not requested', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([makeFeature('20260601_0001', 4.2)]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.searchEvents({ limit: 3 }, createMockContext() as Context);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain('offset=');
+    vi.unstubAllGlobals();
+  });
+
+  it('strips offset from the totalCount sub-call — the total spans every page', async () => {
+    const features = Array.from({ length: 2 }, (_, i) => makeFeature(`20260601_000${i}`, 4.2));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(features)));
+
+    const service = makeService();
+    const countSpy = vi
+      .spyOn(service, 'countEvents')
+      .mockResolvedValue({ count: 184, maxAllowed: null, exceedsLimit: false });
+
+    await service.searchEvents(
+      { limit: 2, offset: 50, orderBy: 'time', minMagnitude: 4 },
+      createMockContext() as Context,
+    );
+
+    expect(countSpy).toHaveBeenCalledWith({ minMagnitude: 4 }, expect.anything());
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('EmscService.searchEvents — 204 No Content is an empty match set', () => {
+  it('returns zero events for a 204 with an empty body instead of failing to parse', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+
+    const service = makeService();
+    const result = await service.searchEvents({ limit: 3 }, createMockContext() as Context);
+
+    expect(result.count).toBe(0);
+    expect(result.events).toEqual([]);
+    vi.unstubAllGlobals();
+  });
+
+  it('returns zero events when paging past the last match', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 204 })));
+
+    const service = makeService();
+    const result = await service.searchEvents(
+      { limit: 3, offset: 9_999_999 },
+      createMockContext() as Context,
+    );
+
+    expect(result.count).toBe(0);
+    vi.unstubAllGlobals();
+  });
+});

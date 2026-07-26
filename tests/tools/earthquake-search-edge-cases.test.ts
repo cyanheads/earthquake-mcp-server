@@ -132,59 +132,6 @@ describe('earthquakeSearch — input schema boundaries', () => {
   });
 });
 
-describe('earthquakeSearch — query_too_broad error contract', () => {
-  let mockUsgsSearch: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    mockUsgsSearch = vi.fn();
-    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
-      searchEvents: mockUsgsSearch,
-    } as unknown as usgsModule.UsgsService);
-  });
-
-  it('converts query_too_broad plain Error to typed contract error with ValidationError code', async () => {
-    const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    // Simulate UsgsService.searchEvents throwing the plain Error with attached .code/.data
-    mockUsgsSearch.mockRejectedValue(
-      Object.assign(
-        new Error(
-          'Query matches 25000 events, exceeding the 20,000-event limit. ' +
-            'Narrow time range, raise min_magnitude, or add location filters.',
-        ),
-        { code: -32007, data: { reason: 'query_too_broad', totalCount: 25000 } },
-      ),
-    );
-
-    const ctx = createMockContext({ errors: earthquakeSearch.errors });
-    const input = earthquakeSearch.input.parse({ min_magnitude: 0 });
-    await expect(earthquakeSearch.handler(input, ctx)).rejects.toMatchObject({
-      code: JsonRpcErrorCode.ValidationError,
-      data: { reason: 'query_too_broad' },
-    });
-  });
-
-  it('query_too_broad error includes recovery hint', async () => {
-    const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    mockUsgsSearch.mockRejectedValue(
-      Object.assign(
-        new Error(
-          'Query matches 50000 events, exceeding the 20,000-event limit. ' +
-            'Narrow time range, raise min_magnitude, or add location filters.',
-        ),
-        { code: -32007, data: { reason: 'query_too_broad', totalCount: 50000 } },
-      ),
-    );
-
-    const ctx = createMockContext({ errors: earthquakeSearch.errors });
-    const input = earthquakeSearch.input.parse({ min_magnitude: 0 });
-    const err = await earthquakeSearch.handler(input, ctx).catch((e: unknown) => e);
-    expect(err).toMatchObject({
-      code: JsonRpcErrorCode.ValidationError,
-      data: { reason: 'query_too_broad' },
-    });
-  });
-});
-
 describe('earthquakeSearch — source_unavailable error contract', () => {
   let mockUsgsSearch: ReturnType<typeof vi.fn>;
 
@@ -283,6 +230,7 @@ describe('earthquakeSearch — security', () => {
       ...minimalEvent,
       id: "'; DROP TABLE events; --",
       title: '<script>alert(1)</script>',
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: adversarial test string — must stay literal
       place: '${process.env.SECRET_KEY}',
     };
     const output = {

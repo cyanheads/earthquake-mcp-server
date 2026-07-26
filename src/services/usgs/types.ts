@@ -139,6 +139,8 @@ export interface EarthquakeQueryParams {
   minFelt?: number;
   minMagnitude?: number;
   minSignificance?: number;
+  /** 1-based index of the first event to return. Both FDSN upstreams reject 0. */
+  offset?: number;
   orderBy?: string;
   radiusKm?: number;
   startTime?: string;

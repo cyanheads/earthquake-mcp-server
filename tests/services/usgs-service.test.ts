@@ -134,3 +134,74 @@ describe('UsgsService.searchEvents — totalCount count sub-call (issue #11)', (
     vi.unstubAllGlobals();
   });
 });
+
+describe('UsgsService — FDSN offset forwarding (issue #19)', () => {
+  it('sets the 1-based offset on the search querystring', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(geojsonResponse([makeFeature('us1', 5)]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.searchEvents({ limit: 5, offset: 20001 }, createMockContext() as Context);
+
+    const url = String(fetchMock.mock.calls[0]?.[0]);
+    expect(url).toContain('offset=20001');
+    expect(url).toContain('limit=5');
+    vi.unstubAllGlobals();
+  });
+
+  it('omits offset from the querystring when not requested', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(geojsonResponse([makeFeature('us1', 5)]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.searchEvents({ limit: 5 }, createMockContext() as Context);
+
+    expect(String(fetchMock.mock.calls[0]?.[0])).not.toContain('offset=');
+    vi.unstubAllGlobals();
+  });
+
+  it('strips offset from the totalCount sub-call — the total spans every page', async () => {
+    const features = Array.from({ length: 3 }, (_, i) => makeFeature(`us${i}`, 5));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse(features)));
+
+    const service = makeService();
+    const countSpy = vi
+      .spyOn(service, 'countEvents')
+      .mockResolvedValue({ count: 4821, maxAllowed: 20000, exceedsLimit: false });
+
+    await service.searchEvents(
+      { limit: 3, offset: 100, orderBy: 'time', minMagnitude: 5 },
+      createMockContext() as Context,
+    );
+
+    expect(countSpy).toHaveBeenCalledWith({ minMagnitude: 5 }, expect.anything());
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('UsgsService — non-2xx surfaces as a status-mapped error (issue #20)', () => {
+  it('raises the generic status-mapped error for a 400, not a query_too_broad reason', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          new Response(
+            'Error 400: Bad Request\n\n78824 matching events exceeds search limit of 20000. ' +
+              'Modify the search to match fewer events.',
+            { status: 400, statusText: 'Bad Request' },
+          ),
+        ),
+    );
+
+    const service = makeService();
+    const err = await service
+      .searchEvents({ minMagnitude: 0 }, createMockContext() as Context)
+      .catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(Error);
+    expect((err as { data?: { reason?: string } }).data?.reason).toBeUndefined();
+    expect((err as { data?: { status?: number } }).data?.status).toBe(400);
+    vi.unstubAllGlobals();
+  });
+});

@@ -10,7 +10,7 @@ import { buildQueryParams } from '@/mcp-server/tools/query-params.js';
 import { EarthquakeEventSchema, formatEvent } from '@/mcp-server/tools/schemas.js';
 import { getEmscService } from '@/services/emsc/emsc-service.js';
 import type { EarthquakeQueryParams } from '@/services/usgs/types.js';
-import { getUsgsService } from '@/services/usgs/usgs-service.js';
+import { getUsgsService, type UsgsService } from '@/services/usgs/usgs-service.js';
 
 export const earthquakeSearch = tool('earthquake_search', {
   title: 'Search Earthquakes',
@@ -20,7 +20,9 @@ export const earthquakeSearch = tool('earthquake_search', {
     'For location-based queries, provide latitude, longitude, and radius_km together. ' +
     'USGS-specific filters (alert_level, min_felt, min_significance) are ignored when source=emsc. ' +
     'Use earthquake_count first to gauge result size before requesting large result sets. ' +
-    'Results are capped at 20,000 events per query.',
+    'A single call returns at most 20,000 events; larger result sets are retrieved by paging with ' +
+    'offset, which is passed straight through to the upstream FDSN API. When a result is capped, ' +
+    'nextOffset carries the offset for the following page and totalCount the full match count.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
 
   input: z.object({
@@ -117,8 +119,20 @@ export const earthquakeSearch = tool('earthquake_search', {
       .max(20000)
       .optional()
       .describe(
-        'Maximum events to return. Default 100. ' +
-          'Large limits (>1000) may result in slow responses. Max 20000.',
+        'Maximum events to return per call. Default 100. ' +
+          'Large limits (>1000) may result in slow responses. Max 20000. ' +
+          'Combine with offset to retrieve match sets larger than one call can return.',
+      ),
+    offset: z
+      .number()
+      .int()
+      .min(1)
+      .optional()
+      .describe(
+        'Index of the first event to return, counting from 1 — offset=1 is the first match ' +
+          '(both upstream APIs reject 0). Omit for the first page, then pass the nextOffset ' +
+          'value from a capped result to fetch the next one. Ordering is set by order_by, so ' +
+          'keep order_by, limit, and every filter identical across pages.',
       ),
     order_by: z
       .enum(['time', 'time-asc', 'magnitude', 'magnitude-asc'])
@@ -149,8 +163,16 @@ export const earthquakeSearch = tool('earthquake_search', {
       .boolean()
       .optional()
       .describe(
-        'True when results were capped by the limit parameter and more events likely exist. ' +
-          'totalCount carries the full match count when available.',
+        'True when results were capped by the limit parameter and more events remain. ' +
+          'totalCount carries the full match count when available, and nextOffset the input ' +
+          'for the following page.',
+      ),
+    nextOffset: z
+      .number()
+      .optional()
+      .describe(
+        'Value to pass as the offset input to retrieve the next page, with every other input ' +
+          'unchanged. Present only when more events remain; absent means this was the last page.',
       ),
     notice: z
       .string()
@@ -199,6 +221,10 @@ export const earthquakeSearch = tool('earthquake_search', {
           .describe('Significance filter sent upstream. Absent for EMSC — not supported there.'),
         source: z.enum(['usgs', 'emsc']).describe('Data source queried.'),
         limit: z.number().describe('Effective result limit sent upstream.'),
+        offset: z
+          .number()
+          .optional()
+          .describe('1-based paging offset sent upstream. Absent when the first page was fetched.'),
         order_by: z.string().describe('Sort order sent upstream.'),
       })
       .optional()
@@ -218,14 +244,6 @@ export const earthquakeSearch = tool('earthquake_search', {
   },
 
   errors: [
-    {
-      reason: 'query_too_broad',
-      code: JsonRpcErrorCode.ValidationError,
-      when: 'Query matches more than 20,000 events — exceeds USGS search limit.',
-      recovery:
-        'Narrow the time range, raise min_magnitude, or add a location radius filter. ' +
-        'Use earthquake_count first to gauge result size.',
-    },
     {
       reason: 'invalid_radius',
       code: JsonRpcErrorCode.ValidationError,
@@ -263,6 +281,7 @@ export const earthquakeSearch = tool('earthquake_search', {
     ctx.log.info('Searching earthquakes', {
       source: input.source,
       limit,
+      offset: input.offset,
       start_time: input.start_time,
       min_magnitude: input.min_magnitude,
     });
@@ -271,10 +290,11 @@ export const earthquakeSearch = tool('earthquake_search', {
     const params: EarthquakeQueryParams = {
       ...buildQueryParams(input),
       limit,
+      ...(input.offset != null ? { offset: input.offset } : {}),
       orderBy: input.order_by,
     };
 
-    let result: Awaited<ReturnType<typeof getUsgsService.prototype.searchEvents>>;
+    let result: Awaited<ReturnType<UsgsService['searchEvents']>>;
     try {
       result =
         input.source === 'emsc'
@@ -284,12 +304,6 @@ export const earthquakeSearch = tool('earthquake_search', {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.ServiceUnavailable) {
         throw ctx.fail('source_unavailable', err.message, {
           ...ctx.recoveryFor('source_unavailable'),
-        });
-      }
-      // Plain Error from UsgsService.searchEvents query_too_broad path (data.reason set by service)
-      if ((err as { data?: { reason?: string } }).data?.reason === 'query_too_broad') {
-        throw ctx.fail('query_too_broad', (err as Error).message, {
-          ...ctx.recoveryFor('query_too_broad'),
         });
       }
       throw err;
@@ -318,27 +332,42 @@ export const earthquakeSearch = tool('earthquake_search', {
           : {}),
         source: input.source,
         limit,
+        ...(input.offset != null ? { offset: input.offset } : {}),
         order_by: input.order_by,
       },
     });
 
-    const truncated = result.count === limit && result.count > 0;
+    // Offsets are 1-based upstream, so the events consumed through this page are
+    // (offset - 1) + count and the next page starts at offset + count. A full page
+    // that exactly exhausts a known total is the last page, not a truncated one.
+    const offset = input.offset ?? 1;
+    const nextOffset = offset + result.count;
+    const filledPage = result.count === limit && result.count > 0;
+    const truncated =
+      filledPage && (result.totalCount == null || offset - 1 + result.count < result.totalCount);
 
-    // Populate enrichment — totalCount and truncated flag are meta about the result set,
-    // not domain payload; they reach both structuredContent and content[] via enrichment.
+    // Populate enrichment — totalCount, the truncation flag, and the next page's
+    // offset are meta about the result set, not domain payload; they reach both
+    // structuredContent and content[] via enrichment.
     if (result.totalCount != null) ctx.enrich({ totalCount: result.totalCount });
-    if (truncated) ctx.enrich({ truncated: true });
+    if (truncated) ctx.enrich({ truncated: true, nextOffset });
 
     if (result.count === 0) {
       ctx.enrich.notice(
-        'No events matched the query. ' +
-          'Try broadening the time range, lowering min_magnitude, or expanding the radius.',
+        offset > 1
+          ? `No events at offset ${offset} — the previous page was the last one. ` +
+              'Lower offset to re-read earlier pages, or broaden the filters for a larger match set.'
+          : 'No events matched the query. ' +
+              'Try broadening the time range, lowering min_magnitude, or expanding the radius.',
       );
     } else if (truncated) {
       ctx.enrich.notice(
         result.totalCount != null
-          ? `Results capped at the limit (${limit}) — ${result.totalCount} events match. Narrow filters or increase limit.`
-          : `Results capped at the limit (${limit}). Use earthquake_count to get the total match count, then narrow filters or increase limit.`,
+          ? `Showing events ${offset}–${offset + result.count - 1} of ${result.totalCount} matches. ` +
+              `Call again with offset=${nextOffset} and the same filters for the next page, or narrow the filters.`
+          : `Results capped at the limit (${limit}). ` +
+              `Call again with offset=${nextOffset} and the same filters for the next page, ` +
+              'or use earthquake_count to get the total match count first.',
       );
     }
 

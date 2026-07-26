@@ -7,12 +7,7 @@ import type { Context } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
 import { serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
-import {
-  fetchWithTimeout,
-  httpErrorFromResponse,
-  requestContextService,
-  withRetry,
-} from '@cyanheads/mcp-ts-core/utils';
+import { fetchWithTimeout, requestContextService, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import type {
   EarthquakeEvent,
   EarthquakeQueryParams,
@@ -90,8 +85,10 @@ export class EmscService {
   }
 
   /**
-   * Query EMSC FDSN event API. When results are truncated at the requested limit,
-   * a follow-up count query populates totalCount with the real match total.
+   * Query EMSC FDSN event API. `params.offset` pages through the match set
+   * (1-based, forwarded to the upstream `offset` parameter). When results are
+   * truncated at the requested limit, a follow-up count query populates
+   * totalCount with the real match total for the whole filter set.
    */
   async searchEvents(
     params: EarthquakeQueryParams,
@@ -112,13 +109,18 @@ export class EmscService {
           headers: { Accept: 'application/json' },
         });
 
-        if (!response.ok) {
-          throw await httpErrorFromResponse(response, { service: 'EMSC FDSN', data: { url } });
-        }
-
+        // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
+        // returning, so a Response here is always 2xx.
         const text = await response.text();
         if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
           throw serviceUnavailable('EMSC returned HTML instead of JSON.', { url });
+        }
+
+        // EMSC answers a zero-match query — including an offset past the last
+        // match — with 204 No Content and an empty body, which is a match set of
+        // size zero, not a parse failure.
+        if (text.trim() === '') {
+          return { events: [], count: 0 };
         }
 
         const data = JSON.parse(text) as EmscFeatureCollection;
@@ -143,7 +145,9 @@ export class EmscService {
     // failing the search.
     const requestedLimit = params.limit ?? 100;
     if (result.count > 0 && result.count === requestedLimit) {
-      const { limit: _limit, orderBy: _orderBy, ...countParams } = params;
+      // The total is a property of the filter set, not of the page — offset,
+      // limit, and orderBy are stripped so every page reports the same total.
+      const { limit: _limit, offset: _offset, orderBy: _orderBy, ...countParams } = params;
       try {
         const { count: totalCount } = await this.countEvents(countParams, ctx);
         return { ...result, totalCount };
@@ -176,10 +180,8 @@ export class EmscService {
           headers: { Accept: 'application/json' },
         });
 
-        if (!response.ok) {
-          throw await httpErrorFromResponse(response, { service: 'EMSC Count', data: { url } });
-        }
-
+        // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
+        // returning, so a Response here is always 2xx.
         const text = await response.text();
         if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
           throw serviceUnavailable('EMSC returned HTML instead of JSON.', { url });
@@ -221,6 +223,8 @@ export class EmscService {
     if (params.maxDepthKm != null) q.set('maxdepth', String(params.maxDepthKm));
     // EMSC does not support alertlevel, minfelt, minsig — silently omit
     if (params.limit != null) q.set('limit', String(params.limit));
+    // FDSN offset is 1-based — offset=1 is the first match, and 0 is rejected.
+    if (params.offset != null) q.set('offset', String(params.offset));
     if (params.orderBy) q.set('orderby', params.orderBy);
 
     return q.toString();

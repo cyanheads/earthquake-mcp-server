@@ -7,12 +7,7 @@ import type { Context } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
 import { notFound, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
-import {
-  fetchWithTimeout,
-  httpErrorFromResponse,
-  requestContextService,
-  withRetry,
-} from '@cyanheads/mcp-ts-core/utils';
+import { fetchWithTimeout, requestContextService, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import type {
   EarthquakeEvent,
   EarthquakeQueryParams,
@@ -108,13 +103,8 @@ export class UsgsService {
           headers: { Accept: 'application/json' },
         });
 
-        if (!response.ok) {
-          throw await httpErrorFromResponse(response, {
-            service: 'USGS Feed',
-            data: { feedUrl },
-          });
-        }
-
+        // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
+        // returning, so a Response here is always 2xx.
         const text = await response.text();
         if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
           throw serviceUnavailable(
@@ -143,8 +133,10 @@ export class UsgsService {
   }
 
   /**
-   * Query USGS FDSN event API. When results are truncated at the requested limit,
-   * a follow-up count query populates totalCount with the real match total.
+   * Query USGS FDSN event API. `params.offset` pages through the match set
+   * (1-based, forwarded to the upstream `offset` parameter). When results are
+   * truncated at the requested limit, a follow-up count query populates
+   * totalCount with the real match total for the whole filter set.
    */
   async searchEvents(
     params: EarthquakeQueryParams,
@@ -165,27 +157,8 @@ export class UsgsService {
           headers: { Accept: 'application/json' },
         });
 
-        if (response.status === 400) {
-          // USGS returns plain-text "Error 400: ..." for overly broad queries
-          const body = await response.text();
-          const broadMatch = /(\d+) matching events exceeds search limit/.exec(body);
-          if (broadMatch?.[1]) {
-            const totalCount = parseInt(broadMatch[1], 10);
-            throw Object.assign(
-              new Error(
-                `Query matches ${totalCount} events, exceeding the 20,000-event limit. ` +
-                  'Narrow time range, raise min_magnitude, or add location filters.',
-              ),
-              { code: -32007, data: { reason: 'query_too_broad', totalCount } },
-            );
-          }
-          throw await httpErrorFromResponse(response, { service: 'USGS FDSN' });
-        }
-
-        if (!response.ok) {
-          throw await httpErrorFromResponse(response, { service: 'USGS FDSN', data: { url } });
-        }
-
+        // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
+        // returning, so a Response here is always 2xx.
         const text = await response.text();
         if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
           throw serviceUnavailable('USGS returned HTML instead of GeoJSON.', { url });
@@ -213,7 +186,9 @@ export class UsgsService {
     // to an absent totalCount rather than failing the search.
     const requestedLimit = params.limit ?? 100;
     if (result.count > 0 && result.count === requestedLimit) {
-      const { limit: _limit, orderBy: _orderBy, ...countParams } = params;
+      // The total is a property of the filter set, not of the page — offset,
+      // limit, and orderBy are stripped so every page reports the same total.
+      const { limit: _limit, offset: _offset, orderBy: _orderBy, ...countParams } = params;
       try {
         const { count: totalCount } = await this.countEvents(countParams, ctx);
         return { ...result, totalCount };
@@ -286,13 +261,8 @@ export class UsgsService {
           headers: { Accept: 'application/json' },
         });
 
-        if (!response.ok) {
-          throw await httpErrorFromResponse(response, {
-            service: 'USGS Count',
-            data: { url },
-          });
-        }
-
+        // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
+        // returning, so a Response here is always 2xx.
         const text = await response.text();
         if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
           throw serviceUnavailable('USGS returned HTML instead of JSON.', { url });
@@ -332,6 +302,8 @@ export class UsgsService {
     if (params.minFelt != null) q.set('minfelt', String(params.minFelt));
     if (params.minSignificance != null) q.set('minsig', String(params.minSignificance));
     if (params.limit != null) q.set('limit', String(params.limit));
+    // FDSN offset is 1-based — offset=1 is the first match, and 0 is rejected.
+    if (params.offset != null) q.set('offset', String(params.offset));
     if (params.orderBy) q.set('orderby', params.orderBy);
 
     return q.toString();
