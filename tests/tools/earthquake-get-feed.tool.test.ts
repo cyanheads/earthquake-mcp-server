@@ -206,3 +206,183 @@ describe('earthquakeGetFeed', () => {
     expect(text).toContain('Not computed');
   });
 });
+
+describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
+  let mockGetFeed: ReturnType<typeof vi.fn>;
+
+  /** A feed larger than one page, so paging is actually exercised. */
+  function bigFeed(size: number) {
+    return {
+      events: Array.from({ length: size }, (_, i) => ({ ...sampleEvent, id: `us${i}` })),
+      generatedAt: '2026-05-23T10:00:00.000Z',
+      count: size,
+      feedUrl: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson',
+    };
+  }
+
+  beforeEach(() => {
+    mockGetFeed = vi.fn();
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      getFeed: mockGetFeed,
+    } as unknown as usgsModule.UsgsService);
+  });
+
+  it('caps a large feed at the default page size and discloses the full total', async () => {
+    mockGetFeed.mockResolvedValue(bigFeed(10_656));
+
+    const ctx = createMockContext();
+    const input = earthquakeGetFeed.input.parse({ magnitude_tier: 'all', time_window: 'month' });
+    const result = await earthquakeGetFeed.handler(input, ctx);
+
+    expect(result.count).toBe(100);
+    expect(result.events).toHaveLength(100);
+    expect(getEnrichment(ctx).totalCount).toBe(10_656);
+    expect(getEnrichment(ctx).truncated).toBe(true);
+    expect(getEnrichment(ctx).nextCursor).toEqual(expect.any(String));
+  });
+
+  it('honors an explicit limit for the first page', async () => {
+    mockGetFeed.mockResolvedValue(bigFeed(500));
+
+    const ctx = createMockContext();
+    const input = earthquakeGetFeed.input.parse({ limit: 25 });
+    const result = await earthquakeGetFeed.handler(input, ctx);
+
+    expect(result.count).toBe(25);
+    expect(result.events[0]?.id).toBe('us0');
+  });
+
+  it('walks the whole feed across pages with no gaps or repeats', async () => {
+    mockGetFeed.mockResolvedValue(bigFeed(250));
+
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+
+    do {
+      const ctx = createMockContext();
+      const input = earthquakeGetFeed.input.parse({
+        limit: 100,
+        ...(cursor != null ? { cursor } : {}),
+      });
+      const result = await earthquakeGetFeed.handler(input, ctx);
+      seen.push(...result.events.map((e) => e.id));
+      cursor = getEnrichment(ctx).nextCursor as string | undefined;
+      pages += 1;
+    } while (cursor != null && pages < 10);
+
+    expect(pages).toBe(3);
+    expect(seen).toHaveLength(250);
+    expect(new Set(seen).size).toBe(250);
+    expect(seen[0]).toBe('us0');
+    expect(seen[249]).toBe('us249');
+  });
+
+  it('omits nextCursor on the last page', async () => {
+    mockGetFeed.mockResolvedValue(bigFeed(150));
+
+    const firstCtx = createMockContext();
+    await earthquakeGetFeed.handler(earthquakeGetFeed.input.parse({ limit: 100 }), firstCtx);
+    const cursor = getEnrichment(firstCtx).nextCursor as string;
+
+    const lastCtx = createMockContext();
+    const result = await earthquakeGetFeed.handler(
+      earthquakeGetFeed.input.parse({ limit: 100, cursor }),
+      lastCtx,
+    );
+
+    expect(result.count).toBe(50);
+    expect(getEnrichment(lastCtx).nextCursor).toBeUndefined();
+    expect(getEnrichment(lastCtx).truncated).toBeUndefined();
+    expect(getEnrichment(lastCtx).totalCount).toBe(150);
+  });
+
+  it('leaves a feed that fits in one page untruncated', async () => {
+    mockGetFeed.mockResolvedValue(bigFeed(12));
+
+    const ctx = createMockContext();
+    const result = await earthquakeGetFeed.handler(earthquakeGetFeed.input.parse({}), ctx);
+
+    expect(result.count).toBe(12);
+    expect(getEnrichment(ctx).totalCount).toBe(12);
+    expect(getEnrichment(ctx).truncated).toBeUndefined();
+    expect(getEnrichment(ctx).nextCursor).toBeUndefined();
+    expect(getEnrichment(ctx).notice).toBeUndefined();
+  });
+
+  it('notices a capped page and names the cursor as the next step', async () => {
+    mockGetFeed.mockResolvedValue(bigFeed(10_656));
+
+    const ctx = createMockContext();
+    const input = earthquakeGetFeed.input.parse({ magnitude_tier: 'all', time_window: 'month' });
+    await earthquakeGetFeed.handler(input, ctx);
+
+    const notice = getEnrichment(ctx).notice as string;
+    expect(notice).toContain('10656');
+    expect(notice).toContain('nextCursor');
+  });
+
+  it('rejects a malformed cursor rather than silently restarting the feed', async () => {
+    mockGetFeed.mockResolvedValue(bigFeed(500));
+
+    const ctx = createMockContext();
+    const input = earthquakeGetFeed.input.parse({ cursor: 'not-a-real-cursor' });
+
+    await expect(earthquakeGetFeed.handler(input, ctx)).rejects.toThrow(/cursor/i);
+  });
+
+  it('reports an empty page past the end without claiming the feed is empty', async () => {
+    mockGetFeed.mockResolvedValue(bigFeed(10));
+
+    const seedCtx = createMockContext();
+    await earthquakeGetFeed.handler(earthquakeGetFeed.input.parse({ limit: 5 }), seedCtx);
+    const cursor = getEnrichment(seedCtx).nextCursor as string;
+
+    // Shrink the feed under the cursor's offset, as a regeneration between calls would
+    mockGetFeed.mockResolvedValue(bigFeed(3));
+
+    const ctx = createMockContext();
+    const result = await earthquakeGetFeed.handler(
+      earthquakeGetFeed.input.parse({ limit: 5, cursor }),
+      ctx,
+    );
+
+    expect(result.count).toBe(0);
+    expect(getEnrichment(ctx).totalCount).toBe(3);
+    const notice = getEnrichment(ctx).notice as string;
+    expect(notice).toContain('last one');
+  });
+
+  it('still reports an empty feed as empty, not as a paging dead end', async () => {
+    mockGetFeed.mockResolvedValue({
+      events: [],
+      generatedAt: '2026-05-23T10:00:00.000Z',
+      count: 0,
+      feedUrl: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_hour.geojson',
+    });
+
+    const ctx = createMockContext();
+    const input = earthquakeGetFeed.input.parse({
+      magnitude_tier: 'significant',
+      time_window: 'hour',
+    });
+    await earthquakeGetFeed.handler(input, ctx);
+
+    expect(getEnrichment(ctx).totalCount).toBe(0);
+    expect(getEnrichment(ctx).notice as string).toContain('significant/hour');
+  });
+
+  it('renders the page it returned, so content[] matches structuredContent', async () => {
+    mockGetFeed.mockResolvedValue(bigFeed(500));
+
+    const ctx = createMockContext();
+    const input = earthquakeGetFeed.input.parse({ limit: 3 });
+    const result = await earthquakeGetFeed.handler(input, ctx);
+
+    const text = (earthquakeGetFeed.format!(result)[0] as { text: string }).text;
+    expect(text).toContain('**Count:** 3');
+    expect(text).toContain('us0');
+    expect(text).toContain('us2');
+    expect(text).not.toContain('us3');
+  });
+});

@@ -26,7 +26,10 @@ export const earthquakeFeedResource = resource('earthquake://feed/{magnitude_tie
   description:
     'Direct access to a USGS real-time earthquake feed as injectable context. ' +
     'magnitude_tier: all | 1.0 | 2.5 | 4.5 | significant. ' +
-    'time_window: hour | day | week | month.',
+    'time_window: hour | day | week | month. ' +
+    'Returns the whole feed in one read — the URI carries no paging, so the broad combinations ' +
+    '("all" or "1.0" with "week" or "month") can run to thousands of events. ' +
+    'Use the earthquake_get_feed tool for those: it serves the same data a bounded page at a time.',
   mimeType: 'application/json',
 
   params: z.object({
