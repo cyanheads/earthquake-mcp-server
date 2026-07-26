@@ -32,33 +32,57 @@ export const EarthquakeEventSchema = z.object({
   felt: z
     .number()
     .nullable()
-    .describe('Number of DYFI (Did You Feel It?) responses. Null if no reports. USGS only.'),
+    .describe(
+      'Number of DYFI (Did You Feel It?) responses. Null when USGS has received no reports for the event, and always null for EMSC, which publishes no DYFI field — a null is not evidence the event went unfelt.',
+    ),
   cdi: z
     .number()
     .nullable()
-    .describe('Maximum reported intensity (Community Decimal Intensity, 0–12 scale). USGS only.'),
+    .describe(
+      'Maximum reported intensity (Community Decimal Intensity, 0–12 scale), derived from DYFI responses. Null when USGS computed no DYFI intensity, and always null for EMSC, which publishes no such field.',
+    ),
   mmi: z
     .number()
     .nullable()
     .describe(
-      'Maximum ShakeMap instrumental intensity (Modified Mercalli, 0–12 scale). USGS only.',
+      'Maximum ShakeMap instrumental intensity (Modified Mercalli, 0–12 scale). Null when USGS produced no ShakeMap for the event, and always null for EMSC, which publishes no such field.',
     ),
   alert: z
     .enum(['green', 'yellow', 'orange', 'red'])
     .nullable()
-    .describe('PAGER estimated impact alert level. Null if not computed. USGS only.'),
+    .describe(
+      'PAGER estimated impact alert level. Null when USGS ran no PAGER assessment, and always null for EMSC, which publishes no such field.',
+    ),
   tsunami: z
     .number()
-    .describe('1 if a tsunami warning was issued; 0 otherwise. USGS only; 0 for EMSC events.'),
+    .nullable()
+    .describe(
+      'USGS tsunami flag: 1 for large events in oceanic regions, 0 otherwise. It is not a warning — USGS states the flag does not indicate whether a tsunami did or will exist; check NOAA (tsunami.gov) for actual alert status. Null when the source publishes no such flag, as EMSC does not.',
+    ),
   significance: z
     .number()
     .nullable()
     .describe(
-      'USGS significance score (0–2000+). Combines magnitude, felt reports, PAGER. USGS only.',
+      'USGS significance score (0–2000+). Combines magnitude, felt reports, PAGER. Null when USGS computed no score, and always null for EMSC, which publishes no such field.',
     ),
   status: z
     .enum(['automatic', 'reviewed', 'deleted'])
-    .describe('Review status. Automatic detections may be revised.'),
+    .nullable()
+    .describe(
+      'Human-review state: "automatic" (posted by automatic processing, not yet verified by a person), "reviewed" (examined by an analyst), or "deleted". Null when the source publishes no review status — EMSC does not, so treat an EMSC solution as unverified and subject to revision rather than final.',
+    ),
+  source_catalog: z
+    .string()
+    .optional()
+    .describe(
+      'Upstream catalog this solution came from, e.g. "EMSC-RTS" (EMSC real-time seismicity, revised as analysis continues). Absent for USGS, which publishes no catalog identifier on event records.',
+    ),
+  auth: z
+    .string()
+    .optional()
+    .describe(
+      'Code of the agency or network the source names as authoritative for this solution, e.g. "NEIC", "BMKG", "NDI" from EMSC or "us", "ci", "ak" from USGS. Absent when the source reports none.',
+    ),
   event_url: z.string().optional().describe('USGS event page URL. Present for USGS events only.'),
   detail_url: z
     .string()
@@ -77,26 +101,43 @@ export function formatEvent(event: EarthquakeEventOutput): string[] {
     `**ID:** ${event.id} | **Magnitude:** ${event.magnitude !== null ? event.magnitude : 'unknown'} (${event.magnitude_type}) | **Depth:** ${event.depth_km !== null ? `${event.depth_km} km` : 'unknown'}`,
   );
   lines.push(`**Place:** ${event.place}`);
-  lines.push(
-    `**Time:** ${event.time} | **Updated:** ${event.updated} | **Status:** ${event.status}`,
-  );
+  lines.push(`**Time:** ${event.time} | **Updated:** ${event.updated}`);
   lines.push(`**Location:** ${event.latitude.toFixed(4)}°, ${event.longitude.toFixed(4)}°`);
 
-  // Impact fields (USGS-specific; render explicitly for format-parity compliance)
+  // Provenance — review state plus whatever catalog/agency the source named.
+  // A null status is rendered, never dropped: it means the source publishes none.
+  const provenance = [`Status: ${event.status ?? 'not published by source'}`];
+  if (event.source_catalog) provenance.push(`Catalog: ${event.source_catalog}`);
+  if (event.auth) provenance.push(`Agency: ${event.auth}`);
+  lines.push(`**Provenance:** ${provenance.join(' | ')}`);
+
   lines.push(
     `**PAGER Alert:** ${event.alert !== null ? event.alert.toUpperCase() : 'Not computed'}`,
   );
   // Render tsunami as its raw value so the linter's format-parity sentinel check passes
   lines.push(
-    `**Tsunami (warning flag):** ${event.tsunami}${event.tsunami !== 0 ? ' ⚠️ Warning issued' : ''}`,
+    `**Tsunami flag:** ${
+      event.tsunami === null
+        ? 'not published by source'
+        : `${event.tsunami}${event.tsunami !== 0 ? ' ⚠️ Large oceanic event — check tsunami.gov for actual alert status' : ''}`
+    }`,
   );
 
+  // Every impact field reaches content[]: present ones with their value, absent
+  // ones collected into one "Not reported" segment so a fully sparse event reads
+  // as a single line rather than four.
   const impactParts: string[] = [];
+  const notReported: string[] = [];
   if (event.felt !== null) impactParts.push(`Felt by ${event.felt} (DYFI)`);
+  else notReported.push('DYFI felt reports');
   if (event.mmi !== null) impactParts.push(`ShakeMap MMI: ${event.mmi}`);
+  else notReported.push('ShakeMap MMI');
   if (event.cdi !== null) impactParts.push(`CDI: ${event.cdi}`);
+  else notReported.push('CDI');
   if (event.significance !== null) impactParts.push(`Significance: ${event.significance}`);
-  if (impactParts.length > 0) lines.push(`**Impact:** ${impactParts.join(' | ')}`);
+  else notReported.push('significance');
+  if (notReported.length > 0) impactParts.push(`Not reported: ${notReported.join(', ')}`);
+  lines.push(`**Impact:** ${impactParts.join(' | ')}`);
 
   if (event.event_url) lines.push(`**USGS page:** ${event.event_url}`);
   if (event.detail_url) lines.push(`**Detail URL:** ${event.detail_url}`);

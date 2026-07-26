@@ -89,6 +89,32 @@ describe('EarthquakeEventSchema', () => {
     }
   });
 
+  it('accepts null status for a source that publishes no review state', () => {
+    const result = EarthquakeEventSchema.safeParse({ ...fullEvent, status: null });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts null tsunami for a source that publishes no tsunami flag', () => {
+    const result = EarthquakeEventSchema.safeParse({ ...fullEvent, tsunami: null });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts source_catalog and auth when the source reports them', () => {
+    const result = EarthquakeEventSchema.safeParse({
+      ...fullEvent,
+      source_catalog: 'EMSC-RTS',
+      auth: 'NEIC',
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('accepts an event with source_catalog and auth omitted', () => {
+    const result = EarthquakeEventSchema.safeParse(fullEvent);
+    expect(result.success).toBe(true);
+    expect(result.data?.source_catalog).toBeUndefined();
+    expect(result.data?.auth).toBeUndefined();
+  });
+
   it('accepts null depth_km for historical events', () => {
     const result = EarthquakeEventSchema.safeParse({ ...fullEvent, depth_km: null });
     expect(result.success).toBe(true);
@@ -165,10 +191,12 @@ describe('formatEvent', () => {
     expect(text).toMatch(/Tsunami.*0/);
   });
 
-  it('renders tsunami warning indicator when tsunami flag is 1', () => {
+  it('renders tsunami flag 1 as an oceanic-event flag, not as a warning', () => {
     const event = { ...fullEvent, tsunami: 1 };
     const text = formatEvent(event).join('\n');
-    expect(text).toContain('Warning issued');
+    expect(text).toContain('Large oceanic event');
+    expect(text).toContain('tsunami.gov');
+    expect(text).not.toContain('Warning issued');
   });
 
   it('renders felt count in Impact section when present', () => {
@@ -199,10 +227,12 @@ describe('formatEvent', () => {
     expect(text).toContain('1539');
   });
 
-  it('omits Impact section entirely when all impact fields are null', () => {
+  it('renders the Impact line as a single not-reported list when every impact field is null', () => {
     const lines = formatEvent(sparseEvent);
-    const text = lines.join('\n');
-    expect(text).not.toContain('**Impact:**');
+    const impactLines = lines.filter((l) => l.startsWith('**Impact:**'));
+    expect(impactLines).toEqual([
+      '**Impact:** Not reported: DYFI felt reports, ShakeMap MMI, CDI, significance',
+    ]);
   });
 
   it('renders USGS page URL when present', () => {
@@ -257,14 +287,100 @@ describe('formatEvent', () => {
       mmi: null,
       significance: null,
       alert: null,
-      tsunami: 0,
+      tsunami: null,
+      status: null,
     };
     const text = formatEvent(emscStyleEvent).join('\n');
-    // Should not contain numbers that would suggest fabricated impact data
-    expect(text).not.toContain('DYFI');
-    expect(text).not.toContain('ShakeMap MMI');
-    expect(text).not.toContain('CDI:');
-    expect(text).not.toContain('Significance:');
+    // Absence is stated, never rendered as a value
+    expect(text).not.toMatch(/ShakeMap MMI: /);
+    expect(text).not.toMatch(/CDI: /);
+    expect(text).not.toMatch(/Significance: /);
+    expect(text).not.toMatch(/Felt by /);
+    expect(text).toContain('**Impact:** Not reported:');
+  });
+});
+
+describe('formatEvent — null impact fields reach content[] (issue #17)', () => {
+  it.each([
+    ['felt', 'DYFI felt reports'],
+    ['mmi', 'ShakeMap MMI'],
+    ['cdi', 'CDI'],
+    ['significance', 'significance'],
+  ] as const)('names %s in the not-reported list when it is null', (field, label) => {
+    const text = formatEvent({ ...fullEvent, [field]: null }).join('\n');
+    expect(text).toContain(`Not reported: ${label}`);
+  });
+
+  it('keeps reported impact values alongside the not-reported list', () => {
+    const text = formatEvent({ ...fullEvent, cdi: null, mmi: null }).join('\n');
+    expect(text).toContain('Felt by 18000 (DYFI)');
+    expect(text).toContain('Significance: 1539');
+    expect(text).toContain('Not reported: ShakeMap MMI, CDI');
+  });
+
+  it('renders an explicit not-published state for a null status', () => {
+    const text = formatEvent({ ...fullEvent, status: null }).join('\n');
+    expect(text).toContain('**Provenance:** Status: not published by source');
+  });
+
+  it('renders an explicit not-published state for a null tsunami flag', () => {
+    const text = formatEvent({ ...fullEvent, tsunami: null }).join('\n');
+    expect(text).toContain('**Tsunami flag:** not published by source');
+  });
+
+  it('renders source_catalog and auth when the source publishes them', () => {
+    const text = formatEvent({
+      ...fullEvent,
+      status: null,
+      source_catalog: 'EMSC-RTS',
+      auth: 'NEIC',
+    }).join('\n');
+    expect(text).toContain('Catalog: EMSC-RTS');
+    expect(text).toContain('Agency: NEIC');
+  });
+
+  it('renders every schema field an EMSC event carries, so content[] matches structuredContent', () => {
+    const emscEvent: EarthquakeEventOutput = {
+      ...sparseEvent,
+      status: null,
+      tsunami: null,
+      source_catalog: 'EMSC-RTS',
+      auth: 'NDI',
+    };
+
+    /** Rendered fragment that proves each structuredContent field reached content[]. */
+    const expectedFragments: Record<string, string> = {
+      id: emscEvent.id,
+      title: emscEvent.title,
+      magnitude: '**Magnitude:** 1.2',
+      magnitude_type: '(ml)',
+      time: emscEvent.time,
+      updated: emscEvent.updated,
+      place: emscEvent.place,
+      latitude: '38.8000',
+      longitude: '-122.8000',
+      depth_km: '**Depth:** unknown',
+      felt: 'DYFI felt reports',
+      cdi: 'CDI',
+      mmi: 'ShakeMap MMI',
+      alert: '**PAGER Alert:** Not computed',
+      tsunami: '**Tsunami flag:** not published by source',
+      significance: 'significance',
+      status: '**Provenance:** Status: not published by source',
+      source_catalog: 'Catalog: EMSC-RTS',
+      auth: 'Agency: NDI',
+    };
+
+    // Absent from this event, so absent from both surfaces — that is parity too
+    const absent = ['event_url', 'detail_url'];
+    expect(Object.keys(EarthquakeEventSchema.shape).sort()).toEqual(
+      [...Object.keys(expectedFragments), ...absent].sort(),
+    );
+
+    const text = formatEvent(emscEvent).join('\n');
+    for (const [field, fragment] of Object.entries(expectedFragments)) {
+      expect(text, `field "${field}" missing from content[]`).toContain(fragment);
+    }
   });
 });
 

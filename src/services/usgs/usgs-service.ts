@@ -65,9 +65,13 @@ function normalizeUsgsFeature(f: UsgsFeature): EarthquakeEvent {
     cdi: p.cdi ?? null,
     mmi: p.mmi ?? null,
     alert,
-    tsunami: p.tsunami ?? 0,
+    tsunami: p.tsunami ?? null,
     significance: p.sig ?? null,
     status,
+    // USGS `net` is the contributor considered the preferred source for the
+    // event — the same provenance EMSC reports as `auth`. USGS publishes no
+    // catalog identifier on event records, so source_catalog stays absent.
+    ...(p.net ? { auth: p.net } : {}),
     ...(p.url ? { event_url: p.url } : {}),
     ...(p.detail ? { detail_url: p.detail } : {}),
   };

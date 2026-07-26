@@ -320,4 +320,24 @@ describe('earthquakeSearch — format edge cases', () => {
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('42');
   });
+
+  it('carries EMSC unpublished states into content[] (issues #17, #22)', () => {
+    const emscEvent: EarthquakeEventOutput = {
+      ...minimalEvent,
+      id: '20260726_0000128',
+      status: null,
+      tsunami: null,
+      source_catalog: 'EMSC-RTS',
+      auth: 'NEIC',
+    };
+    const output = { count: 1, source: 'emsc' as const, events: [emscEvent] };
+    const text = (earthquakeSearch.format!(output)[0] as { text: string }).text;
+
+    expect(text).toContain('Status: not published by source');
+    expect(text).toContain('Catalog: EMSC-RTS');
+    expect(text).toContain('Agency: NEIC');
+    expect(text).toContain('**Tsunami flag:** not published by source');
+    expect(text).toContain('Not reported: DYFI felt reports, ShakeMap MMI, CDI, significance');
+    expect(text).not.toContain('Status: reviewed');
+  });
 });

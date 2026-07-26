@@ -87,6 +87,43 @@ describe('UsgsService.searchEvents — null magnitude normalization (issue #13)'
   });
 });
 
+describe('UsgsService.searchEvents — provenance normalization (issue #22)', () => {
+  it('keeps the upstream-reported review status', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([makeFeature('us1', 4.5)])));
+
+    const service = makeService();
+    const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
+
+    expect(result.events[0]?.status).toBe('reviewed');
+    vi.unstubAllGlobals();
+  });
+
+  it('maps the contributor network to auth and leaves source_catalog absent', async () => {
+    const feature = makeFeature('us1', 4.5);
+    feature.properties.net = 'ci';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([feature])));
+
+    const service = makeService();
+    const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
+
+    expect(result.events[0]?.auth).toBe('ci');
+    expect(result.events[0]).not.toHaveProperty('source_catalog');
+    vi.unstubAllGlobals();
+  });
+
+  it('leaves tsunami null when a sparse payload omits the flag', async () => {
+    const feature = makeFeature('us1', 4.5);
+    delete feature.properties.tsunami;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([feature])));
+
+    const service = makeService();
+    const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
+
+    expect(result.events[0]?.tsunami).toBeNull();
+    vi.unstubAllGlobals();
+  });
+});
+
 describe('UsgsService.searchEvents — totalCount count sub-call (issue #11)', () => {
   it('fetches the real total via countEvents when results are truncated at the limit', async () => {
     const features = Array.from({ length: 3 }, (_, i) => makeFeature(`us${i}`, 5));

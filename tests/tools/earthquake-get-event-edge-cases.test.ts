@@ -147,11 +147,13 @@ describe('earthquakeGetEvent — format completeness', () => {
     expect(text).toContain('Detail URL:');
   });
 
-  it('renders tsunami=1 with warning text', () => {
+  it('renders tsunami=1 as an oceanic-event flag, not a warning', () => {
     const tsunamiEvent = { ...reviewedEvent, tsunami: 1 };
     const blocks = earthquakeGetEvent.format!({ event: tsunamiEvent });
     const text = (blocks[0] as { text: string }).text;
-    expect(text).toContain('Warning issued');
+    expect(text).toContain('Large oceanic event');
+    expect(text).toContain('tsunami.gov');
+    expect(text).not.toContain('Warning issued');
   });
 
   it('renders red alert level', () => {

@@ -21,7 +21,11 @@ function makeService(): EmscService {
   );
 }
 
-function makeFeature(unid: string, mag: number | null): EmscFeature {
+function makeFeature(
+  unid: string,
+  mag: number | null,
+  extraProps: Partial<EmscFeature['properties']> = {},
+): EmscFeature {
   return {
     type: 'Feature',
     id: unid,
@@ -33,6 +37,7 @@ function makeFeature(unid: string, mag: number | null): EmscFeature {
       flynn_region: 'WESTERN TURKEY',
       time: '2026-06-01T00:00:00.000Z',
       lastupdate: '2026-06-01T00:10:00.000Z',
+      ...extraProps,
     },
   };
 }
@@ -59,6 +64,74 @@ describe('EmscService.searchEvents — null magnitude normalization (issue #13)'
     const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
 
     expect(result.events[0]?.magnitude).toBeNull();
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('EmscService.searchEvents — unpublished fields stay unasserted (issue #22)', () => {
+  it('leaves status null instead of claiming a review the source never reported', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse([
+            makeFeature('20260726_0000128', 5.8, { source_catalog: 'EMSC-RTS', auth: 'NEIC' }),
+          ]),
+        ),
+    );
+
+    const service = makeService();
+    const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
+
+    expect(result.events[0]?.status).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it('leaves tsunami null instead of asserting 0 from an absent field', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse([makeFeature('20260726_0000128', 5.8)])),
+    );
+
+    const service = makeService();
+    const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
+
+    expect(result.events[0]?.tsunami).toBeNull();
+    vi.unstubAllGlobals();
+  });
+
+  it('passes source_catalog and auth through as the provenance EMSC does publish', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse([
+            makeFeature('20260726_0000125', 3.4, { source_catalog: 'EMSC-RTS', auth: 'NDI' }),
+          ]),
+        ),
+    );
+
+    const service = makeService();
+    const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
+
+    expect(result.events[0]?.source_catalog).toBe('EMSC-RTS');
+    expect(result.events[0]?.auth).toBe('NDI');
+    vi.unstubAllGlobals();
+  });
+
+  it('omits source_catalog and auth for a sparse payload that carries neither', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse([makeFeature('20260726_0000124', 4.1)])),
+    );
+
+    const service = makeService();
+    const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
+
+    expect(result.events[0]).not.toHaveProperty('source_catalog');
+    expect(result.events[0]).not.toHaveProperty('auth');
     vi.unstubAllGlobals();
   });
 });

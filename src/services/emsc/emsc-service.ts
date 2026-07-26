@@ -64,9 +64,15 @@ function normalizeEmscFeature(f: EmscFeature): EarthquakeEvent {
     cdi: null,
     mmi: null,
     alert: null,
-    tsunami: 0,
     significance: null,
-    status: 'reviewed', // EMSC events are generally reviewed
+    // The FDSN response carries no review-status and no tsunami field. Both stay
+    // null rather than asserting "reviewed" or "no tsunami flag" from data the
+    // source never published — EMSC-RTS solutions are real-time and get revised.
+    status: null,
+    tsunami: null,
+    // What EMSC does publish about provenance, so callers can judge it themselves
+    ...(p.source_catalog ? { source_catalog: p.source_catalog } : {}),
+    ...(p.auth ? { auth: p.auth } : {}),
   };
 }
 

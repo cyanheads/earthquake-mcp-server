@@ -3,9 +3,17 @@
  * @module services/usgs/types
  */
 
-/** Normalized earthquake event returned by both USGS and EMSC sources. */
+/**
+ * Normalized earthquake event returned by both USGS and EMSC sources.
+ *
+ * Fields a source does not publish are never synthesized: `status` and
+ * `tsunami` are null when the source reports no such value, and
+ * `source_catalog` / `auth` are omitted entirely rather than filled in.
+ */
 export interface EarthquakeEvent {
   alert: 'green' | 'yellow' | 'orange' | 'red' | null;
+  /** Agency or network the source names as authoritative — EMSC `auth`, USGS `net`. */
+  auth?: string;
   cdi: number | null;
   depth_km: number | null;
   detail_url?: string;
@@ -19,10 +27,12 @@ export interface EarthquakeEvent {
   mmi: number | null;
   place: string;
   significance: number | null;
-  status: 'automatic' | 'reviewed' | 'deleted';
+  /** Upstream catalog the solution came from, e.g. "EMSC-RTS". */
+  source_catalog?: string;
+  status: 'automatic' | 'reviewed' | 'deleted' | null;
   time: string;
   title: string;
-  tsunami: number;
+  tsunami: number | null;
   updated: string;
 }
 
@@ -100,6 +110,7 @@ export interface EmscEventProperties {
   lon?: number | null;
   mag?: number | null;
   magtype?: string | null;
+  source_catalog?: string | null;
   time?: string;
   unid?: string;
 }
