@@ -6,7 +6,8 @@
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getServerConfig } from '@/config/server-config.js';
-import { buildQueryParams } from '@/mcp-server/tools/query-params.js';
+import { upstreamRejection } from '@/mcp-server/tools/fdsn-error.js';
+import { buildQueryParams, ignoredUsgsFilters } from '@/mcp-server/tools/query-params.js';
 import { EarthquakeEventSchema, formatEvent } from '@/mcp-server/tools/schemas.js';
 import { getEmscService } from '@/services/emsc/emsc-service.js';
 import type { EarthquakeQueryParams } from '@/services/usgs/types.js';
@@ -16,9 +17,11 @@ export const earthquakeSearch = tool('earthquake_search', {
   title: 'Search Earthquakes',
   description:
     'Search earthquakes by time range, magnitude, depth, location radius, PAGER alert level, or felt reports. ' +
-    'Supports USGS (global, richer metadata: PAGER, DYFI, ShakeMap) and EMSC (European-Mediterranean, independent catalog). ' +
+    'Supports USGS (global, richer metadata: PAGER, DYFI, ShakeMap) and EMSC, an independent global ' +
+    'catalog operated by the European-Mediterranean Seismological Centre. ' +
     'For location-based queries, provide latitude, longitude, and radius_km together. ' +
-    'USGS-specific filters (alert_level, min_felt, min_significance) are ignored when source=emsc. ' +
+    'USGS-specific filters (alert_level, min_felt, min_significance) are not sent when source=emsc — ' +
+    'the response names them in ignoredFilters. ' +
     'Use earthquake_count first to gauge result size before requesting large result sets. ' +
     'A single call returns at most 20,000 events; larger result sets are retrieved by paging with ' +
     'offset, which is passed straight through to the upstream FDSN API. When a result is capped, ' +
@@ -107,10 +110,12 @@ export const earthquakeSearch = tool('earthquake_search', {
       .enum(['usgs', 'emsc'])
       .default('usgs')
       .describe(
-        'Data source. ' +
+        'Data source. Both catalogs are global. ' +
           '"usgs" covers global events with PAGER, DYFI, and ShakeMap metadata. ' +
-          '"emsc" covers the European-Mediterranean region with an independent catalog — ' +
-          'useful for cross-verification or European-focused queries.',
+          '"emsc" is an independent global catalog operated by the European-Mediterranean ' +
+          'Seismological Centre — use it to cross-check any event, anywhere, against a separate ' +
+          'network. It publishes no PAGER, DYFI, or ShakeMap metadata and no per-event detail ' +
+          'endpoint; its station coverage is densest around Europe and the Mediterranean.',
       ),
     limit: z
       .number()
@@ -181,6 +186,14 @@ export const earthquakeSearch = tool('earthquake_search', {
         'Recovery guidance when results are empty or capped — how to broaden filters or get the full count. ' +
           'Absent when the result set is non-empty and within the limit.',
       ),
+    ignoredFilters: z
+      .array(z.string().describe('Name of an input filter that was not applied.'))
+      .optional()
+      .describe(
+        'USGS-only filters supplied in the input but not sent upstream because source=emsc ' +
+          'does not support them. The result set is NOT constrained by these — re-run with ' +
+          'source=usgs to apply them. Absent when every supplied filter was applied.',
+      ),
     queryEcho: z
       .object({
         start_time: z
@@ -241,6 +254,11 @@ export const earthquakeSearch = tool('earthquake_search', {
           .map(([key, value]) => `${key}=${String(value)}`)
           .join(' · ')}`,
     },
+    ignoredFilters: {
+      render: (f) =>
+        `**Ignored filters (not supported by EMSC, not sent upstream):** ${(f ?? []).join(', ')} — ` +
+        'these results are NOT constrained by the listed filters. Re-run with source=usgs to apply them.',
+    },
   },
 
   errors: [
@@ -253,8 +271,26 @@ export const earthquakeSearch = tool('earthquake_search', {
     {
       reason: 'source_unavailable',
       code: JsonRpcErrorCode.ServiceUnavailable,
-      when: 'Selected source API returns non-2xx or times out.',
+      when: 'Selected source API returns a 5xx or is unreachable.',
+      retryable: true,
       recovery: 'Try the other source (usgs or emsc) or retry after a short delay.',
+    },
+    {
+      reason: 'source_timeout',
+      code: JsonRpcErrorCode.Timeout,
+      when: 'Selected source API did not answer before the request deadline.',
+      retryable: true,
+      recovery:
+        'Narrow the time range, raise min_magnitude, or lower limit so the upstream query ' +
+        'returns faster, then retry. Use earthquake_count first to size the match set.',
+    },
+    {
+      reason: 'upstream_rejected',
+      code: JsonRpcErrorCode.InvalidParams,
+      when: 'The source API rejected the query parameters with a 4xx response.',
+      recovery:
+        'Read the upstream reason in the error message — it names the offending parameter and ' +
+        'the accepted format. Correct that parameter and call again.',
     },
   ],
 
@@ -306,6 +342,25 @@ export const earthquakeSearch = tool('earthquake_search', {
           ...ctx.recoveryFor('source_unavailable'),
         });
       }
+      // A timeout classifies as Timeout, not ServiceUnavailable — it needs its own
+      // branch or it bypasses the contract and reaches the caller with no recovery hint.
+      if (err instanceof McpError && err.code === JsonRpcErrorCode.Timeout) {
+        throw ctx.fail('source_timeout', err.message, {
+          ...ctx.recoveryFor('source_timeout'),
+        });
+      }
+      // A 4xx means the upstream rejected the parameters, and its body says which one.
+      // The framework leaves that body out of the message, so fold it in here — otherwise
+      // content[]-only clients see a bare status code.
+      const rejection = upstreamRejection(err);
+      if (rejection) {
+        throw ctx.fail(
+          'upstream_rejected',
+          `${input.source.toUpperCase()} rejected the query: ${rejection.reason}`,
+          { ...ctx.recoveryFor('upstream_rejected'), status: rejection.status },
+          { cause: err },
+        );
+      }
       throw err;
     }
 
@@ -336,6 +391,11 @@ export const earthquakeSearch = tool('earthquake_search', {
         order_by: input.order_by,
       },
     });
+
+    // An absence from queryEcho is too quiet a signal that a supplied filter never
+    // constrained the results — name the dropped filters outright.
+    const ignoredFilters = ignoredUsgsFilters(input, input.source);
+    if (ignoredFilters.length > 0) ctx.enrich({ ignoredFilters });
 
     // Offsets are 1-based upstream, so the events consumed through this page are
     // (offset - 1) + count and the next page starts at offset + count. A full page

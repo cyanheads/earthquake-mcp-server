@@ -1,7 +1,8 @@
 /**
  * @fileoverview Shared tool-input → FDSN query-param builder for earthquake_search and earthquake_count.
  * Resolves the documented 30-day default time window server-side so USGS and EMSC behave identically
- * (EMSC applies no upstream default and would otherwise query its entire catalog).
+ * (EMSC applies no upstream default and would otherwise query its entire catalog), and names the
+ * USGS-only filters an EMSC query drops so both tools can report them.
  * @module mcp-server/tools/query-params
  */
 
@@ -21,6 +22,21 @@ export interface EarthquakeFilterInput {
   min_significance?: number | undefined;
   radius_km?: number | undefined;
   start_time?: string | undefined;
+}
+
+/** Filters only the USGS FDSN API implements — EMSC has no equivalent parameter. */
+const USGS_ONLY_FILTERS = ['alert_level', 'min_felt', 'min_significance'] as const;
+
+/**
+ * Name the USGS-only filters the caller supplied that will not reach the upstream
+ * query. Empty for a USGS query, where every filter is sent.
+ */
+export function ignoredUsgsFilters(
+  input: EarthquakeFilterInput,
+  source: 'usgs' | 'emsc',
+): string[] {
+  if (source !== 'emsc') return [];
+  return USGS_ONLY_FILTERS.filter((name) => input[name] != null);
 }
 
 /** Documented default time window applied when start_time is omitted. */

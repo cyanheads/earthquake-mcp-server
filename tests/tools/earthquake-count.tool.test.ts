@@ -3,6 +3,7 @@
  * @module tests/tools/earthquake-count.tool.test
  */
 
+import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { earthquakeCount } from '@/mcp-server/tools/definitions/earthquake-count.tool.js';
@@ -307,5 +308,222 @@ describe('earthquakeCount — queryEcho enrichment (issue #21)', () => {
     expect(text).toContain('**Query echo:**');
     expect(text).toContain('start_time=2026-05-31T00:00:00.000Z');
     expect(text).toContain('end_time=2026-06-30');
+  });
+});
+
+describe('earthquakeCount — ignored USGS-only filters for EMSC (issue #16)', () => {
+  let mockUsgsCount: ReturnType<typeof vi.fn>;
+  let mockEmscCount: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockUsgsCount = vi
+      .fn()
+      .mockResolvedValue({ count: 185, maxAllowed: 20000, exceedsLimit: false });
+    mockEmscCount = vi
+      .fn()
+      .mockResolvedValue({ count: 638, maxAllowed: null, exceedsLimit: false });
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      countEvents: mockUsgsCount,
+    } as unknown as usgsModule.UsgsService);
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue({
+      countEvents: mockEmscCount,
+    } as unknown as emscModule.EmscService);
+  });
+
+  it('names alert_level when an EMSC count supplies it', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeCount.input.parse({
+      source: 'emsc',
+      min_magnitude: 4.5,
+      alert_level: 'red',
+    });
+    const result = await earthquakeCount.handler(input, ctx);
+
+    expect(result.count).toBe(638);
+    expect(getEnrichment(ctx).ignoredFilters).toEqual(['alert_level']);
+  });
+
+  it('names every dropped filter, in schema order', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeCount.input.parse({
+      source: 'emsc',
+      alert_level: 'yellow',
+      min_felt: 10,
+      min_significance: 600,
+    });
+    await earthquakeCount.handler(input, ctx);
+
+    expect(getEnrichment(ctx).ignoredFilters).toEqual([
+      'alert_level',
+      'min_felt',
+      'min_significance',
+    ]);
+  });
+
+  it('names min_felt alone', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeCount.input.parse({ source: 'emsc', min_felt: 25 });
+    await earthquakeCount.handler(input, ctx);
+
+    expect(getEnrichment(ctx).ignoredFilters).toEqual(['min_felt']);
+  });
+
+  it('names min_significance alone', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeCount.input.parse({ source: 'emsc', min_significance: 600 });
+    await earthquakeCount.handler(input, ctx);
+
+    expect(getEnrichment(ctx).ignoredFilters).toEqual(['min_significance']);
+  });
+
+  it('stays absent for a USGS count, where the filters are applied', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeCount.input.parse({
+      alert_level: 'yellow',
+      min_felt: 10,
+      min_significance: 600,
+    });
+    await earthquakeCount.handler(input, ctx);
+
+    expect(getEnrichment(ctx).ignoredFilters).toBeUndefined();
+  });
+
+  it('stays absent for an EMSC count that supplies no USGS-only filter', async () => {
+    const ctx = createMockContext();
+    const input = earthquakeCount.input.parse({ source: 'emsc', min_magnitude: 4.5 });
+    await earthquakeCount.handler(input, ctx);
+
+    expect(getEnrichment(ctx).ignoredFilters).toBeUndefined();
+  });
+
+  it('renders the dropped filters into content[] with the consequence spelled out', () => {
+    const render = earthquakeCount.enrichmentTrailer?.ignoredFilters?.render;
+    expect(render).toBeDefined();
+
+    const text = render!(['alert_level', 'min_significance']);
+    expect(text).toContain('alert_level');
+    expect(text).toContain('min_significance');
+    expect(text).toContain('not sent upstream');
+    expect(text).toContain('NOT constrained');
+    expect(text).toContain('source=usgs');
+  });
+});
+
+describe('earthquakeCount — EMSC described as a global catalog (issue #23)', () => {
+  const sourceDescription = () =>
+    earthquakeCount.input.shape.source.description ??
+    earthquakeCount.input.shape.source.def.innerType?.description ??
+    '';
+
+  it('does not scope the EMSC catalog to a region', () => {
+    expect(sourceDescription()).not.toContain('covers the European-Mediterranean region');
+  });
+
+  it('names EMSC as global and attributes it to the operating organization', () => {
+    expect(sourceDescription()).toContain('global');
+    expect(sourceDescription()).toContain('European-Mediterranean Seismological Centre');
+  });
+
+  it('leaves usgs as the default source', () => {
+    expect(earthquakeCount.input.parse({}).source).toBe('usgs');
+  });
+});
+
+describe('earthquakeCount — upstream 4xx reason reaches the caller (issue #26)', () => {
+  let mockUsgsCount: ReturnType<typeof vi.fn>;
+  let mockEmscCount: ReturnType<typeof vi.fn>;
+
+  /** The shape fetchWithTimeout throws on a non-2xx: status-mapped code, body in data. */
+  const upstreamError = (status: number, body: string) =>
+    new McpError(
+      status >= 500 ? JsonRpcErrorCode.ServiceUnavailable : JsonRpcErrorCode.InvalidParams,
+      `Fetch failed for https://earthquake.usgs.gov/fdsnws/event/1/count?…. Status: ${status}`,
+      { status, statusText: 'Bad Request', body, errorSource: 'FetchHttpError' },
+    );
+
+  const usgsBody = `Error 400: Bad Request
+
+Bad starttime value "not-a-date". Valid values are ISO-8601 timestamps.
+
+Usage details are available from https://earthquake.usgs.gov/fdsnws/event/1
+
+Request:
+/fdsnws/event/1/count?format=geojson&amp;starttime=not-a-date
+
+Service version:
+2.7.0
+`;
+
+  const emscBody = `Error 400: Request was not properly specified: start or starttime used a bad format
+
+Request:
+http://ws2/count?format=json&start=not-a-date
+
+Service version: v 2.2
+`;
+
+  beforeEach(() => {
+    mockUsgsCount = vi.fn();
+    mockEmscCount = vi.fn();
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      countEvents: mockUsgsCount,
+    } as unknown as usgsModule.UsgsService);
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue({
+      countEvents: mockEmscCount,
+    } as unknown as emscModule.EmscService);
+  });
+
+  it('folds the USGS reason into the message, which is what content[] renders', async () => {
+    mockUsgsCount.mockRejectedValue(upstreamError(400, usgsBody));
+
+    const ctx = createMockContext({ errors: earthquakeCount.errors });
+    const input = earthquakeCount.input.parse({ start_time: 'not-a-date' });
+    const err = (await earthquakeCount.handler(input, ctx).catch((e) => e)) as McpError;
+
+    expect(err.message).toContain('Bad starttime value "not-a-date"');
+    expect(err.message).toContain('USGS');
+    expect(err.message).not.toContain('Usage details');
+    expect(err.message).not.toContain('Service version');
+  });
+
+  it('carries the contract recovery hint and status in structuredContent data', async () => {
+    mockUsgsCount.mockRejectedValue(upstreamError(400, usgsBody));
+
+    const ctx = createMockContext({ errors: earthquakeCount.errors });
+    const input = earthquakeCount.input.parse({ start_time: 'not-a-date' });
+
+    await expect(earthquakeCount.handler(input, ctx)).rejects.toMatchObject({
+      code: JsonRpcErrorCode.InvalidParams,
+      data: {
+        reason: 'upstream_rejected',
+        status: 400,
+        recovery: { hint: expect.stringContaining('offending parameter') },
+      },
+    });
+  });
+
+  it('does the same for EMSC, whose 400 is worded differently', async () => {
+    mockEmscCount.mockRejectedValue(upstreamError(400, emscBody));
+
+    const ctx = createMockContext({ errors: earthquakeCount.errors });
+    const input = earthquakeCount.input.parse({ source: 'emsc', start_time: 'not-a-date' });
+    const err = (await earthquakeCount.handler(input, ctx).catch((e) => e)) as McpError;
+
+    expect(err.message).toContain('EMSC rejected the query');
+    expect(err.message).toContain('start or starttime used a bad format');
+    expect(err.message).not.toContain('ws2');
+    expect((err.data as { reason?: string }).reason).toBe('upstream_rejected');
+  });
+
+  it('leaves a 5xx on the source_unavailable contract', async () => {
+    mockUsgsCount.mockRejectedValue(upstreamError(503, 'Error 503: Service Unavailable'));
+
+    const ctx = createMockContext({ errors: earthquakeCount.errors });
+    const input = earthquakeCount.input.parse({ min_magnitude: 5 });
+
+    await expect(earthquakeCount.handler(input, ctx)).rejects.toMatchObject({
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      data: { reason: 'source_unavailable', recovery: { hint: expect.any(String) } },
+    });
   });
 });

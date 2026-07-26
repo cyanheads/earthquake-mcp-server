@@ -5,7 +5,8 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { buildQueryParams } from '@/mcp-server/tools/query-params.js';
+import { upstreamRejection } from '@/mcp-server/tools/fdsn-error.js';
+import { buildQueryParams, ignoredUsgsFilters } from '@/mcp-server/tools/query-params.js';
 import { getEmscService } from '@/services/emsc/emsc-service.js';
 import type { EarthquakeQueryParams } from '@/services/usgs/types.js';
 import { getUsgsService, type UsgsService } from '@/services/usgs/usgs-service.js';
@@ -22,7 +23,8 @@ export const earthquakeCount = tool('earthquake_count', {
     'narrow filters before fetching. ' +
     'USGS returns the max_allowed cap (20,000); EMSC count endpoint does not return this field ' +
     '(max_allowed will be null). ' +
-    'USGS-specific filters (alert_level, min_felt, min_significance) are ignored when source=emsc.',
+    'USGS-specific filters (alert_level, min_felt, min_significance) are not sent when source=emsc — ' +
+    'the response names them in ignoredFilters.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
 
   input: z.object({
@@ -106,9 +108,12 @@ export const earthquakeCount = tool('earthquake_count', {
       .enum(['usgs', 'emsc'])
       .default('usgs')
       .describe(
-        'Data source. ' +
+        'Data source. Both catalogs are global. ' +
           '"usgs" covers global events with PAGER, DYFI, and ShakeMap metadata. ' +
-          '"emsc" covers the European-Mediterranean region.',
+          '"emsc" is an independent global catalog operated by the European-Mediterranean ' +
+          'Seismological Centre — use it to cross-check a count from a separate network. ' +
+          'It has no PAGER, DYFI, or ShakeMap metadata; its station coverage is densest around ' +
+          'Europe and the Mediterranean, so counts of small events differ most by region.',
       ),
   }),
 
@@ -181,6 +186,14 @@ export const earthquakeCount = tool('earthquake_count', {
           'Read start_time and end_time to know which window the count spans — a filter absent ' +
           'here was not sent upstream.',
       ),
+    ignoredFilters: z
+      .array(z.string().describe('Name of an input filter that was not applied.'))
+      .optional()
+      .describe(
+        'USGS-only filters supplied in the input but not sent upstream because source=emsc ' +
+          'does not support them. The count is NOT constrained by these — re-run with ' +
+          'source=usgs to apply them. Absent when every supplied filter was applied.',
+      ),
   },
 
   enrichmentTrailer: {
@@ -189,6 +202,11 @@ export const earthquakeCount = tool('earthquake_count', {
         `**Query echo:** ${Object.entries(q ?? {})
           .map(([key, value]) => `${key}=${String(value)}`)
           .join(' · ')}`,
+    },
+    ignoredFilters: {
+      render: (f) =>
+        `**Ignored filters (not supported by EMSC, not sent upstream):** ${(f ?? []).join(', ')} — ` +
+        'this count is NOT constrained by the listed filters. Re-run with source=usgs to apply them.',
     },
   },
 
@@ -202,8 +220,26 @@ export const earthquakeCount = tool('earthquake_count', {
     {
       reason: 'source_unavailable',
       code: JsonRpcErrorCode.ServiceUnavailable,
-      when: 'Selected source API returns non-2xx or times out.',
+      when: 'Selected source API returns a 5xx or is unreachable.',
+      retryable: true,
       recovery: 'Try the other source (usgs or emsc) or retry after a short delay.',
+    },
+    {
+      reason: 'source_timeout',
+      code: JsonRpcErrorCode.Timeout,
+      when: 'Selected source API did not answer before the request deadline.',
+      retryable: true,
+      recovery:
+        'Narrow the time range or raise min_magnitude so the upstream count scans a smaller ' +
+        'window, then retry. Counts over multi-year spans are the usual cause.',
+    },
+    {
+      reason: 'upstream_rejected',
+      code: JsonRpcErrorCode.InvalidParams,
+      when: 'The source API rejected the query parameters with a 4xx response.',
+      recovery:
+        'Read the upstream reason in the error message — it names the offending parameter and ' +
+        'the accepted format. Correct that parameter and call again.',
     },
   ],
 
@@ -244,6 +280,25 @@ export const earthquakeCount = tool('earthquake_count', {
           ...ctx.recoveryFor('source_unavailable'),
         });
       }
+      // A timeout classifies as Timeout, not ServiceUnavailable — it needs its own
+      // branch or it bypasses the contract and reaches the caller with no recovery hint.
+      if (err instanceof McpError && err.code === JsonRpcErrorCode.Timeout) {
+        throw ctx.fail('source_timeout', err.message, {
+          ...ctx.recoveryFor('source_timeout'),
+        });
+      }
+      // A 4xx means the upstream rejected the parameters, and its body says which one.
+      // The framework leaves that body out of the message, so fold it in here — otherwise
+      // content[]-only clients see a bare status code.
+      const rejection = upstreamRejection(err);
+      if (rejection) {
+        throw ctx.fail(
+          'upstream_rejected',
+          `${input.source.toUpperCase()} rejected the query: ${rejection.reason}`,
+          { ...ctx.recoveryFor('upstream_rejected'), status: rejection.status },
+          { cause: err },
+        );
+      }
       throw err;
     }
 
@@ -275,6 +330,11 @@ export const earthquakeCount = tool('earthquake_count', {
         source: input.source,
       },
     });
+
+    // An absence from queryEcho is too quiet a signal that a supplied filter never
+    // constrained the count — name the dropped filters outright.
+    const ignoredFilters = ignoredUsgsFilters(input, input.source);
+    if (ignoredFilters.length > 0) ctx.enrich({ ignoredFilters });
 
     return {
       count: result.count,
