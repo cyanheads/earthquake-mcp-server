@@ -4,6 +4,12 @@
  */
 
 /**
+ * Certainty with which a source asserts an event's classification — the first
+ * character of EMSC's two-character event-type code. USGS publishes no such axis.
+ */
+export type EarthquakeEventCertainty = 'known' | 'suspected' | 'unknown' | 'unreported';
+
+/**
  * Normalized earthquake event returned by both USGS and EMSC sources.
  *
  * Fields a source does not publish are never synthesized: `status` and
@@ -17,7 +23,9 @@ export interface EarthquakeEvent {
   cdi: number | null;
   depth_km: number | null;
   detail_url?: string;
-  /** Upstream event classification — USGS `type` prose, EMSC `evtype` code. Absent when the source publishes none. */
+  /** How certain the source is of `event_type`. EMSC only — USGS publishes no certainty axis. */
+  event_certainty?: EarthquakeEventCertainty;
+  /** Event classification in the QuakeML names USGS publishes; EMSC's `evtype` code is decoded to them. Absent when the source publishes none. */
   event_type?: string;
   event_url?: string;
   felt: number | null;

@@ -4,7 +4,7 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { earthquakeSearch } from '@/mcp-server/tools/definitions/earthquake-search.tool.js';
 import type { EarthquakeEventOutput } from '@/mcp-server/tools/schemas.js';
@@ -183,7 +183,7 @@ describe('earthquakeSearch', () => {
     expect(notice).toContain('No events');
   });
 
-  it('populates notice enrichment when results are truncated', async () => {
+  it('falls back to the generic capped notice when the service reports neither a total nor a count failure', async () => {
     const events = Array.from({ length: 5 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
     mockUsgsSearch.mockResolvedValue({ events, count: 5 });
 
@@ -194,6 +194,9 @@ describe('earthquakeSearch', () => {
     const notice = getEnrichment(ctx).notice as string | undefined;
     expect(notice).toBeDefined();
     expect(notice).toContain('earthquake_count');
+    // A count failure has its own notice and its own flag (issue #36).
+    expect(notice).not.toContain('failed');
+    expect(getEnrichment(ctx).countUnavailable).toBeUndefined();
   });
 
   it('truncation notice carries the total match count when the service returns it', async () => {
@@ -816,5 +819,169 @@ describe('earthquakeSearch — EMSC described as a global catalog (issue #23)', 
 
   it('leaves usgs as the default source', () => {
     expect(earthquakeSearch.input.parse({}).source).toBe('usgs');
+  });
+});
+
+describe('earthquakeSearch — failed total-count leg is disclosed (issue #36)', () => {
+  let mockUsgsSearch: ReturnType<typeof vi.fn>;
+  let mockEmscSearch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockUsgsSearch = vi.fn();
+    mockEmscSearch = vi.fn();
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      searchEvents: mockUsgsSearch,
+    } as unknown as usgsModule.UsgsService);
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue({
+      searchEvents: mockEmscSearch,
+    } as unknown as emscModule.EmscService);
+  });
+
+  /** A filled page whose count sub-call failed — what both services now report. */
+  function cappedPageWithFailedCount(event: EarthquakeEventOutput) {
+    return {
+      events: Array.from({ length: 5 }, (_, i) => ({ ...event, id: `${event.id}-${i}` })),
+      count: 5,
+      countUnavailable: true as const,
+    };
+  }
+
+  it.each([
+    ['usgs', () => mockUsgsSearch],
+    ['emsc', () => mockEmscSearch],
+  ])('flags the failed count on source=%s', async (source, getMock) => {
+    getMock().mockResolvedValue(
+      cappedPageWithFailedCount(source === 'emsc' ? emscEvent : sampleEvent),
+    );
+
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
+    const input = earthquakeSearch.input.parse({ source, limit: 5 });
+    const result = await earthquakeSearch.handler(input, ctx);
+
+    // The successful event page is preserved untouched.
+    expect(result.count).toBe(5);
+    expect(result.events).toHaveLength(5);
+
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.countUnavailable).toBe(true);
+    expect(enrichment.totalCount).toBeUndefined();
+    expect(enrichment.truncated).toBe(true);
+    expect(enrichment.nextOffset).toBe(6);
+  });
+
+  it('names the count lookup as failed instead of offering it as routine advice', async () => {
+    mockUsgsSearch.mockResolvedValue(cappedPageWithFailedCount(sampleEvent));
+
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
+    await earthquakeSearch.handler(earthquakeSearch.input.parse({ limit: 5 }), ctx);
+
+    const notice = getEnrichment(ctx).notice as string;
+    expect(notice).toContain('failed');
+    expect(notice).not.toContain('or use earthquake_count to get the total match count first');
+    // The page is still navigable — the recovery step survives.
+    expect(notice).toContain('offset=6');
+  });
+
+  it('does not claim the total is known when the count failed', async () => {
+    mockUsgsSearch.mockResolvedValue(cappedPageWithFailedCount(sampleEvent));
+
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
+    await earthquakeSearch.handler(earthquakeSearch.input.parse({ limit: 5 }), ctx);
+
+    const notice = getEnrichment(ctx).notice as string;
+    expect(notice).not.toMatch(/of \d+ matches/);
+    expect(notice).toMatch(/unknown|may/);
+  });
+
+  it('still advances paging from the requested offset when the count failed', async () => {
+    mockUsgsSearch.mockResolvedValue(cappedPageWithFailedCount(sampleEvent));
+
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
+    await earthquakeSearch.handler(earthquakeSearch.input.parse({ limit: 5, offset: 101 }), ctx);
+
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.countUnavailable).toBe(true);
+    expect(enrichment.nextOffset).toBe(106);
+    expect(enrichment.notice as string).toContain('offset=106');
+  });
+
+  it('leaves the flag off when the count succeeded', async () => {
+    const events = Array.from({ length: 5 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
+    mockUsgsSearch.mockResolvedValue({ events, count: 5, totalCount: 4821 });
+
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
+    await earthquakeSearch.handler(earthquakeSearch.input.parse({ limit: 5 }), ctx);
+
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.countUnavailable).toBeUndefined();
+    expect(enrichment.totalCount).toBe(4821);
+    expect(enrichment.notice as string).toContain('4821');
+  });
+
+  it('leaves the flag off on a short page, where no count was ever attempted', async () => {
+    mockUsgsSearch.mockResolvedValue({ events: [sampleEvent], count: 1 });
+
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
+    await earthquakeSearch.handler(earthquakeSearch.input.parse({ limit: 5 }), ctx);
+
+    const enrichment = getEnrichment(ctx);
+    expect(enrichment.countUnavailable).toBeUndefined();
+    expect(enrichment.truncated).toBeUndefined();
+    expect(enrichment.notice).toBeUndefined();
+  });
+
+  it('leaves the flag off on an empty result', async () => {
+    mockUsgsSearch.mockResolvedValue({ events: [], count: 0 });
+
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
+    await earthquakeSearch.handler(earthquakeSearch.input.parse({ limit: 5 }), ctx);
+
+    expect(getEnrichment(ctx).countUnavailable).toBeUndefined();
+  });
+
+  it('discloses the failure in content[] as well as structuredContent', async () => {
+    mockUsgsSearch.mockResolvedValue(cappedPageWithFailedCount(sampleEvent));
+
+    const result = await runToolContract(
+      earthquakeSearch,
+      { limit: 5 },
+      { context: { errors: earthquakeSearch.errors } },
+    );
+
+    const structured = result.structuredContent as Record<string, unknown>;
+    expect(structured.countUnavailable).toBe(true);
+    expect(structured.totalCount).toBeUndefined();
+
+    const text = (result.content as { type: string; text?: string }[])
+      .map((block) => block.text ?? '')
+      .join('\n');
+    expect(text).toContain('count');
+    expect(text).toMatch(/failed/);
+    expect(text).not.toContain('or use earthquake_count to get the total match count first');
+  });
+
+  it('does not promise a total the tool cannot always deliver', () => {
+    const description = earthquakeSearch.description;
+    expect(description).toContain('totalCount the full match count');
+    // The paging sentence named totalCount as unconditional before #36.
+    expect(description).toContain('countUnavailable');
+    expect(description).toMatch(/total is unknown/);
+  });
+
+  it('renders no count-failure text on a normal capped page', async () => {
+    const events = Array.from({ length: 5 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
+    mockUsgsSearch.mockResolvedValue({ events, count: 5, totalCount: 4821 });
+
+    const result = await runToolContract(
+      earthquakeSearch,
+      { limit: 5 },
+      { context: { errors: earthquakeSearch.errors } },
+    );
+
+    const text = (result.content as { type: string; text?: string }[])
+      .map((block) => block.text ?? '')
+      .join('\n');
+    expect(text).not.toMatch(/count lookup failed/i);
+    expect(text).toContain('4821');
   });
 });

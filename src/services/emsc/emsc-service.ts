@@ -10,6 +10,7 @@ import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { fetchWithTimeout, requestContextService, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import type {
   EarthquakeEvent,
+  EarthquakeEventCertainty,
   EarthquakeQueryParams,
   EmscCountResponse,
   EmscFeature,
@@ -34,6 +35,73 @@ function makeReqCtx(operation: string, ctx: Context) {
       tenantId: ctx.tenantId,
     },
   });
+}
+
+/**
+ * EMSC publishes `evtype` as the two-character event-type code defined in
+ * "Nomenclature of Event Types" (Storchak, Earle, Bossu, Presgrave, Harris &
+ * Godey, 26 March 2012), produced by the NEIC-ISC-EMSC coordination and
+ * published at https://www.isc.ac.uk/standards/event_types/event_types.pdf.
+ * The code carries two independent axes — character 1 the certainty, character 2
+ * the type — and that document names the QuakeML event types alongside the codes.
+ * Those names are exactly what USGS publishes in `properties.type`, so decoding
+ * the type axis here gives both sources one vocabulary, and the certainty axis
+ * travels beside it rather than folded into it: a suspected explosion must never
+ * read as a confirmed one. EMSC documents these codes nowhere else — neither its
+ * FDSN OpenAPI schema nor its docs page mentions `evtype`.
+ */
+const EMSC_EVENT_CERTAINTY: Record<string, EarthquakeEventCertainty> = {
+  k: 'known',
+  s: 'suspected',
+  u: 'unknown',
+  n: 'unreported',
+};
+
+/** Character 2 of the code — the event type, named as QuakeML names it. */
+const EMSC_EVENT_TYPE: Record<string, string> = {
+  u: 'not reported',
+  e: 'earthquake',
+  a: 'anthropogenic event',
+  c: 'collapse',
+  x: 'explosion',
+  f: 'accidental explosion',
+  h: 'chemical explosion',
+  g: 'controlled explosion',
+  j: 'experimental explosion',
+  d: 'industrial explosion',
+  m: 'mining explosion',
+  n: 'nuclear explosion',
+  i: 'induced or triggered event',
+  r: 'rock burst',
+  w: 'reservoir loading',
+  k: 'fluid injection',
+  q: 'fluid extraction',
+  p: 'crash',
+  o: 'other event',
+  s: 'atmospheric event',
+  b: 'avalanche',
+  y: 'hydroacoustic event',
+  z: 'ice quake',
+  l: 'landslide',
+  t: 'meteorite',
+  v: 'volcanic eruption',
+};
+
+/**
+ * Split an EMSC `evtype` code into its two axes. A code outside the
+ * nomenclature is forwarded verbatim as the type, with no certainty — it still
+ * reaches the caller and still renders, where coercing it to "earthquake" would
+ * silently reclassify a seismic event. EMSC ships at least one such code (`fe`).
+ */
+function decodeEmscEventType(code: string): {
+  event_type: string;
+  event_certainty?: EarthquakeEventCertainty;
+} {
+  if (code.length !== 2) return { event_type: code };
+  const event_certainty = EMSC_EVENT_CERTAINTY[code.charAt(0)];
+  const event_type = EMSC_EVENT_TYPE[code.charAt(1)];
+  if (event_certainty === undefined || event_type === undefined) return { event_type: code };
+  return { event_type, event_certainty };
 }
 
 /** Normalize an EMSC GeoJSON feature to the shared EarthquakeEvent domain type. */
@@ -79,7 +147,10 @@ function normalizeEmscFeature(f: EmscFeature): EarthquakeEvent {
     ...(p.auth ? { auth: p.auth } : {}),
     // EMSC's title is built from magnitude and region alone, so evtype is the only
     // place the classification survives — carry it through or it is unrecoverable.
-    ...(p.evtype ? { event_type: p.evtype } : {}),
+    // Split into the type axis (the vocabulary USGS also publishes, so one value
+    // means one thing on both sources and the formatter's plain-"earthquake"
+    // suppression reaches EMSC) and the certainty axis beside it.
+    ...(p.evtype ? decodeEmscEventType(p.evtype) : {}),
   };
 }
 
@@ -101,7 +172,9 @@ export class EmscService {
    * Query EMSC FDSN event API. `params.offset` pages through the match set
    * (1-based, forwarded to the upstream `offset` parameter). When results are
    * truncated at the requested limit, a follow-up count query populates
-   * totalCount with the real match total for the whole filter set.
+   * totalCount with the real match total for the whole filter set. If that
+   * follow-up fails, the page still returns and `countUnavailable` marks the
+   * total as unknown rather than not attempted.
    */
   async searchEvents(
     params: EarthquakeQueryParams,
@@ -110,6 +183,7 @@ export class EmscService {
     events: EarthquakeEvent[];
     count: number;
     totalCount?: number;
+    countUnavailable?: true;
   }> {
     const query = this.buildFdsnQuery(params);
     const url = `${this.baseUrl}/fdsnws/event/1/query?format=json&${query}`;
@@ -168,6 +242,9 @@ export class EmscService {
         ctx.log.warning('Count sub-call for totalCount failed — returning results without it', {
           error: err instanceof Error ? err.message : String(err),
         });
+        // A bare absent totalCount reads identically to "no count was needed",
+        // so the failure is reported rather than inferred from the gap.
+        return { ...result, countUnavailable: true };
       }
     }
     return result;

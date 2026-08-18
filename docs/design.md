@@ -227,7 +227,7 @@ errors: [
 }
 ```
 
-**Enrichment (success-path meta, reaches both `structuredContent` and `content[]`):** `totalCount` (full match total, fetched via a follow-up FDSN count sub-call when results are truncated at the limit), `truncated`, `notice` (recovery guidance for empty or capped result sets), and `queryEcho` (effective upstream parameters including the server-resolved start_time default; USGS-only filters omitted for source=emsc).
+**Enrichment (success-path meta, reaches both `structuredContent` and `content[]`):** `totalCount` (full match total, fetched via a follow-up FDSN count sub-call when results are truncated at the limit), `countUnavailable` (that sub-call failed, so the total is unknown rather than never requested), `truncated`, `notice` (recovery guidance for empty or capped result sets), and `queryEcho` (effective upstream parameters including the server-resolved start_time default; USGS-only filters omitted for source=emsc).
 
 **Error contract:**
 ```ts

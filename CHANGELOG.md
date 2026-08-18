@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.3](changelog/0.3.x/0.3.3.md) — 2026-08-18
+
+Correct max_pga's unit label, normalize EMSC event classification to USGS's vocabulary, and disclose failed count lookups in earthquake_search.
+
 ## [0.3.2](changelog/0.3.x/0.3.2.md) — 2026-08-18
 
 Bounding-box filters, start/end-time validation, alert_level minimum semantics, filter-bound fixes, mcp-ts-core ^0.11.5

@@ -9,8 +9,10 @@ import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EarthquakeEventSchema, formatEvent } from '@/mcp-server/tools/schemas.js';
 import { EmscService } from '@/services/emsc/emsc-service.js';
-import type { EmscFeature } from '@/services/usgs/types.js';
+import type { EarthquakeEvent, EmscFeature, UsgsFeature } from '@/services/usgs/types.js';
+import { UsgsService } from '@/services/usgs/usgs-service.js';
 
 function makeService(): EmscService {
   return new EmscService(
@@ -49,6 +51,21 @@ function jsonResponse(features: EmscFeature[]): Response {
     status: 200,
     headers: { 'Content-Type': 'application/json' },
   });
+}
+
+/** Run one EMSC feature carrying `evtype` through the service and return the normalized event. */
+async function eventWithEvtype(evtype: string | undefined): Promise<EarthquakeEvent | undefined> {
+  vi.stubGlobal(
+    'fetch',
+    vi
+      .fn()
+      .mockResolvedValue(
+        jsonResponse([makeFeature('20260810_0000001', 4.6, evtype == null ? {} : { evtype })]),
+      ),
+  );
+  const result = await makeService().searchEvents({ limit: 10 }, createMockContext() as Context);
+  vi.unstubAllGlobals();
+  return result.events[0];
 }
 
 afterEach(() => {
@@ -173,7 +190,7 @@ describe('EmscService.searchEvents — totalCount count sub-call (issue #11)', (
     vi.unstubAllGlobals();
   });
 
-  it('degrades to an absent totalCount when the count sub-call fails', async () => {
+  it('reports countUnavailable when the count sub-call fails (issue #36)', async () => {
     const features = [makeFeature('20260601_0001', 4.2)];
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(features)));
 
@@ -182,8 +199,47 @@ describe('EmscService.searchEvents — totalCount count sub-call (issue #11)', (
 
     const result = await service.searchEvents({ limit: 1 }, createMockContext() as Context);
 
+    // The search page itself still lands — only the total is lost.
     expect(result.count).toBe(1);
+    expect(result.events).toHaveLength(1);
     expect(result.totalCount).toBeUndefined();
+    expect(result.countUnavailable).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it('leaves countUnavailable off when the count sub-call succeeds (issue #36)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse([makeFeature('20260601_0001', 4.2)])),
+    );
+
+    const service = makeService();
+    vi.spyOn(service, 'countEvents').mockResolvedValue({
+      count: 184,
+      maxAllowed: null,
+      exceedsLimit: false,
+    });
+
+    const result = await service.searchEvents({ limit: 1 }, createMockContext() as Context);
+
+    expect(result.totalCount).toBe(184);
+    expect(result).not.toHaveProperty('countUnavailable');
+    vi.unstubAllGlobals();
+  });
+
+  it('leaves countUnavailable off when the count was never attempted (issue #36)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse([makeFeature('20260601_0001', 4.2)])),
+    );
+
+    const service = makeService();
+    const countSpy = vi.spyOn(service, 'countEvents');
+
+    const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
+
+    expect(countSpy).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty('countUnavailable');
     vi.unstubAllGlobals();
   });
 });
@@ -258,10 +314,10 @@ describe('EmscService.searchEvents — 204 No Content is an empty match set', ()
   });
 });
 
-describe('EmscService — event type normalization (issue #24)', () => {
-  it('carries a non-"ke" evtype through, the only place EMSC publishes the classification', async () => {
+describe('EmscService — event type normalization (issues #24, #35)', () => {
+  it('carries a classification through at all — evtype is the only place EMSC publishes it', async () => {
     // EMSC builds its title from magnitude and region alone, so evtype is unrecoverable
-    // once dropped. "ue" (unknown event) is the code that appears alongside the dominant "ke".
+    // once dropped.
     vi.stubGlobal(
       'fetch',
       vi
@@ -272,12 +328,13 @@ describe('EmscService — event type normalization (issue #24)', () => {
     const service = makeService();
     const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
 
-    expect(result.events[0]?.event_type).toBe('ue');
+    expect(result.events[0]?.event_type).toBe('earthquake');
+    expect(result.events[0]?.event_certainty).toBe('unknown');
     expect(result.events[0]?.title).not.toContain('ue');
     vi.unstubAllGlobals();
   });
 
-  it('carries the dominant "ke" code through as well', async () => {
+  it('decodes the dominant "ke" code to the vocabulary USGS publishes', async () => {
     vi.stubGlobal(
       'fetch',
       vi
@@ -288,7 +345,7 @@ describe('EmscService — event type normalization (issue #24)', () => {
     const service = makeService();
     const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
 
-    expect(result.events[0]?.event_type).toBe('ke');
+    expect(result.events[0]?.event_type).toBe('earthquake');
     vi.unstubAllGlobals();
   });
 
@@ -402,5 +459,183 @@ describe('EmscService — no date filter is dropped by a truthy check (issue #29
     const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
     expect(url.searchParams.has(param)).toBe(true);
     vi.unstubAllGlobals();
+  });
+});
+
+describe('EmscService — ISF evtype decoding (issue #35)', () => {
+  /** The normalized classification of one EMSC feature carrying `evtype`. */
+  async function classificationFor(
+    evtype: string | undefined,
+  ): Promise<{ event_type?: string; event_certainty?: string }> {
+    const event = await eventWithEvtype(evtype);
+    return {
+      ...(event?.event_type == null ? {} : { event_type: event.event_type }),
+      ...(event?.event_certainty == null ? {} : { event_certainty: event.event_certainty }),
+    };
+  }
+
+  it.each([
+    // The type axis is the vocabulary USGS also publishes — the certainty axis
+    // never bleeds into it, so every certainty of the same type reads alike.
+    ['ke', 'earthquake', 'known'],
+    ['se', 'earthquake', 'suspected'],
+    ['ue', 'earthquake', 'unknown'],
+    ['ne', 'earthquake', 'unreported'],
+    // The distinction that matters most: a suspected explosion is not a known one,
+    // and the two are told apart by the certainty field, not by the type.
+    ['kx', 'explosion', 'known'],
+    ['sx', 'explosion', 'suspected'],
+    ['kn', 'nuclear explosion', 'known'],
+    ['sn', 'nuclear explosion', 'suspected'],
+    // The rest of the type axis, across certainties.
+    ['kh', 'chemical explosion', 'known'],
+    ['uh', 'chemical explosion', 'unknown'],
+    ['km', 'mining explosion', 'known'],
+    ['sm', 'mining explosion', 'suspected'],
+    ['si', 'induced or triggered event', 'suspected'],
+    ['ui', 'induced or triggered event', 'unknown'],
+    ['kz', 'ice quake', 'known'],
+    ['kl', 'landslide', 'known'],
+    ['kv', 'volcanic eruption', 'known'],
+    // The nomenclature's null type — no type was reported, which the certainty
+    // axis still qualifies.
+    ['uu', 'not reported', 'unknown'],
+    ['nu', 'not reported', 'unreported'],
+  ])('decodes %s to type "%s" with certainty "%s"', async (code, type, certainty) => {
+    await expect(classificationFor(code)).resolves.toEqual({
+      event_type: type,
+      event_certainty: certainty,
+    });
+  });
+
+  it.each([
+    // "fe" is live on EMSC (2 events in a 60-day sample) and its leading "f" is
+    // not one of the nomenclature's certainty characters — guessing at it would
+    // misclassify a seismic event.
+    'fe',
+    // Unknown type character, documented certainty.
+    'k7',
+    // Not a two-character code at all.
+    'earthquake',
+    'k',
+  ])('forwards the unmapped code %s verbatim, with no certainty claim', async (code) => {
+    // No event_certainty key at all — an undecodable code asserts nothing.
+    await expect(classificationFor(code)).resolves.toEqual({ event_type: code });
+  });
+
+  it('omits both fields when EMSC published no evtype', async () => {
+    await expect(classificationFor(undefined)).resolves.toEqual({});
+    await expect(classificationFor('')).resolves.toEqual({});
+  });
+});
+
+describe('EMSC and USGS agree on one event_type vocabulary (issue #35)', () => {
+  /** Minimal USGS feature carrying just the classification under test. */
+  function usgsFeatureWithType(type: string): UsgsFeature {
+    return {
+      type: 'Feature',
+      id: 'us6000abcd',
+      geometry: { type: 'Point', coordinates: [28.2, 38.4, 10] },
+      properties: {
+        mag: 4.6,
+        magType: 'mb',
+        place: 'WESTERN TURKEY',
+        time: 1_780_000_000_000,
+        updated: 1_780_000_600_000,
+        status: 'reviewed',
+        tsunami: 0,
+        title: 'M 4.6 - WESTERN TURKEY',
+        type,
+      },
+    };
+  }
+
+  function usgsResponse(features: UsgsFeature[]): Response {
+    return new Response(
+      JSON.stringify({
+        type: 'FeatureCollection',
+        features,
+        metadata: {
+          generated: 1_780_000_000_000,
+          url: 'https://earthquake.usgs.gov/fdsnws/event/1/query',
+          title: 'USGS Earthquakes',
+          status: 200,
+          api: '1.14.1',
+          count: features.length,
+        },
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+  }
+
+  it.each([
+    ['ke', 'earthquake'],
+    // Parity holds regardless of how sure EMSC was — certainty is its own field.
+    ['se', 'earthquake'],
+    ['ue', 'earthquake'],
+    ['km', 'mining explosion'],
+    ['sz', 'ice quake'],
+  ])(
+    'reports the same event_type for the same event whether EMSC (%s) or USGS served it',
+    async (emscCode, usgsType) => {
+      const emscEvent = await eventWithEvtype(emscCode);
+
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockResolvedValue(usgsResponse([usgsFeatureWithType(usgsType)])),
+      );
+      const usgs = await new UsgsService(
+        {} as AppConfig,
+        {} as StorageService,
+        'https://earthquake.usgs.gov',
+        5000,
+      ).searchEvents({ limit: 10 }, createMockContext() as Context);
+      vi.unstubAllGlobals();
+
+      expect(emscEvent?.event_type).toBe(usgs.events[0]?.event_type);
+      expect(usgs.events[0]?.event_type).toBe(usgsType);
+      // USGS publishes no certainty axis, so only the EMSC side carries one.
+      expect(usgs.events[0]?.event_certainty).toBeUndefined();
+      expect(emscEvent?.event_certainty).toBeDefined();
+    },
+  );
+});
+
+describe('EMSC event_type reaches content[] the same way it reaches structuredContent (issue #35)', () => {
+  async function renderedEventFor(evtype: string): Promise<string> {
+    const event = EarthquakeEventSchema.parse(await eventWithEvtype(evtype));
+    return formatEvent(event).join('\n');
+  }
+
+  it('leaves an ordinary EMSC earthquake out of the rendered text, as USGS already is', async () => {
+    await expect(renderedEventFor('ke')).resolves.not.toContain('**Event type:**');
+  });
+
+  it('renders a suspected EMSC earthquake, in the normalized vocabulary and not as a raw code', async () => {
+    const text = await renderedEventFor('se');
+    expect(text).toContain('**Event type:** earthquake (certainty: suspected)');
+    expect(text).not.toContain('**Event type:** se');
+  });
+
+  it('renders the certainty of an unusual event type, so suspected never reads as confirmed', async () => {
+    await expect(renderedEventFor('sx')).resolves.toContain(
+      '**Event type:** explosion (certainty: suspected)',
+    );
+    await expect(renderedEventFor('kx')).resolves.toContain(
+      '**Event type:** explosion (certainty: known)',
+    );
+  });
+
+  it('renders an earthquake of unknown certainty rather than passing it off as ordinary', async () => {
+    await expect(renderedEventFor('ue')).resolves.toContain(
+      '**Event type:** earthquake (certainty: unknown)',
+    );
+  });
+
+  it('still renders an unmapped code so it cannot vanish from the text surface', async () => {
+    const text = await renderedEventFor('fe');
+    expect(text).toContain('**Event type:** fe');
+    // Nothing to claim about certainty, so nothing is claimed.
+    expect(text).not.toContain('certainty:');
   });
 });

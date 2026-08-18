@@ -216,6 +216,15 @@ describe('earthquakeGetEvent', () => {
     expect(text).toContain('**Finite fault:** Rupture length: 60 km');
   });
 
+  it('labels ShakeMap ground motion in the units USGS publishes (issue #30)', () => {
+    const blocks = earthquakeGetEvent.format!({ event: sampleEvent, detail: sampleDetail });
+    const text = (blocks[0] as { text: string }).text;
+    // ShakeMap info.json declares PGA in "g" and PGV in "cms" — 1.2 is 1.2 g.
+    expect(text).toContain('Max PGA: 1.2 g');
+    expect(text).toContain('Max PGV: 90.5 cm/s');
+    expect(text).not.toContain('%g');
+  });
+
   it('formats sparse event without fabricating missing fields', () => {
     const output = { event: sparseEvent };
     const blocks = earthquakeGetEvent.format!(output);

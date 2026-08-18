@@ -35,7 +35,8 @@ export const earthquakeSearch = tool('earthquake_search', {
     'Use earthquake_count first to gauge result size before requesting large result sets. ' +
     'A single call returns at most 20,000 events; larger result sets are retrieved by paging with ' +
     'offset, which is passed straight through to the upstream FDSN API. When a result is capped, ' +
-    'nextOffset carries the offset for the following page and totalCount the full match count.',
+    'nextOffset carries the offset for the following page and totalCount the full match count — ' +
+    'or countUnavailable reports that the count lookup failed and the total is unknown.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
 
   input: z.object({
@@ -102,15 +103,27 @@ export const earthquakeSearch = tool('earthquake_search', {
       .optional()
       .describe(
         'Total events matching the query before the limit was applied. ' +
-          'Fetched via a follow-up count query when results are truncated at the limit; absent otherwise.',
+          'Fetched via a follow-up count query when results are truncated at the limit. Absent ' +
+          'when results were not capped, and when that follow-up query failed — countUnavailable ' +
+          'separates the two.',
+      ),
+    countUnavailable: z
+      .boolean()
+      .optional()
+      .describe(
+        'True when the follow-up total-count query failed, so the total is unknown for this ' +
+          'call rather than never requested. The returned events are complete and unaffected; ' +
+          'only totalCount is missing. Retry earthquake_count with the same filters to recover ' +
+          'the total. Absent whenever the count succeeded or was never needed.',
       ),
     truncated: z
       .boolean()
       .optional()
       .describe(
-        'True when results were capped by the limit parameter and more events remain. ' +
+        'True when results were capped by the limit parameter. ' +
           'totalCount carries the full match count when available, and nextOffset the input ' +
-          'for the following page.',
+          'for the following page. With countUnavailable set the total is unknown, so this ' +
+          'flag means the page was filled, not that more events are confirmed to remain.',
       ),
     nextOffset: z
       .number()
@@ -208,6 +221,11 @@ export const earthquakeSearch = tool('earthquake_search', {
   },
 
   enrichmentTrailer: {
+    countUnavailable: {
+      render: () =>
+        '**Total match count unavailable:** the follow-up count query failed, so the total ' +
+        'number of matches is unknown for this call. The returned events are unaffected.',
+    },
     queryEcho: {
       render: (q) =>
         `**Query echo:** ${Object.entries(q ?? {})
@@ -411,6 +429,7 @@ export const earthquakeSearch = tool('earthquake_search', {
     // offset are meta about the result set, not domain payload; they reach both
     // structuredContent and content[] via enrichment.
     if (result.totalCount != null) ctx.enrich({ totalCount: result.totalCount });
+    if (result.countUnavailable) ctx.enrich({ countUnavailable: true });
     if (truncated) ctx.enrich({ truncated: true, nextOffset });
 
     if (result.count === 0) {
@@ -422,14 +441,26 @@ export const earthquakeSearch = tool('earthquake_search', {
               'Try broadening the time range, lowering min_magnitude, or expanding the radius.',
       );
     } else if (truncated) {
-      ctx.enrich.notice(
-        result.totalCount != null
-          ? `Showing events ${offset}–${offset + result.count - 1} of ${result.totalCount} matches. ` +
-              `Call again with offset=${nextOffset} and the same filters for the next page, or narrow the filters.`
-          : `Results capped at the limit (${limit}). ` +
-              `Call again with offset=${nextOffset} and the same filters for the next page, ` +
-              'or use earthquake_count to get the total match count first.',
-      );
+      const nextPage = `Call again with offset=${nextOffset} and the same filters for the next page`;
+      if (result.totalCount != null) {
+        ctx.enrich.notice(
+          `Showing events ${offset}–${offset + result.count - 1} of ${result.totalCount} matches. ` +
+            `${nextPage}, or narrow the filters.`,
+        );
+      } else if (result.countUnavailable) {
+        // The count was requested and failed, so "capped" is all that is known —
+        // whether events remain past this page is not.
+        ctx.enrich.notice(
+          `Results capped at the limit (${limit}), and the follow-up count query failed, so the ` +
+            'total match count is unknown — this page may or may not be the last. ' +
+            `${nextPage}, or retry earthquake_count with the same filters to recover the total.`,
+        );
+      } else {
+        ctx.enrich.notice(
+          `Results capped at the limit (${limit}). ` +
+            `${nextPage}, or use earthquake_count to get the total match count first.`,
+        );
+      }
     }
 
     return {

@@ -351,7 +351,10 @@ describe('formatEvent — null impact fields reach content[] (issue #17)', () =>
       tsunami: null,
       source_catalog: 'EMSC-RTS',
       auth: 'NDI',
-      event_type: 'ke',
+      // Decoded at the EMSC service boundary (issue #35) — a raw "se" code never
+      // reaches this schema; its two axes arrive as two fields.
+      event_type: 'earthquake',
+      event_certainty: 'suspected',
     };
 
     /** Rendered fragment that proves each structuredContent field reached content[]. */
@@ -375,7 +378,8 @@ describe('formatEvent — null impact fields reach content[] (issue #17)', () =>
       status: '**Provenance:** Status: not published by source',
       source_catalog: 'Catalog: EMSC-RTS',
       auth: 'Agency: NDI',
-      event_type: '**Event type:** ke',
+      event_type: '**Event type:** earthquake',
+      event_certainty: '(certainty: suspected)',
     };
 
     // Absent from this event, so absent from both surfaces — that is parity too
@@ -448,6 +452,58 @@ describe('EarthquakeEventSchema — event_type (issue #24)', () => {
   it('omits the line entirely when the source published no classification', () => {
     const text = formatEvent(sparseEvent).join('\n');
     expect(text).not.toContain('**Event type:**');
+  });
+});
+
+describe('EarthquakeEventSchema — event_certainty (issue #35)', () => {
+  it('keeps an ordinary earthquake the source is sure of out of the rendered text', () => {
+    const text = formatEvent({
+      ...fullEvent,
+      event_type: 'earthquake',
+      event_certainty: 'known',
+    }).join('\n');
+    expect(text).not.toContain('**Event type:**');
+  });
+
+  it.each(['suspected', 'unknown', 'unreported'] as const)(
+    'renders a %s earthquake, which an ordinary one would have hidden',
+    (certainty) => {
+      const text = formatEvent({
+        ...fullEvent,
+        event_type: 'earthquake',
+        event_certainty: certainty,
+      }).join('\n');
+      expect(text).toContain(`**Event type:** earthquake (certainty: ${certainty})`);
+    },
+  );
+
+  it('carries the certainty onto an unusual type, so suspected never reads as confirmed', () => {
+    const suspected = formatEvent({
+      ...fullEvent,
+      event_type: 'explosion',
+      event_certainty: 'suspected',
+    }).join('\n');
+    const known = formatEvent({
+      ...fullEvent,
+      event_type: 'explosion',
+      event_certainty: 'known',
+    }).join('\n');
+    expect(suspected).toContain('**Event type:** explosion (certainty: suspected)');
+    expect(known).toContain('**Event type:** explosion (certainty: known)');
+    expect(suspected).not.toBe(known);
+  });
+
+  it('renders a USGS classification unchanged — that source publishes no certainty', () => {
+    const text = formatEvent({ ...fullEvent, event_type: 'quarry blast' }).join('\n');
+    expect(text).toContain('**Event type:** quarry blast');
+    expect(text).not.toContain('certainty:');
+  });
+
+  it('accepts an event with no certainty and rejects a value outside the axis', () => {
+    expect(EarthquakeEventSchema.safeParse(sparseEvent).success).toBe(true);
+    expect(
+      EarthquakeEventSchema.safeParse({ ...sparseEvent, event_certainty: 'probably' }).success,
+    ).toBe(false);
   });
 });
 
@@ -553,5 +609,43 @@ describe('formatEventDetail (issue #25)', () => {
 
   it('parses as a valid EarthquakeDetailSchema value', () => {
     expect(EarthquakeDetailSchema.safeParse(fullDetail).success).toBe(true);
+  });
+});
+
+describe('EarthquakeDetailSchema — ShakeMap ground-motion units (issue #30)', () => {
+  /** Unwrap the optional shakemap group to reach the leaf field schemas. */
+  const shakemapShape = EarthquakeDetailSchema.shape.shakemap.unwrap().shape;
+
+  it('describes max_pga in g, never as a percentage', () => {
+    const description = shakemapShape.max_pga.description ?? '';
+    expect(description).toMatch(/\bg\b/);
+    expect(description).not.toContain('percent');
+    expect(description).not.toContain('%g');
+  });
+
+  it('renders max_pga with a g suffix, so 0.419 does not read as 0.419 percent of g', () => {
+    // 0.419 is the real maxpga USGS published for us6000tjl2; its ShakeMap
+    // info.json declares PGA units "g" and the same 0.419 maximum.
+    const text = formatEventDetail({ shakemap: { max_pga: 0.419 } }).join('\n');
+    expect(text).toContain('Max PGA: 0.419 g');
+    expect(text).not.toContain('%g');
+    expect(text).not.toContain('percent');
+  });
+
+  it('keeps the sibling ShakeMap units USGS already agrees with', () => {
+    const text = formatEventDetail({
+      shakemap: { max_mmi: 7.999, max_pga: 0.419, max_pgv: 34.851 },
+    }).join('\n');
+    // info.json units: MMI "intensity" (dimensionless), PGV "cms".
+    expect(text).toContain('Max MMI: 7.999 |');
+    expect(text).toContain('Max PGV: 34.851 cm/s');
+    expect(shakemapShape.max_pgv.description).toContain('cm/s');
+    expect(shakemapShape.max_mmi.description).not.toContain('cm/s');
+  });
+
+  it('says a missing max_pga is unpublished rather than appending a unit to nothing', () => {
+    const text = formatEventDetail({ shakemap: { max_mmi: 4.2 } }).join('\n');
+    expect(text).toContain('Max PGA: not published |');
+    expect(text).not.toContain('not published g');
   });
 });

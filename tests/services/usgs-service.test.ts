@@ -157,7 +157,7 @@ describe('UsgsService.searchEvents — totalCount count sub-call (issue #11)', (
     vi.unstubAllGlobals();
   });
 
-  it('degrades to an absent totalCount when the count sub-call fails', async () => {
+  it('reports countUnavailable when the count sub-call fails (issue #36)', async () => {
     const features = Array.from({ length: 2 }, (_, i) => makeFeature(`us${i}`, 5));
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse(features)));
 
@@ -166,8 +166,42 @@ describe('UsgsService.searchEvents — totalCount count sub-call (issue #11)', (
 
     const result = await service.searchEvents({ limit: 2 }, createMockContext() as Context);
 
+    // The search page itself still lands — only the total is lost.
     expect(result.count).toBe(2);
+    expect(result.events).toHaveLength(2);
     expect(result.totalCount).toBeUndefined();
+    expect(result.countUnavailable).toBe(true);
+    vi.unstubAllGlobals();
+  });
+
+  it('leaves countUnavailable off when the count sub-call succeeds (issue #36)', async () => {
+    const features = Array.from({ length: 2 }, (_, i) => makeFeature(`us${i}`, 5));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse(features)));
+
+    const service = makeService();
+    vi.spyOn(service, 'countEvents').mockResolvedValue({
+      count: 91,
+      maxAllowed: 20000,
+      exceedsLimit: false,
+    });
+
+    const result = await service.searchEvents({ limit: 2 }, createMockContext() as Context);
+
+    expect(result.totalCount).toBe(91);
+    expect(result).not.toHaveProperty('countUnavailable');
+    vi.unstubAllGlobals();
+  });
+
+  it('leaves countUnavailable off when the count was never attempted (issue #36)', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([makeFeature('us1', 5)])));
+
+    const service = makeService();
+    const countSpy = vi.spyOn(service, 'countEvents');
+
+    const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
+
+    expect(countSpy).not.toHaveBeenCalled();
+    expect(result).not.toHaveProperty('countUnavailable');
     vi.unstubAllGlobals();
   });
 });

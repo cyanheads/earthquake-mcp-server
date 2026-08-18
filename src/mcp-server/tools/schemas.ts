@@ -87,10 +87,23 @@ export const EarthquakeEventSchema = z.object({
     .string()
     .optional()
     .describe(
-      'Upstream event classification. USGS spells it out — "earthquake", "quarry blast", ' +
-        '"explosion", "ice quake" — while EMSC publishes a two-letter evtype code, "ke" for a ' +
-        'known earthquake and "ue" for an unknown event. Not every record in either catalog is a ' +
-        'tectonic earthquake. Absent when the source publishes no classification.',
+      'What kind of event this is, in one vocabulary whichever source served it — the QuakeML ' +
+        'type names USGS publishes ("earthquake", "quarry blast", "explosion", "ice quake"). ' +
+        "EMSC's two-character code is decoded to the same names, so the same event carries the " +
+        'same value from either source; how sure the source is rides on event_certainty instead. ' +
+        'A code outside the published nomenclature is forwarded verbatim rather than guessed at. ' +
+        'Not every record in either catalog is a tectonic earthquake. Absent when the source ' +
+        'publishes no classification.',
+    ),
+  event_certainty: z
+    .enum(['known', 'suspected', 'unknown', 'unreported'])
+    .optional()
+    .describe(
+      'How certain the source is of event_type: "known" (asserted), "suspected", "unknown", or ' +
+        '"unreported". EMSC publishes this as the first character of its event-type code — ' +
+        'a suspected explosion is not a confirmed one, and this is the only field that says so. ' +
+        'Absent for USGS, which publishes no certainty axis, and absent for an EMSC code outside ' +
+        'the published nomenclature.',
     ),
   event_url: z.string().optional().describe('USGS event page URL. Present for USGS events only.'),
   detail_url: z
@@ -146,7 +159,10 @@ export const EarthquakeDetailSchema = z.object({
       max_pga: z
         .number()
         .optional()
-        .describe('Maximum modeled peak ground acceleration, in percent of g.'),
+        .describe(
+          'Maximum modeled peak ground acceleration, in g — a fraction of standard gravity, ' +
+            'as USGS ShakeMap publishes it (0.4 is four tenths of g).',
+        ),
       max_pgv: z.number().optional().describe('Maximum modeled peak ground velocity, in cm/s.'),
       intensity_map_url: z
         .string()
@@ -274,7 +290,7 @@ export function formatEventDetail(detail: EarthquakeDetailOutput | undefined): s
   if (shakemap) {
     lines.push(
       `**ShakeMap:** Max MMI: ${detailValue(shakemap.max_mmi)} | ` +
-        `Max PGA: ${detailValue(shakemap.max_pga, ' %g')} | ` +
+        `Max PGA: ${detailValue(shakemap.max_pga, ' g')} | ` +
         `Max PGV: ${detailValue(shakemap.max_pgv, ' cm/s')}` +
         (shakemap.intensity_map_url ? ` | Intensity map: ${shakemap.intensity_map_url}` : ''),
     );
@@ -346,9 +362,18 @@ export function formatEvent(event: EarthquakeEventOutput): string[] {
   lines.push(`**Place:** ${event.place}`);
   // USGS titles carry the classification for non-earthquakes, EMSC titles never do.
   // Rendering anything other than a plain "earthquake" keeps quarry blasts and
-  // explosions from reading as seismicity in the text-only surface.
-  if (event.event_type != null && event.event_type !== 'earthquake') {
-    lines.push(`**Event type:** ${event.event_type}`);
+  // explosions from reading as seismicity in the text-only surface. An asserted
+  // certainty is the unremarkable case and stays out on its own, but anything less
+  // than "known" makes even a plain earthquake worth a line — and once the line is
+  // rendered the certainty travels with it, so a suspected explosion in content[]
+  // can never read as a confirmed one.
+  const unusualType = event.event_type != null && event.event_type !== 'earthquake';
+  const unusualCertainty = event.event_certainty != null && event.event_certainty !== 'known';
+  if (unusualType || unusualCertainty) {
+    lines.push(
+      `**Event type:** ${event.event_type ?? 'not published by source'}` +
+        (event.event_certainty != null ? ` (certainty: ${event.event_certainty})` : ''),
+    );
   }
   lines.push(`**Time:** ${event.time} | **Updated:** ${event.updated}`);
   lines.push(`**Location:** ${event.latitude.toFixed(4)}°, ${event.longitude.toFixed(4)}°`);

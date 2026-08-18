@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.3.2-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/earthquake-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.30.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/earthquake-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/earthquake-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.3.3-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/earthquake-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.30.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/earthquake-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/earthquake-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -59,12 +59,12 @@ Search earthquakes by time range, magnitude, depth, location radius, PAGER alert
 - Dual-source: USGS (global, richer metadata) or EMSC (an independent global catalog from the European-Mediterranean Seismological Centre, for cross-verification anywhere)
 - Full FDSN ComCat query API parameters: time range, magnitude, depth, location radius
 - USGS-specific filters: PAGER alert level (`green`/`yellow`/`orange`/`red`), DYFI felt reports count, significance score, event type
-- Every event carries its upstream `event_type` — USGS spells it out (`earthquake`, `quarry blast`, `explosion`, `ice quake`), EMSC publishes a code (`ke` known earthquake, `ue` unknown event) — and the `event_type` filter narrows to one of them on USGS
+- Every event carries an `event_type` in one vocabulary whichever source served it — the QuakeML names USGS publishes (`earthquake`, `quarry blast`, `explosion`, `ice quake`); EMSC's two-character code is decoded to the same names, with how sure EMSC was kept beside it in `event_certainty` — and the `event_type` filter narrows to one of them on USGS
 - Location-based queries: provide `latitude`, `longitude`, and `radius_km` together
 - Rectangular study areas: `min_latitude`, `max_latitude`, `min_longitude`, `max_longitude`, each independently optional and forwarded to both sources; combining a box with the radius circle intersects the two. Longitude accepts up to ±360 so a box can cross the antimeridian
 - Sort by time (newest first) or magnitude (largest first), ascending or descending
 - One call returns at most 20,000 events; page beyond that with `offset`, forwarded straight to the upstream FDSN `offset` parameter on both sources
-- `offset` counts from 1, matching both upstream APIs — a capped result carries `totalCount` and the `nextOffset` to pass on the following call
+- `offset` counts from 1, matching both upstream APIs — a capped result carries `totalCount` and the `nextOffset` to pass on the following call, and says so with `countUnavailable` when the follow-up count query failed rather than leaving the total silently absent
 - Use `earthquake_count` first to gauge result size
 - USGS-specific filters are not supported by EMSC — when `source=emsc` they are dropped and named in `ignoredFilters`, so an unconstrained result set is never mistaken for a filtered one
 
@@ -127,7 +127,7 @@ Agent-friendly output:
 - `source_catalog` and `auth` carry provenance (which catalog and which authoritative agency produced a solution) so agents can weigh two sources against each other
 - USGS-only filters dropped for an EMSC query are named in `ignoredFilters` on both `earthquake_search` and `earthquake_count`
 - An upstream rejection surfaces the service's own explanation (the offending parameter and its accepted format) in the error message, not just a status code; when the service explains nothing, the error says so under its own reason rather than passing the raw upstream body through
-- `event_type` travels with every event, so a quarry blast or explosion is never silently read as an earthquake
+- `event_type` travels with every event, so a quarry blast or explosion is never silently read as an earthquake, and `event_certainty` keeps a suspected one from reading as confirmed
 
 ## Getting started
 

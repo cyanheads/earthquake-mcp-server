@@ -305,7 +305,9 @@ export class UsgsService {
    * Query USGS FDSN event API. `params.offset` pages through the match set
    * (1-based, forwarded to the upstream `offset` parameter). When results are
    * truncated at the requested limit, a follow-up count query populates
-   * totalCount with the real match total for the whole filter set.
+   * totalCount with the real match total for the whole filter set. If that
+   * follow-up fails, the page still returns and `countUnavailable` marks the
+   * total as unknown rather than not attempted.
    */
   async searchEvents(
     params: EarthquakeQueryParams,
@@ -314,6 +316,7 @@ export class UsgsService {
     events: EarthquakeEvent[];
     count: number;
     totalCount?: number;
+    countUnavailable?: true;
   }> {
     const query = this.buildFdsnQuery(params);
     const url = `${this.baseUrl}/fdsnws/event/1/query?format=geojson&${query}`;
@@ -365,6 +368,9 @@ export class UsgsService {
         ctx.log.warning('Count sub-call for totalCount failed — returning results without it', {
           error: err instanceof Error ? err.message : String(err),
         });
+        // A bare absent totalCount reads identically to "no count was needed",
+        // so the failure is reported rather than inferred from the gap.
+        return { ...result, countUnavailable: true };
       }
     }
     return result;
