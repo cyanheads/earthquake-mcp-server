@@ -95,7 +95,7 @@ describe('earthquakeGetEvent', () => {
   it('returns full event detail for valid ID', async () => {
     mockGetEvent.mockResolvedValue({ event: sampleEvent, detail: sampleDetail });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetEvent.errors });
     const input = earthquakeGetEvent.input.parse({ event_id: 'ci38457511' });
     const result = await earthquakeGetEvent.handler(input, ctx);
 
@@ -110,7 +110,7 @@ describe('earthquakeGetEvent', () => {
   it('returns the product projection a search result cannot carry (issue #25)', async () => {
     mockGetEvent.mockResolvedValue({ event: sampleEvent, detail: sampleDetail });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetEvent.errors });
     const input = earthquakeGetEvent.input.parse({ event_id: 'us6000sznj' });
     const result = await earthquakeGetEvent.handler(input, ctx);
 
@@ -126,7 +126,7 @@ describe('earthquakeGetEvent', () => {
   it('omits detail for an event that carries no products', async () => {
     mockGetEvent.mockResolvedValue({ event: sparseEvent });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetEvent.errors });
     const input = earthquakeGetEvent.input.parse({ event_id: 'nc12345678' });
     const result = await earthquakeGetEvent.handler(input, ctx);
 
@@ -155,7 +155,9 @@ describe('earthquakeGetEvent', () => {
 
     const ctx = createMockContext({ errors: earthquakeGetEvent.errors });
     const input = earthquakeGetEvent.input.parse({ event_id: 'not-a-real-event-id-2026' });
-    const err = (await earthquakeGetEvent.handler(input, ctx).catch((e) => e)) as McpError;
+    const err = (await Promise.resolve(earthquakeGetEvent.handler(input, ctx)).catch(
+      (e) => e,
+    )) as McpError;
 
     // structuredContent surface: data.recovery.hint, resolved from the contract.
     // The handler factory mirrors this same hint into content[] as a "Recovery:" line.
@@ -170,7 +172,7 @@ describe('earthquakeGetEvent', () => {
   it('handles sparse event (null optional fields) without crashing', async () => {
     mockGetEvent.mockResolvedValue({ event: sparseEvent });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetEvent.errors });
     const input = earthquakeGetEvent.input.parse({ event_id: 'nc12345678' });
     const result = await earthquakeGetEvent.handler(input, ctx);
 
@@ -250,7 +252,9 @@ describe('earthquakeGetEvent — transport failure contracts (issue #28)', () =>
 
       const ctx = createMockContext({ errors: earthquakeGetEvent.errors });
       const input = earthquakeGetEvent.input.parse({ event_id: 'us6000sznj' });
-      const err = (await earthquakeGetEvent.handler(input, ctx).catch((e) => e)) as McpError;
+      const err = (await Promise.resolve(earthquakeGetEvent.handler(input, ctx)).catch(
+        (e) => e,
+      )) as McpError;
 
       // structuredContent surface: code, data.reason, and data.recovery.hint.
       expect(err.code).toBe(code);

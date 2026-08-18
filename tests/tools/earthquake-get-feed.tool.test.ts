@@ -69,7 +69,7 @@ describe('earthquakeGetFeed', () => {
       feedUrl: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson',
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
     const input = earthquakeGetFeed.input.parse({ magnitude_tier: '2.5', time_window: 'day' });
     const result = await earthquakeGetFeed.handler(input, ctx);
 
@@ -88,7 +88,7 @@ describe('earthquakeGetFeed', () => {
       feedUrl: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson',
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
     const input = earthquakeGetFeed.input.parse({});
     const result = await earthquakeGetFeed.handler(input, ctx);
 
@@ -106,7 +106,7 @@ describe('earthquakeGetFeed', () => {
       feedUrl: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_hour.geojson',
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
     const input = earthquakeGetFeed.input.parse({
       magnitude_tier: 'significant',
       time_window: 'hour',
@@ -125,7 +125,7 @@ describe('earthquakeGetFeed', () => {
       feedUrl: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_hour.geojson',
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
     const input = earthquakeGetFeed.input.parse({
       magnitude_tier: 'significant',
       time_window: 'hour',
@@ -145,7 +145,7 @@ describe('earthquakeGetFeed', () => {
       feedUrl: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson',
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
     const input = earthquakeGetFeed.input.parse({ magnitude_tier: '2.5', time_window: 'day' });
     await earthquakeGetFeed.handler(input, ctx);
 
@@ -230,7 +230,7 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
   it('caps a large feed at the default page size and discloses the full total', async () => {
     mockGetFeed.mockResolvedValue(bigFeed(10_656));
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
     const input = earthquakeGetFeed.input.parse({ magnitude_tier: 'all', time_window: 'month' });
     const result = await earthquakeGetFeed.handler(input, ctx);
 
@@ -244,7 +244,7 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
   it('honors an explicit limit for the first page', async () => {
     mockGetFeed.mockResolvedValue(bigFeed(500));
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
     const input = earthquakeGetFeed.input.parse({ limit: 25 });
     const result = await earthquakeGetFeed.handler(input, ctx);
 
@@ -260,7 +260,7 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
     let pages = 0;
 
     do {
-      const ctx = createMockContext();
+      const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
       const input = earthquakeGetFeed.input.parse({
         limit: 100,
         ...(cursor != null ? { cursor } : {}),
@@ -281,11 +281,11 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
   it('omits nextCursor on the last page', async () => {
     mockGetFeed.mockResolvedValue(bigFeed(150));
 
-    const firstCtx = createMockContext();
+    const firstCtx = createMockContext({ errors: earthquakeGetFeed.errors });
     await earthquakeGetFeed.handler(earthquakeGetFeed.input.parse({ limit: 100 }), firstCtx);
     const cursor = getEnrichment(firstCtx).nextCursor as string;
 
-    const lastCtx = createMockContext();
+    const lastCtx = createMockContext({ errors: earthquakeGetFeed.errors });
     const result = await earthquakeGetFeed.handler(
       earthquakeGetFeed.input.parse({ limit: 100, cursor }),
       lastCtx,
@@ -300,7 +300,7 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
   it('leaves a feed that fits in one page untruncated', async () => {
     mockGetFeed.mockResolvedValue(bigFeed(12));
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
     const result = await earthquakeGetFeed.handler(earthquakeGetFeed.input.parse({}), ctx);
 
     expect(result.count).toBe(12);
@@ -313,7 +313,7 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
   it('notices a capped page and names the cursor as the next step', async () => {
     mockGetFeed.mockResolvedValue(bigFeed(10_656));
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
     const input = earthquakeGetFeed.input.parse({ magnitude_tier: 'all', time_window: 'month' });
     await earthquakeGetFeed.handler(input, ctx);
 
@@ -325,7 +325,7 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
   it('rejects a malformed cursor rather than silently restarting the feed', async () => {
     mockGetFeed.mockResolvedValue(bigFeed(500));
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
     const input = earthquakeGetFeed.input.parse({ cursor: 'not-a-real-cursor' });
 
     await expect(earthquakeGetFeed.handler(input, ctx)).rejects.toThrow(/cursor/i);
@@ -334,14 +334,14 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
   it('reports an empty page past the end without claiming the feed is empty', async () => {
     mockGetFeed.mockResolvedValue(bigFeed(10));
 
-    const seedCtx = createMockContext();
+    const seedCtx = createMockContext({ errors: earthquakeGetFeed.errors });
     await earthquakeGetFeed.handler(earthquakeGetFeed.input.parse({ limit: 5 }), seedCtx);
     const cursor = getEnrichment(seedCtx).nextCursor as string;
 
     // Shrink the feed under the cursor's offset, as a regeneration between calls would
     mockGetFeed.mockResolvedValue(bigFeed(3));
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
     const result = await earthquakeGetFeed.handler(
       earthquakeGetFeed.input.parse({ limit: 5, cursor }),
       ctx,
@@ -361,7 +361,7 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
       feedUrl: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_hour.geojson',
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
     const input = earthquakeGetFeed.input.parse({
       magnitude_tier: 'significant',
       time_window: 'hour',
@@ -375,7 +375,7 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
   it('renders the page it returned, so content[] matches structuredContent', async () => {
     mockGetFeed.mockResolvedValue(bigFeed(500));
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
     const input = earthquakeGetFeed.input.parse({ limit: 3 });
     const result = await earthquakeGetFeed.handler(input, ctx);
 

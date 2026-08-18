@@ -19,7 +19,12 @@ import type {
 /** 1 degree of latitude ≈ 111.2 km. */
 const KM_PER_DEGREE = 111.2;
 
-/** Build a request context from a handler context for use with withRetry/fetchWithTimeout. */
+/**
+ * Build an operation-labelled child of the handler context for withRetry/fetchWithTimeout.
+ * Both accept the handler `Context` directly, but `fetchWithTimeout` reads
+ * `context.operation` for its log and error labels and `Context` carries none —
+ * so the label is what this helper exists for, not the field slice.
+ */
 function makeReqCtx(operation: string, ctx: Context) {
   return requestContextService.createRequestContext({
     operation,
@@ -27,7 +32,6 @@ function makeReqCtx(operation: string, ctx: Context) {
       requestId: ctx.requestId,
       traceId: ctx.traceId,
       tenantId: ctx.tenantId,
-      timestamp: new Date().toISOString(),
     },
   });
 }
@@ -217,8 +221,10 @@ export class EmscService {
   private buildFdsnQuery(params: EarthquakeQueryParams): string {
     const q = new URLSearchParams();
 
-    if (params.startTime) q.set('starttime', params.startTime);
-    if (params.endTime) q.set('endtime', params.endTime);
+    // != null, not truthy: an empty value must reach the querystring rather than be
+    // silently dropped, so a tool's queryEcho can never report a filter that was not sent.
+    if (params.startTime != null) q.set('starttime', params.startTime);
+    if (params.endTime != null) q.set('endtime', params.endTime);
     if (params.minMagnitude != null) q.set('minmagnitude', String(params.minMagnitude));
     if (params.maxMagnitude != null) q.set('maxmagnitude', String(params.maxMagnitude));
     if (params.latitude != null) q.set('latitude', String(params.latitude));
@@ -228,6 +234,12 @@ export class EmscService {
       const degrees = params.radiusKm / KM_PER_DEGREE;
       q.set('maxradius', degrees.toFixed(4));
     }
+    // EMSC takes the FDSN rectangle in degrees under the same parameter names as USGS,
+    // so the box needs no conversion on either provider.
+    if (params.minLatitude != null) q.set('minlatitude', String(params.minLatitude));
+    if (params.maxLatitude != null) q.set('maxlatitude', String(params.maxLatitude));
+    if (params.minLongitude != null) q.set('minlongitude', String(params.minLongitude));
+    if (params.maxLongitude != null) q.set('maxlongitude', String(params.maxLongitude));
     if (params.minDepthKm != null) q.set('mindepth', String(params.minDepthKm));
     if (params.maxDepthKm != null) q.set('maxdepth', String(params.maxDepthKm));
     // EMSC does not support alertlevel, minfelt, minsig, eventtype — silently omit.

@@ -7,7 +7,12 @@ import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getServerConfig } from '@/config/server-config.js';
 import { upstreamRejection } from '@/mcp-server/tools/fdsn-error.js';
-import { buildQueryParams, ignoredUsgsFilters } from '@/mcp-server/tools/query-params.js';
+import {
+  buildQueryParams,
+  earthquakeFilterFields,
+  filterQueryEcho,
+  ignoredUsgsFilters,
+} from '@/mcp-server/tools/query-params.js';
 import { EarthquakeEventSchema, formatEvent } from '@/mcp-server/tools/schemas.js';
 import { getEmscService } from '@/services/emsc/emsc-service.js';
 import type { EarthquakeQueryParams } from '@/services/usgs/types.js';
@@ -20,6 +25,9 @@ export const earthquakeSearch = tool('earthquake_search', {
     'Supports USGS (global, richer metadata: PAGER, DYFI, ShakeMap) and EMSC, an independent global ' +
     'catalog operated by the European-Mediterranean Seismological Centre. ' +
     'For location-based queries, provide latitude, longitude, and radius_km together. ' +
+    'A rectangular study area is expressed with min_latitude, max_latitude, min_longitude, and ' +
+    'max_longitude — each independently optional, so a single edge is a valid constraint. Combining ' +
+    'the box with the lat/lon/radius circle intersects the two, returning only events inside both. ' +
     'Both catalogs include non-tectonic records (quarry blasts, explosions) — every event carries ' +
     'its event_type, and event_type="earthquake" filters the rest out on USGS. ' +
     'USGS-specific filters (alert_level, event_type, min_felt, min_significance) are not sent when ' +
@@ -31,92 +39,13 @@ export const earthquakeSearch = tool('earthquake_search', {
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
 
   input: z.object({
-    start_time: z
-      .string()
-      .optional()
-      .describe(
-        'Start of time range as ISO 8601 (e.g. "2026-01-01" or "2026-05-23T00:00:00"). ' +
-          'Defaults to 30 days before end_time (or before the current time) if omitted — ' +
-          'applied server-side so USGS and EMSC honor the same window.',
-      ),
-    end_time: z
-      .string()
-      .optional()
-      .describe('End of time range as ISO 8601. Defaults to current time if omitted.'),
-    min_magnitude: z
-      .number()
-      .min(-1)
-      .max(10)
-      .optional()
-      .describe(
-        'Minimum magnitude (Richter or equivalent). ' +
-          'M2.5+ is felt by some people; M5+ can cause damage; M7+ is major.',
-      ),
-    max_magnitude: z.number().min(-1).max(10).optional().describe('Maximum magnitude.'),
-    latitude: z
-      .number()
-      .min(-90)
-      .max(90)
-      .optional()
-      .describe('Latitude for radius search. Requires longitude and radius_km.'),
-    longitude: z
-      .number()
-      .min(-180)
-      .max(180)
-      .optional()
-      .describe('Longitude for radius search. Requires latitude and radius_km.'),
-    radius_km: z
-      .number()
-      .min(0)
-      .max(20002)
-      .optional()
-      .describe(
-        'Search radius in kilometers from the lat/lon point. ' +
-          '100 km covers a metro region; 500 km covers a large country. ' +
-          'Converted to degrees for EMSC (1° ≈ 111.2 km).',
-      ),
-    min_depth_km: z
-      .number()
-      .optional()
-      .describe(
-        'Minimum depth in kilometers. ' +
-          'Shallow quakes (0–70 km) typically cause more surface damage than deep quakes (>300 km).',
-      ),
-    max_depth_km: z.number().optional().describe('Maximum depth in kilometers.'),
-    alert_level: z
-      .enum(['green', 'yellow', 'orange', 'red'])
-      .optional()
-      .describe(
-        'Minimum PAGER alert level. PAGER estimates economic loss and casualties. ' +
-          '"green" = minimal impact; "red" = extreme. Only available from USGS.',
-      ),
-    min_felt: z
-      .number()
-      .int()
-      .min(1)
-      .optional()
-      .describe(
-        'Minimum number of DYFI (Did You Feel It?) reports. ' +
-          'Use to find events with confirmed public impact. Only available from USGS.',
-      ),
-    min_significance: z
-      .number()
-      .int()
-      .optional()
-      .describe(
-        'Minimum USGS significance score (0–2000+). ' +
-          'Combines magnitude, felt reports, and PAGER estimates. ' +
-          'Significant events typically score 600+. Only available from USGS.',
-      ),
-    event_type: z
-      .string()
-      .optional()
-      .describe(
-        'Filter by upstream event classification, e.g. "earthquake" to exclude quarry blasts and ' +
-          'explosions, or "quarry blast" to see only those. Matched verbatim against the USGS ' +
-          'catalog, which accepts any string and returns zero matches for an unrecognized one. ' +
-          'Only available from USGS.',
-      ),
+    ...earthquakeFilterFields,
+    radius_km: earthquakeFilterFields.radius_km.describe(
+      'Search radius in kilometers from the lat/lon point. ' +
+        '100 km covers a metro region; 500 km covers a large country. ' +
+        'Max 20001.6, the ceiling USGS enforces. ' +
+        'Converted to degrees for EMSC (1° ≈ 111.2 km).',
+    ),
     source: z
       .enum(['usgs', 'emsc'])
       .default('usgs')
@@ -227,6 +156,22 @@ export const earthquakeSearch = tool('earthquake_search', {
           .number()
           .optional()
           .describe('Search radius in km sent upstream (converted to degrees for EMSC).'),
+        min_latitude: z
+          .number()
+          .optional()
+          .describe('Southern bounding-box edge sent upstream, in degrees.'),
+        max_latitude: z
+          .number()
+          .optional()
+          .describe('Northern bounding-box edge sent upstream, in degrees.'),
+        min_longitude: z
+          .number()
+          .optional()
+          .describe('Western bounding-box edge sent upstream, in degrees.'),
+        max_longitude: z
+          .number()
+          .optional()
+          .describe('Eastern bounding-box edge sent upstream, in degrees.'),
         min_depth_km: z.number().optional().describe('Minimum depth filter sent upstream.'),
         max_depth_km: z.number().optional().describe('Maximum depth filter sent upstream.'),
         alert_level: z
@@ -284,6 +229,15 @@ export const earthquakeSearch = tool('earthquake_search', {
       recovery: 'Provide latitude, longitude, and radius_km together for a location-based search.',
     },
     {
+      reason: 'invalid_bounding_box',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'min_latitude exceeds max_latitude, or min_longitude exceeds max_longitude.',
+      recovery:
+        'Swap the inverted pair so the minimum is not above the maximum. An equal pair is a ' +
+        'valid degenerate box. To cross the antimeridian, keep min_longitude below ' +
+        'max_longitude and extend max_longitude past 180 (or min_longitude below -180).',
+    },
+    {
       reason: 'source_unavailable',
       code: JsonRpcErrorCode.ServiceUnavailable,
       when: 'Selected source API returns a 5xx or is unreachable.',
@@ -332,6 +286,32 @@ export const earthquakeSearch = tool('earthquake_search', {
         'invalid_radius',
         'Radius search requires latitude, longitude, and radius_km — provide all three together.',
         { ...ctx.recoveryFor('invalid_radius') },
+      );
+    }
+
+    // Only a strictly inverted pair is wrong. An equal pair is a degenerate box both
+    // providers answer with real events, so rejecting it would invent a restriction
+    // neither upstream imposes.
+    if (
+      input.min_latitude != null &&
+      input.max_latitude != null &&
+      input.min_latitude > input.max_latitude
+    ) {
+      throw ctx.fail(
+        'invalid_bounding_box',
+        `min_latitude (${input.min_latitude}) is above max_latitude (${input.max_latitude}).`,
+        { ...ctx.recoveryFor('invalid_bounding_box') },
+      );
+    }
+    if (
+      input.min_longitude != null &&
+      input.max_longitude != null &&
+      input.min_longitude > input.max_longitude
+    ) {
+      throw ctx.fail(
+        'invalid_bounding_box',
+        `min_longitude (${input.min_longitude}) is above max_longitude (${input.max_longitude}).`,
+        { ...ctx.recoveryFor('invalid_bounding_box') },
       );
     }
 
@@ -401,26 +381,11 @@ export const earthquakeSearch = tool('earthquake_search', {
 
     ctx.log.info('Search completed', { source: input.source, count: result.count });
 
-    // Echo the effective upstream parameters on every success path — USGS-only
-    // filters are excluded for EMSC because buildFdsnQuery does not send them.
-    const isUsgs = input.source !== 'emsc';
+    // Echo the effective upstream parameters on every success path — the shared echo
+    // drops the USGS-only filters for EMSC, which buildFdsnQuery does not send.
     ctx.enrich({
       queryEcho: {
-        ...(params.startTime != null ? { start_time: params.startTime } : {}),
-        ...(params.endTime != null ? { end_time: params.endTime } : {}),
-        ...(params.minMagnitude != null ? { min_magnitude: params.minMagnitude } : {}),
-        ...(params.maxMagnitude != null ? { max_magnitude: params.maxMagnitude } : {}),
-        ...(params.latitude != null ? { latitude: params.latitude } : {}),
-        ...(params.longitude != null ? { longitude: params.longitude } : {}),
-        ...(params.radiusKm != null ? { radius_km: params.radiusKm } : {}),
-        ...(params.minDepthKm != null ? { min_depth_km: params.minDepthKm } : {}),
-        ...(params.maxDepthKm != null ? { max_depth_km: params.maxDepthKm } : {}),
-        ...(isUsgs && params.alertLevel != null ? { alert_level: params.alertLevel } : {}),
-        ...(isUsgs && params.minFelt != null ? { min_felt: params.minFelt } : {}),
-        ...(isUsgs && params.minSignificance != null
-          ? { min_significance: params.minSignificance }
-          : {}),
-        ...(isUsgs && params.eventType != null ? { event_type: params.eventType } : {}),
+        ...filterQueryEcho(params, input.source),
         source: input.source,
         limit,
         ...(input.offset != null ? { offset: input.offset } : {}),

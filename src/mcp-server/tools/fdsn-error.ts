@@ -30,6 +30,26 @@ const MAX_REASON_CHARS = 300;
 const HTML_BODY = /^\s*<(!doctype\s|html[\s>])/i;
 
 /**
+ * `fetchWithTimeout` captures an over-budget error body as head + this marker + tail,
+ * glued together without a newline. Everything from the marker onward is a
+ * non-contiguous jump into the trailing boilerplate — including the echoed request and
+ * its internal upstream hostname.
+ */
+const ELISION_MARKER = /…\[\d+ bytes? elided\]…/;
+
+/**
+ * Reduce a captured body to the lines that are whole. An elided body keeps only what
+ * precedes the marker, minus the partial line the cut landed in — a fragment like
+ * "Usage det" no longer reads as a trailer, so it would otherwise survive as reason
+ * text. A body captured intact is returned unchanged.
+ */
+function completeLines(body: string): string {
+  const marker = ELISION_MARKER.exec(body);
+  if (marker === null) return body;
+  return body.slice(0, body.lastIndexOf('\n', marker.index) + 1);
+}
+
+/**
  * Extract the reason lines from an FDSN error body, dropping the status stamp, the
  * generic HTTP reason phrase, and the trailing boilerplate. USGS puts the useful
  * sentence on the line after `Error 400: Bad Request`; EMSC puts it on the stamp line
@@ -40,7 +60,7 @@ export function extractFdsnReason(body: string): string | undefined {
   if (HTML_BODY.test(body)) return;
 
   const segments: string[] = [];
-  for (const raw of body.split('\n')) {
+  for (const raw of completeLines(body).split('\n')) {
     const line = raw.trim();
     if (line === '') continue;
     if (TRAILER_START.test(line)) break;

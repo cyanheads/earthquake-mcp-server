@@ -92,6 +92,21 @@ describe('extractFdsnReason', () => {
     expect(reason.endsWith('…')).toBe(true);
   });
 
+  it('stops at the elision marker in a head-and-tail captured body', () => {
+    // fetchWithTimeout keeps 40% head + 60% tail of an over-budget error body,
+    // joined by the marker with no newline — so the tail's boilerplate rides on
+    // the head's last partial line and would otherwise read as reason text.
+    const elided =
+      'Error 400: Bad Request\n\nBad starttime value "not-a-date".\n\nUsage det' +
+      '…[412 bytes elided]…' +
+      'http://ws2/query?format=json&start=not-a-date\n\nService version: v 2.2\n';
+    const reason = extractFdsnReason(elided) ?? '';
+
+    expect(reason).toBe('Bad starttime value "not-a-date".');
+    expect(reason).not.toContain('elided');
+    expect(reason).not.toContain('ws2');
+  });
+
   it('returns undefined for an HTML error page', () => {
     expect(
       extractFdsnReason('<!DOCTYPE html>\n<html><body>502 Bad Gateway</body></html>'),

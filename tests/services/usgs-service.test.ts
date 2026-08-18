@@ -509,3 +509,171 @@ describe('UsgsService.getEvent — product projection (issue #25)', () => {
     vi.unstubAllGlobals();
   });
 });
+
+describe('UsgsService — PAGER alert level is a minimum, not an exact match (issue #31)', () => {
+  /**
+   * `'minalertlevel=green'` contains `'alertlevel=green'` as a literal substring, so a
+   * `not.toContain('alertlevel=green')` assertion passes even with the bug present. Every
+   * check below anchors on a parameter boundary instead.
+   */
+  const bareAlertLevelParam = /[?&]alertlevel=/;
+
+  it.each(['green', 'yellow', 'orange', 'red'])(
+    'sends %s as minalertlevel on a search, never the exact-match alertlevel',
+    async (level) => {
+      const fetchMock = vi.fn().mockResolvedValue(geojsonResponse([makeFeature('us1', 5)]));
+      vi.stubGlobal('fetch', fetchMock);
+
+      const service = makeService();
+      await service.searchEvents({ limit: 5, alertLevel: level }, createMockContext() as Context);
+
+      const url = String(fetchMock.mock.calls[0]?.[0]);
+      expect(url).toContain(`minalertlevel=${level}`);
+      expect(bareAlertLevelParam.test(url)).toBe(false);
+      vi.unstubAllGlobals();
+    },
+  );
+
+  it('sends minalertlevel on a count too — both tools share the builder', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(JSON.stringify({ count: 934, maxAllowed: 20000 }), { status: 200 }),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.countEvents({ alertLevel: 'green' }, createMockContext() as Context);
+
+    const url = String(fetchMock.mock.calls[0]?.[0]);
+    expect(url).toContain('minalertlevel=green');
+    expect(bareAlertLevelParam.test(url)).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it('omits both alert parameters when no alert_level filter was supplied', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(geojsonResponse([makeFeature('us1', 5)]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.searchEvents({ limit: 5 }, createMockContext() as Context);
+
+    const url = String(fetchMock.mock.calls[0]?.[0]);
+    expect(url).not.toContain('minalertlevel=');
+    expect(bareAlertLevelParam.test(url)).toBe(false);
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('UsgsService — bounding-box forwarding (issue #37)', () => {
+  it('forwards all four box parameters under their verbatim FDSN names, unconverted', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(geojsonResponse([makeFeature('us1', 5)]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.searchEvents(
+      { limit: 5, minLatitude: 32.5, maxLatitude: 42, minLongitude: -125, maxLongitude: -114 },
+      createMockContext() as Context,
+    );
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.searchParams.get('minlatitude')).toBe('32.5');
+    expect(url.searchParams.get('maxlatitude')).toBe('42');
+    expect(url.searchParams.get('minlongitude')).toBe('-125');
+    expect(url.searchParams.get('maxlongitude')).toBe('-114');
+    vi.unstubAllGlobals();
+  });
+
+  it('forwards a literal 0 edge — the equator and prime meridian are real constraints', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(geojsonResponse([makeFeature('us1', 5)]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.searchEvents(
+      { limit: 5, minLatitude: 0, minLongitude: 0, maxLongitude: 0 },
+      createMockContext() as Context,
+    );
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.searchParams.get('minlatitude')).toBe('0');
+    expect(url.searchParams.get('minlongitude')).toBe('0');
+    expect(url.searchParams.get('maxlongitude')).toBe('0');
+    expect(url.searchParams.has('maxlatitude')).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it('forwards an extended-range antimeridian box verbatim', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(geojsonResponse([makeFeature('us1', 5)]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.searchEvents(
+      { limit: 5, minLongitude: 170, maxLongitude: 190 },
+      createMockContext() as Context,
+    );
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.searchParams.get('minlongitude')).toBe('170');
+    expect(url.searchParams.get('maxlongitude')).toBe('190');
+    vi.unstubAllGlobals();
+  });
+
+  it('sends the box alongside the circle group rather than replacing it', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(geojsonResponse([makeFeature('us1', 5)]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.searchEvents(
+      {
+        limit: 5,
+        latitude: 35,
+        longitude: -120,
+        radiusKm: 500,
+        minLatitude: 30,
+        maxLatitude: 40,
+      },
+      createMockContext() as Context,
+    );
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.searchParams.get('maxradiuskm')).toBe('500');
+    expect(url.searchParams.get('minlatitude')).toBe('30');
+    expect(url.searchParams.get('maxlatitude')).toBe('40');
+    vi.unstubAllGlobals();
+  });
+
+  it('omits every box parameter when none was supplied', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(geojsonResponse([makeFeature('us1', 5)]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.searchEvents({ limit: 5 }, createMockContext() as Context);
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    for (const name of ['minlatitude', 'maxlatitude', 'minlongitude', 'maxlongitude']) {
+      expect(url.searchParams.has(name)).toBe(false);
+    }
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('UsgsService — no filter is dropped by a truthy check (issues #29, #32)', () => {
+  it.each([
+    ['startTime', 'starttime'],
+    ['endTime', 'endtime'],
+    ['eventType', 'eventtype'],
+  ])('sends an empty %s rather than silently dropping it', async (field, param) => {
+    const fetchMock = vi.fn().mockResolvedValue(geojsonResponse([makeFeature('us1', 5)]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.searchEvents({ limit: 5, [field]: '' }, createMockContext() as Context);
+
+    // Empty is byte-identical to absent upstream, but it must be *present* in the
+    // querystring so a queryEcho built from the same params can never over-report.
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.searchParams.has(param)).toBe(true);
+    expect(url.searchParams.get(param)).toBe('');
+    vi.unstubAllGlobals();
+  });
+});

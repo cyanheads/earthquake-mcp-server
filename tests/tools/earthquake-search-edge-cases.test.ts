@@ -70,13 +70,14 @@ describe('earthquakeSearch — input schema boundaries', () => {
     expect(() => earthquakeSearch.input.parse({ longitude: 181 })).toThrow();
   });
 
-  it('rejects radius_km above 20002', () => {
-    expect(() => earthquakeSearch.input.parse({ radius_km: 20003 })).toThrow();
+  it('rejects radius_km above the USGS-enforced 20001.6 ceiling (issue #32)', () => {
+    expect(() => earthquakeSearch.input.parse({ radius_km: 20001.7 })).toThrow();
+    expect(() => earthquakeSearch.input.parse({ radius_km: 20002 })).toThrow();
   });
 
-  it('accepts radius_km at boundary 20002', () => {
-    const input = earthquakeSearch.input.parse({ radius_km: 20002 });
-    expect(input.radius_km).toBe(20002);
+  it('accepts radius_km at boundary 20001.6 (issue #32)', () => {
+    const input = earthquakeSearch.input.parse({ radius_km: 20001.6 });
+    expect(input.radius_km).toBe(20001.6);
   });
 
   it('rejects limit below 1', () => {
@@ -217,7 +218,9 @@ describe('earthquakeSearch — security', () => {
 
     const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ min_magnitude: 5.0 });
-    const err = await earthquakeSearch.handler(input, ctx).catch((e: unknown) => e);
+    const err = await Promise.resolve(earthquakeSearch.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     // The tool re-throws directly — the error message is the service's, but
     // it should not be wrapped with any sensitive token from the tool layer itself.
@@ -256,7 +259,7 @@ describe('earthquakeSearch — security', () => {
     };
     mockUsgsSearch.mockResolvedValue({ events: [unicodeEvent], count: 1 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ min_magnitude: 5.0 });
     const result = await earthquakeSearch.handler(input, ctx);
 
@@ -276,7 +279,7 @@ describe('earthquakeSearch — security', () => {
     };
     mockUsgsSearch.mockResolvedValue({ events: [oversizedEvent], count: 1 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ min_magnitude: 3.0 });
     const result = await earthquakeSearch.handler(input, ctx);
 
@@ -375,13 +378,15 @@ describe('earthquakeSearch — upstream rejection contracts (issue #27)', () => 
     mockUsgsSearch.mockRejectedValue(
       await upstream(
         400,
-        'Error 400: Bad Request\n\nBad starttime value "x". Valid values are ISO-8601 timestamps.\n\nRequest:\n/query',
+        'Error 400: Bad Request\n\nBad starttime value "2026-13-45". Valid values are ISO-8601 timestamps.\n\nRequest:\n/query',
       ),
     );
 
+    // Digit-shaped but calendar-invalid: clears the local FDSN-timestamp pattern, so the
+    // upstream is what rejects it — which is the path under test.
     const ctx = createMockContext({ errors: earthquakeSearch.errors });
-    const input = earthquakeSearch.input.parse({ start_time: 'x' });
-    const err = (await earthquakeSearch.handler(input, ctx).catch((e) => e)) as {
+    const input = earthquakeSearch.input.parse({ start_time: '2026-13-45' });
+    const err = (await Promise.resolve(earthquakeSearch.handler(input, ctx)).catch((e) => e)) as {
       message: string;
       data: { reason?: string; status?: number; recovery?: { hint?: string } };
     };
@@ -404,7 +409,7 @@ describe('earthquakeSearch — upstream rejection contracts (issue #27)', () => 
 
     const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ source: 'emsc', min_magnitude: 5 });
-    const err = (await earthquakeSearch.handler(input, ctx).catch((e) => e)) as {
+    const err = (await Promise.resolve(earthquakeSearch.handler(input, ctx)).catch((e) => e)) as {
       code: number;
       message: string;
       data: { reason?: string; status?: number; recovery?: { hint?: string } };
@@ -430,7 +435,7 @@ describe('earthquakeSearch — upstream rejection contracts (issue #27)', () => 
 
     const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ source: 'emsc', min_magnitude: 5 });
-    const err = (await earthquakeSearch.handler(input, ctx).catch((e) => e)) as {
+    const err = (await Promise.resolve(earthquakeSearch.handler(input, ctx)).catch((e) => e)) as {
       message: string;
       data: Record<string, unknown>;
     };
@@ -452,7 +457,9 @@ describe('earthquakeSearch — upstream rejection contracts (issue #27)', () => 
 
     const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ min_magnitude: 5 });
-    const err = await earthquakeSearch.handler(input, ctx).catch((e: unknown) => e);
+    const err = await Promise.resolve(earthquakeSearch.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     expect(err).toBe(notFoundErr);
     expect((err as { data: { reason?: string } }).data.reason).toBeUndefined();
@@ -476,7 +483,7 @@ describe('earthquakeSearch — event_type filter (issue #24)', () => {
 
   it('forwards event_type to the USGS service and echoes it', async () => {
     const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ event_type: 'quarry blast' });
     await earthquakeSearch.handler(input, ctx);
 
@@ -489,7 +496,7 @@ describe('earthquakeSearch — event_type filter (issue #24)', () => {
 
   it('names event_type in ignoredFilters and keeps it out of the echo for EMSC', async () => {
     const { getEnrichment } = await import('@cyanheads/mcp-ts-core/testing');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ source: 'emsc', event_type: 'earthquake' });
     await earthquakeSearch.handler(input, ctx);
 

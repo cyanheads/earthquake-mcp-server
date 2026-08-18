@@ -80,7 +80,9 @@ describe('earthquakeGetEvent — not_found error handling', () => {
 
     const ctx = createMockContext({ errors: earthquakeGetEvent.errors });
     const input = earthquakeGetEvent.input.parse({ event_id: 'ci38457511' });
-    const err = (await earthquakeGetEvent.handler(input, ctx).catch((e: unknown) => e)) as {
+    const err = (await Promise.resolve(earthquakeGetEvent.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    )) as {
       code: number;
       data: { reason?: string };
     };
@@ -96,7 +98,9 @@ describe('earthquakeGetEvent — not_found error handling', () => {
 
     const ctx = createMockContext({ errors: earthquakeGetEvent.errors });
     const input = earthquakeGetEvent.input.parse({ event_id: 'ci38457511' });
-    const err = await earthquakeGetEvent.handler(input, ctx).catch((e: unknown) => e);
+    const err = await Promise.resolve(earthquakeGetEvent.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     expect(err).toBe(rateLimitedErr);
   });
@@ -121,7 +125,9 @@ describe('earthquakeGetEvent — security', () => {
 
     const ctx = createMockContext({ errors: earthquakeGetEvent.errors });
     const input = earthquakeGetEvent.input.parse({ event_id: injectionId });
-    const err = await earthquakeGetEvent.handler(input, ctx).catch((e: unknown) => e);
+    const err = await Promise.resolve(earthquakeGetEvent.handler(input, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     // The error message may contain the ID literally — that's correct behavior.
     // Critical: no exception escapes from the handler itself beyond the expected McpError.

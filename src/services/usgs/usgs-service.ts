@@ -32,7 +32,12 @@ function epochMsToIso(ms: number | null | undefined): string {
   return new Date(ms).toISOString();
 }
 
-/** Build a request context from a handler context for use with withRetry/fetchWithTimeout. */
+/**
+ * Build an operation-labelled child of the handler context for withRetry/fetchWithTimeout.
+ * Both accept the handler `Context` directly, but `fetchWithTimeout` reads
+ * `context.operation` for its log and error labels and `Context` carries none —
+ * so the label is what this helper exists for, not the field slice.
+ */
 function makeReqCtx(operation: string, ctx: Context) {
   return requestContextService.createRequestContext({
     operation,
@@ -40,7 +45,6 @@ function makeReqCtx(operation: string, ctx: Context) {
       requestId: ctx.requestId,
       traceId: ctx.traceId,
       tenantId: ctx.tenantId,
-      timestamp: new Date().toISOString(),
     },
   });
 }
@@ -466,19 +470,27 @@ export class UsgsService {
   private buildFdsnQuery(params: EarthquakeQueryParams): string {
     const q = new URLSearchParams();
 
-    if (params.startTime) q.set('starttime', params.startTime);
-    if (params.endTime) q.set('endtime', params.endTime);
+    // != null, not truthy: an empty value must reach the querystring rather than be
+    // silently dropped, so a tool's queryEcho can never report a filter that was not sent.
+    if (params.startTime != null) q.set('starttime', params.startTime);
+    if (params.endTime != null) q.set('endtime', params.endTime);
     if (params.minMagnitude != null) q.set('minmagnitude', String(params.minMagnitude));
     if (params.maxMagnitude != null) q.set('maxmagnitude', String(params.maxMagnitude));
     if (params.latitude != null) q.set('latitude', String(params.latitude));
     if (params.longitude != null) q.set('longitude', String(params.longitude));
     if (params.radiusKm != null) q.set('maxradiuskm', String(params.radiusKm));
+    if (params.minLatitude != null) q.set('minlatitude', String(params.minLatitude));
+    if (params.maxLatitude != null) q.set('maxlatitude', String(params.maxLatitude));
+    if (params.minLongitude != null) q.set('minlongitude', String(params.minLongitude));
+    if (params.maxLongitude != null) q.set('maxlongitude', String(params.maxLongitude));
     if (params.minDepthKm != null) q.set('mindepth', String(params.minDepthKm));
     if (params.maxDepthKm != null) q.set('maxdepth', String(params.maxDepthKm));
-    if (params.alertLevel) q.set('alertlevel', params.alertLevel);
+    // minalertlevel, not alertlevel: USGS defines alertlevel as an exact match, which
+    // would drop yellow/orange/red events from the minimum the input documents.
+    if (params.alertLevel) q.set('minalertlevel', params.alertLevel);
     if (params.minFelt != null) q.set('minfelt', String(params.minFelt));
     if (params.minSignificance != null) q.set('minsig', String(params.minSignificance));
-    if (params.eventType) q.set('eventtype', params.eventType);
+    if (params.eventType != null) q.set('eventtype', params.eventType);
     if (params.limit != null) q.set('limit', String(params.limit));
     // FDSN offset is 1-based — offset=1 is the first match, and 0 is rejected.
     if (params.offset != null) q.set('offset', String(params.offset));

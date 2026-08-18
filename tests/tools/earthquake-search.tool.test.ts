@@ -70,7 +70,7 @@ describe('earthquakeSearch', () => {
   it('searches USGS by default', async () => {
     mockUsgsSearch.mockResolvedValue({ events: [sampleEvent], count: 1 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ min_magnitude: 5.0 });
     const result = await earthquakeSearch.handler(input, ctx);
 
@@ -84,7 +84,7 @@ describe('earthquakeSearch', () => {
   it('routes to EMSC when source=emsc', async () => {
     mockEmscSearch.mockResolvedValue({ events: [emscEvent], count: 1 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ source: 'emsc', min_magnitude: 3.0 });
     const result = await earthquakeSearch.handler(input, ctx);
 
@@ -115,7 +115,7 @@ describe('earthquakeSearch', () => {
   it('accepts complete radius search params', async () => {
     mockUsgsSearch.mockResolvedValue({ events: [], count: 0 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({
       latitude: 35.0,
       longitude: 139.0,
@@ -132,7 +132,7 @@ describe('earthquakeSearch', () => {
       totalCount: 500,
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ min_magnitude: 5.0 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -142,7 +142,7 @@ describe('earthquakeSearch', () => {
   it('omits totalCount enrichment when service does not return it', async () => {
     mockUsgsSearch.mockResolvedValue({ events: [], count: 0 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({});
     await earthquakeSearch.handler(input, ctx);
 
@@ -154,7 +154,7 @@ describe('earthquakeSearch', () => {
     const events = Array.from({ length: 100 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
     mockUsgsSearch.mockResolvedValue({ events, count: 100 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ limit: 100 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -164,7 +164,7 @@ describe('earthquakeSearch', () => {
   it('does not set truncated enrichment when count is below limit', async () => {
     mockUsgsSearch.mockResolvedValue({ events: [sampleEvent], count: 1 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ limit: 100 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -174,7 +174,7 @@ describe('earthquakeSearch', () => {
   it('populates notice enrichment on empty results', async () => {
     mockUsgsSearch.mockResolvedValue({ events: [], count: 0 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ min_magnitude: 8.0 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -187,7 +187,7 @@ describe('earthquakeSearch', () => {
     const events = Array.from({ length: 5 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
     mockUsgsSearch.mockResolvedValue({ events, count: 5 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ limit: 5 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -200,7 +200,7 @@ describe('earthquakeSearch', () => {
     const events = Array.from({ length: 5 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
     mockUsgsSearch.mockResolvedValue({ events, count: 5, totalCount: 4821 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ limit: 5 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -212,7 +212,7 @@ describe('earthquakeSearch', () => {
   it('does not populate notice on normal non-empty result', async () => {
     mockUsgsSearch.mockResolvedValue({ events: [sampleEvent], count: 1 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ min_magnitude: 5.0 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -266,7 +266,7 @@ describe('earthquakeSearch — 30-day default time window (issue #12)', () => {
   });
 
   it('sends an explicit startTime of end_time − 30 days when start_time is omitted', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ end_time: '2026-06-30' });
     await earthquakeSearch.handler(input, ctx);
 
@@ -278,7 +278,7 @@ describe('earthquakeSearch — 30-day default time window (issue #12)', () => {
   });
 
   it('sends the same explicit startTime to EMSC — no upstream default divergence', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ source: 'emsc', end_time: '2026-06-30' });
     await earthquakeSearch.handler(input, ctx);
 
@@ -290,7 +290,7 @@ describe('earthquakeSearch — 30-day default time window (issue #12)', () => {
   });
 
   it('passes an explicit start_time through unchanged', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ start_time: '2026-05-31' });
     await earthquakeSearch.handler(input, ctx);
 
@@ -319,7 +319,7 @@ describe('earthquakeSearch — queryEcho enrichment (issue #11)', () => {
   it('populates queryEcho with effective params including the resolved start_time', async () => {
     mockUsgsSearch.mockResolvedValue({ events: [sampleEvent], count: 1 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ end_time: '2026-06-30', min_magnitude: 5 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -337,7 +337,7 @@ describe('earthquakeSearch — queryEcho enrichment (issue #11)', () => {
   it('populates queryEcho on the empty-result path too', async () => {
     mockUsgsSearch.mockResolvedValue({ events: [], count: 0 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ min_magnitude: 9.5 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -350,7 +350,7 @@ describe('earthquakeSearch — queryEcho enrichment (issue #11)', () => {
   it('includes USGS-only filters in the echo for source=usgs', async () => {
     mockUsgsSearch.mockResolvedValue({ events: [], count: 0 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({
       alert_level: 'yellow',
       min_felt: 10,
@@ -365,7 +365,7 @@ describe('earthquakeSearch — queryEcho enrichment (issue #11)', () => {
   it('omits USGS-only filters from the echo for source=emsc (not sent upstream)', async () => {
     mockEmscSearch.mockResolvedValue({ events: [], count: 0 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({
       source: 'emsc',
       alert_level: 'yellow',
@@ -384,7 +384,7 @@ describe('earthquakeSearch — queryEcho enrichment (issue #11)', () => {
   it('echoes the offset when one was sent upstream', async () => {
     mockUsgsSearch.mockResolvedValue({ events: [sampleEvent], count: 1 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ offset: 101 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -395,7 +395,7 @@ describe('earthquakeSearch — queryEcho enrichment (issue #11)', () => {
   it('omits offset from the echo when the first page was fetched', async () => {
     mockUsgsSearch.mockResolvedValue({ events: [sampleEvent], count: 1 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({});
     await earthquakeSearch.handler(input, ctx);
 
@@ -444,7 +444,7 @@ describe('earthquakeSearch — offset paging (issue #19)', () => {
   it('forwards offset to the USGS service', async () => {
     mockUsgsSearch.mockResolvedValue({ events: [], count: 0 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ offset: 20001, limit: 20000 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -457,7 +457,7 @@ describe('earthquakeSearch — offset paging (issue #19)', () => {
   it('forwards offset to the EMSC service', async () => {
     mockEmscSearch.mockResolvedValue({ events: [], count: 0 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ source: 'emsc', offset: 5001 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -467,7 +467,7 @@ describe('earthquakeSearch — offset paging (issue #19)', () => {
   it('omits offset from the upstream params when the caller did not page', async () => {
     mockUsgsSearch.mockResolvedValue({ events: [], count: 0 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({});
     await earthquakeSearch.handler(input, ctx);
 
@@ -478,7 +478,7 @@ describe('earthquakeSearch — offset paging (issue #19)', () => {
     const events = Array.from({ length: 5 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
     mockUsgsSearch.mockResolvedValue({ events, count: 5, totalCount: 4821 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ limit: 5 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -490,7 +490,7 @@ describe('earthquakeSearch — offset paging (issue #19)', () => {
     const events = Array.from({ length: 5 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
     mockUsgsSearch.mockResolvedValue({ events, count: 5, totalCount: 4821 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ limit: 5, offset: 101 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -501,7 +501,7 @@ describe('earthquakeSearch — offset paging (issue #19)', () => {
     const events = Array.from({ length: 5 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
     mockUsgsSearch.mockResolvedValue({ events, count: 5, totalCount: 10 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ limit: 5, offset: 6 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -512,7 +512,7 @@ describe('earthquakeSearch — offset paging (issue #19)', () => {
   it('omits nextOffset when the page was not capped', async () => {
     mockUsgsSearch.mockResolvedValue({ events: [sampleEvent], count: 1 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ limit: 100 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -523,7 +523,7 @@ describe('earthquakeSearch — offset paging (issue #19)', () => {
     const events = Array.from({ length: 20000 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
     mockUsgsSearch.mockResolvedValue({ events, count: 20000, totalCount: 78820 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ limit: 20000 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -536,7 +536,7 @@ describe('earthquakeSearch — offset paging (issue #19)', () => {
     const events = Array.from({ length: 5 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
     mockUsgsSearch.mockResolvedValue({ events, count: 5 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ limit: 5 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -548,7 +548,7 @@ describe('earthquakeSearch — offset paging (issue #19)', () => {
   it('an empty page past the end says the previous page was the last', async () => {
     mockUsgsSearch.mockResolvedValue({ events: [], count: 0 });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ offset: 90001 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -574,7 +574,7 @@ describe('earthquakeSearch — ignored USGS-only filters for EMSC (issue #16)', 
   });
 
   it('names alert_level when an EMSC query supplies it', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({
       source: 'emsc',
       min_magnitude: 4.5,
@@ -586,7 +586,7 @@ describe('earthquakeSearch — ignored USGS-only filters for EMSC (issue #16)', 
   });
 
   it('names every dropped filter, in schema order', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({
       source: 'emsc',
       alert_level: 'yellow',
@@ -603,7 +603,7 @@ describe('earthquakeSearch — ignored USGS-only filters for EMSC (issue #16)', 
   });
 
   it('names min_felt alone', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ source: 'emsc', min_felt: 25 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -611,7 +611,7 @@ describe('earthquakeSearch — ignored USGS-only filters for EMSC (issue #16)', 
   });
 
   it('names min_significance alone', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ source: 'emsc', min_significance: 600 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -619,7 +619,7 @@ describe('earthquakeSearch — ignored USGS-only filters for EMSC (issue #16)', 
   });
 
   it('stays absent for a USGS query, where the filters are applied', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({
       alert_level: 'yellow',
       min_felt: 10,
@@ -631,7 +631,7 @@ describe('earthquakeSearch — ignored USGS-only filters for EMSC (issue #16)', 
   });
 
   it('stays absent for an EMSC query that supplies no USGS-only filter', async () => {
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeSearch.errors });
     const input = earthquakeSearch.input.parse({ source: 'emsc', min_magnitude: 4.5 });
     await earthquakeSearch.handler(input, ctx);
 
@@ -665,12 +665,12 @@ describe('earthquakeSearch — upstream 4xx reason reaches the caller (issue #26
 
   const usgsBody = `Error 400: Bad Request
 
-Bad starttime value "not-a-date". Valid values are ISO-8601 timestamps.
+Bad starttime value "2026-13-45". Valid values are ISO-8601 timestamps.
 
 Usage details are available from https://earthquake.usgs.gov/fdsnws/event/1
 
 Request:
-/fdsnws/event/1/query?format=geojson&amp;starttime=not-a-date
+/fdsnws/event/1/query?format=geojson&amp;starttime=2026-13-45
 
 Service version:
 2.7.0
@@ -679,7 +679,7 @@ Service version:
   const emscBody = `Error 400: Request was not properly specified: start or starttime used a bad format
 
 Request:
-http://ws2/query?format=json&start=not-a-date
+http://ws2/query?format=json&start=2026-13-45
 
 Service version: v 2.2
 `;
@@ -699,10 +699,12 @@ Service version: v 2.2
     mockUsgsSearch.mockRejectedValue(upstreamError(400, usgsBody));
 
     const ctx = createMockContext({ errors: earthquakeSearch.errors });
-    const input = earthquakeSearch.input.parse({ start_time: 'not-a-date', limit: 5 });
-    const err = (await earthquakeSearch.handler(input, ctx).catch((e) => e)) as McpError;
+    const input = earthquakeSearch.input.parse({ start_time: '2026-13-45', limit: 5 });
+    const err = (await Promise.resolve(earthquakeSearch.handler(input, ctx)).catch(
+      (e) => e,
+    )) as McpError;
 
-    expect(err.message).toContain('Bad starttime value "not-a-date"');
+    expect(err.message).toContain('Bad starttime value "2026-13-45"');
     expect(err.message).toContain('ISO-8601');
     expect(err.message).toContain('USGS');
   });
@@ -711,8 +713,10 @@ Service version: v 2.2
     mockUsgsSearch.mockRejectedValue(upstreamError(400, usgsBody));
 
     const ctx = createMockContext({ errors: earthquakeSearch.errors });
-    const input = earthquakeSearch.input.parse({ start_time: 'not-a-date' });
-    const err = (await earthquakeSearch.handler(input, ctx).catch((e) => e)) as McpError;
+    const input = earthquakeSearch.input.parse({ start_time: '2026-13-45' });
+    const err = (await Promise.resolve(earthquakeSearch.handler(input, ctx)).catch(
+      (e) => e,
+    )) as McpError;
 
     expect(err.message).not.toContain('Usage details');
     expect(err.message).not.toContain('Service version');
@@ -723,7 +727,7 @@ Service version: v 2.2
     mockUsgsSearch.mockRejectedValue(upstreamError(400, usgsBody));
 
     const ctx = createMockContext({ errors: earthquakeSearch.errors });
-    const input = earthquakeSearch.input.parse({ start_time: 'not-a-date' });
+    const input = earthquakeSearch.input.parse({ start_time: '2026-13-45' });
 
     await expect(earthquakeSearch.handler(input, ctx)).rejects.toMatchObject({
       code: JsonRpcErrorCode.InvalidParams,
@@ -739,8 +743,10 @@ Service version: v 2.2
     mockEmscSearch.mockRejectedValue(upstreamError(400, emscBody));
 
     const ctx = createMockContext({ errors: earthquakeSearch.errors });
-    const input = earthquakeSearch.input.parse({ source: 'emsc', start_time: 'not-a-date' });
-    const err = (await earthquakeSearch.handler(input, ctx).catch((e) => e)) as McpError;
+    const input = earthquakeSearch.input.parse({ source: 'emsc', start_time: '2026-13-45' });
+    const err = (await Promise.resolve(earthquakeSearch.handler(input, ctx)).catch(
+      (e) => e,
+    )) as McpError;
 
     expect(err.message).toContain('EMSC rejected the query');
     expect(err.message).toContain('start or starttime used a bad format');

@@ -9,6 +9,17 @@ import { earthquakeFeedResource } from '@/mcp-server/resources/definitions/earth
 import type { EarthquakeEventOutput } from '@/mcp-server/tools/schemas.js';
 import * as usgsModule from '@/services/usgs/usgs-service.js';
 
+/**
+ * `list` receives the SDK's request-handler extra, not a Context. This listing
+ * ignores it, so a minimal literal is enough.
+ */
+const listExtra = {
+  signal: new AbortController().signal,
+  requestId: 'test',
+  sendNotification: () => Promise.resolve(),
+  sendRequest: () => Promise.resolve({} as never),
+};
+
 const baseEvent: EarthquakeEventOutput = {
   id: 'us7654321',
   title: 'M 3.0 - Northern Europe',
@@ -43,7 +54,7 @@ describe('earthquakeFeedResource — handler service error propagation', () => {
     mockGetFeed.mockRejectedValue(new Error('CDN unavailable'));
 
     const ctx = createMockContext();
-    const params = earthquakeFeedResource.params.parse({
+    const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: '2.5',
       time_window: 'day',
     });
@@ -58,7 +69,7 @@ describe('earthquakeFeedResource — handler service error propagation', () => {
     );
 
     const ctx = createMockContext();
-    const params = earthquakeFeedResource.params.parse({
+    const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: '4.5',
       time_window: 'week',
     });
@@ -88,7 +99,7 @@ describe('earthquakeFeedResource — field projection', () => {
     });
 
     const ctx = createMockContext();
-    const params = earthquakeFeedResource.params.parse({
+    const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: '2.5',
       time_window: 'day',
     });
@@ -122,7 +133,7 @@ describe('earthquakeFeedResource — field projection', () => {
     });
 
     const ctx = createMockContext();
-    const params = earthquakeFeedResource.params.parse({
+    const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: '1.0',
       time_window: 'day',
     });
@@ -133,43 +144,43 @@ describe('earthquakeFeedResource — field projection', () => {
 });
 
 describe('earthquakeFeedResource — list', () => {
-  it('each listed resource URI matches the expected pattern', () => {
-    const listing = earthquakeFeedResource.list!();
+  it('each listed resource URI matches the expected pattern', async () => {
+    const listing = await earthquakeFeedResource.list!(listExtra);
     for (const r of listing.resources) {
       // earthquake://feed/<tier>/<window>
       expect(r.uri).toMatch(/^earthquake:\/\/feed\/[^/]+\/[^/]+$/);
     }
   });
 
-  it('each listed resource has a non-empty name', () => {
-    const listing = earthquakeFeedResource.list!();
+  it('each listed resource has a non-empty name', async () => {
+    const listing = await earthquakeFeedResource.list!(listExtra);
     for (const r of listing.resources) {
       expect(r.name.length).toBeGreaterThan(0);
     }
   });
 
-  it('each listed resource has a description', () => {
-    const listing = earthquakeFeedResource.list!();
+  it('each listed resource has a description', async () => {
+    const listing = await earthquakeFeedResource.list!(listExtra);
     for (const r of listing.resources) {
       expect(typeof r.description).toBe('string');
       expect(r.description?.length).toBeGreaterThan(0);
     }
   });
 
-  it('each listed resource specifies application/json mimeType', () => {
-    const listing = earthquakeFeedResource.list!();
+  it('each listed resource specifies application/json mimeType', async () => {
+    const listing = await earthquakeFeedResource.list!(listExtra);
     for (const r of listing.resources) {
       expect(r.mimeType).toBe('application/json');
     }
   });
 
-  it('listing contains exactly 20 entries (5 tiers × 4 windows)', () => {
-    const listing = earthquakeFeedResource.list!();
+  it('listing contains exactly 20 entries (5 tiers × 4 windows)', async () => {
+    const listing = await earthquakeFeedResource.list!(listExtra);
     expect(listing.resources).toHaveLength(20);
   });
 
-  it('all tier values appear in the listing URIs', () => {
-    const listing = earthquakeFeedResource.list!();
+  it('all tier values appear in the listing URIs', async () => {
+    const listing = await earthquakeFeedResource.list!(listExtra);
     const uris = listing.resources.map((r) => r.uri);
     for (const tier of ['all', '1.0', '2.5', '4.5', 'significant']) {
       const matches = uris.filter((u) => u.includes(`/feed/${tier}/`));
@@ -178,8 +189,8 @@ describe('earthquakeFeedResource — list', () => {
     }
   });
 
-  it('all time window values appear in the listing URIs', () => {
-    const listing = earthquakeFeedResource.list!();
+  it('all time window values appear in the listing URIs', async () => {
+    const listing = await earthquakeFeedResource.list!(listExtra);
     const uris = listing.resources.map((r) => r.uri);
     for (const window of ['hour', 'day', 'week', 'month']) {
       const matches = uris.filter((u) => u.endsWith(`/${window}`));
@@ -192,7 +203,7 @@ describe('earthquakeFeedResource — list', () => {
 describe('earthquakeFeedResource — params validation', () => {
   it('params schema accepts any string (validation is in handler)', () => {
     // The resource uses z.string() for both params — validation happens at handler time
-    const params = earthquakeFeedResource.params.parse({
+    const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: 'unknown-tier',
       time_window: 'unknown-window',
     });
@@ -203,7 +214,7 @@ describe('earthquakeFeedResource — params validation', () => {
   it('handler throws validationError for invalid magnitude_tier', async () => {
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
     const ctx = createMockContext();
-    const params = earthquakeFeedResource.params.parse({
+    const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: '99.9',
       time_window: 'day',
     });
@@ -216,7 +227,7 @@ describe('earthquakeFeedResource — params validation', () => {
   it('handler throws validationError for invalid time_window', async () => {
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
     const ctx = createMockContext();
-    const params = earthquakeFeedResource.params.parse({
+    const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: '2.5',
       time_window: 'century',
     });
@@ -229,7 +240,7 @@ describe('earthquakeFeedResource — params validation', () => {
   it('handler throws validationError for injection-attempt tier', async () => {
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
     const ctx = createMockContext();
-    const params = earthquakeFeedResource.params.parse({
+    const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: "'; DROP TABLE events; --",
       time_window: 'day',
     });
@@ -242,7 +253,7 @@ describe('earthquakeFeedResource — params validation', () => {
   it('handler throws validationError for injection-attempt window', async () => {
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
     const ctx = createMockContext();
-    const params = earthquakeFeedResource.params.parse({
+    const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: '2.5',
       time_window: '../../../etc/passwd',
     });

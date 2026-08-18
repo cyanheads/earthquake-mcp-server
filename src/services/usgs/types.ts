@@ -263,9 +263,17 @@ export interface EarthquakeQueryParams {
   limit?: number;
   longitude?: number;
   maxDepthKm?: number;
+  /** FDSN `maxlatitude` — northern edge of a bounding box, in degrees. */
+  maxLatitude?: number;
+  /** FDSN `maxlongitude` — eastern edge of a bounding box, in degrees. Extends past ±180 for an antimeridian box. */
+  maxLongitude?: number;
   maxMagnitude?: number;
   minDepthKm?: number;
   minFelt?: number;
+  /** FDSN `minlatitude` — southern edge of a bounding box, in degrees. */
+  minLatitude?: number;
+  /** FDSN `minlongitude` — western edge of a bounding box, in degrees. Extends past ±180 for an antimeridian box. */
+  minLongitude?: number;
   minMagnitude?: number;
   minSignificance?: number;
   /** 1-based index of the first event to return. Both FDSN upstreams reject 0. */

@@ -160,7 +160,7 @@ describe('tool contracts — an upstream timeout lands on a declared reason', ()
     } as unknown as usgsModule.UsgsService);
 
     const ctx = createMockContext({ errors: earthquakeEventResource.errors });
-    const params = earthquakeEventResource.params.parse({ event_id: 'us6000sznj' });
+    const params = earthquakeEventResource.params!.parse({ event_id: 'us6000sznj' });
 
     await expect(earthquakeEventResource.handler(params, ctx)).rejects.toMatchObject({
       code: JsonRpcErrorCode.Timeout,

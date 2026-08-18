@@ -33,7 +33,9 @@ function makeFeature(
     properties: {
       unid,
       mag,
-      magtype: mag === null ? undefined : 'ml',
+      // A magnitude-less EMSC record omits magtype entirely rather than
+      // publishing an empty one, so the fixture omits the key too.
+      ...(mag === null ? {} : { magtype: 'ml' }),
       flynn_region: 'WESTERN TURKEY',
       time: '2026-06-01T00:00:00.000Z',
       lastupdate: '2026-06-01T00:10:00.000Z',
@@ -305,13 +307,14 @@ describe('EmscService — event type normalization (issue #24)', () => {
 
   it('never sends eventtype upstream — EMSC answers an unknown parameter with HTTP 400', async () => {
     // A Response body is single-use, so each call gets its own instance.
-    const fetchMock = vi.fn(() =>
-      Promise.resolve(
-        new Response(JSON.stringify({ type: 'FeatureCollection', features: [], count: 0 }), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      ),
+    const fetchMock = vi.fn(
+      (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) =>
+        Promise.resolve(
+          new Response(JSON.stringify({ type: 'FeatureCollection', features: [], count: 0 }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+        ),
     );
     vi.stubGlobal('fetch', fetchMock);
 
@@ -326,6 +329,78 @@ describe('EmscService — event type normalization (issue #24)', () => {
       expect(String(call[0])).not.toContain('eventtype');
       expect(String(call[0])).not.toContain('evtype');
     }
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('EmscService — bounding-box forwarding (issue #37)', () => {
+  it('forwards all four box parameters in degrees under the same FDSN names as USGS', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([makeFeature('20260601_0001', 4)]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.searchEvents(
+      { limit: 5, minLatitude: 35, maxLatitude: 42, minLongitude: 25, maxLongitude: 45 },
+      createMockContext() as Context,
+    );
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.searchParams.get('minlatitude')).toBe('35');
+    expect(url.searchParams.get('maxlatitude')).toBe('42');
+    expect(url.searchParams.get('minlongitude')).toBe('25');
+    expect(url.searchParams.get('maxlongitude')).toBe('45');
+    // radius_km converts to degrees for EMSC; the box does not.
+    expect(url.searchParams.has('maxradius')).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
+  it('forwards a literal 0 edge and an extended-range antimeridian box', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([makeFeature('20260601_0001', 4)]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.countEvents(
+      { minLatitude: 0, minLongitude: 170, maxLongitude: 190 },
+      createMockContext() as Context,
+    );
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.searchParams.get('minlatitude')).toBe('0');
+    expect(url.searchParams.get('minlongitude')).toBe('170');
+    expect(url.searchParams.get('maxlongitude')).toBe('190');
+    vi.unstubAllGlobals();
+  });
+
+  it('still sends no alert-level parameter of either spelling (issue #31)', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([makeFeature('20260601_0001', 4)]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.searchEvents(
+      { limit: 5, alertLevel: 'green', minLatitude: 35 },
+      createMockContext() as Context,
+    );
+
+    const url = String(fetchMock.mock.calls[0]?.[0]);
+    expect(url).not.toContain('minalertlevel');
+    expect(/[?&]alertlevel=/.test(url)).toBe(false);
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('EmscService — no date filter is dropped by a truthy check (issue #29)', () => {
+  it.each([
+    ['startTime', 'starttime'],
+    ['endTime', 'endtime'],
+  ])('sends an empty %s rather than silently dropping it', async (field, param) => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([makeFeature('20260601_0001', 4)]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const service = makeService();
+    await service.searchEvents({ limit: 5, [field]: '' }, createMockContext() as Context);
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(url.searchParams.has(param)).toBe(true);
     vi.unstubAllGlobals();
   });
 });

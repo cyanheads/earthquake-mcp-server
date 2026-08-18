@@ -36,11 +36,11 @@ const contractRecovery = (reason: string) =>
 
 describe('earthquakeEventResource — params schema', () => {
   it('requires event_id', () => {
-    expect(() => earthquakeEventResource.params.parse({})).toThrow();
+    expect(() => earthquakeEventResource.params!.parse({})).toThrow();
   });
 
   it('accepts a valid event_id string', () => {
-    const params = earthquakeEventResource.params.parse({ event_id: 'ci38457511' });
+    const params = earthquakeEventResource.params!.parse({ event_id: 'ci38457511' });
     expect(params.event_id).toBe('ci38457511');
   });
 });
@@ -58,7 +58,7 @@ describe('earthquakeEventResource — handler behavior', () => {
   it('passes event_id directly to the USGS service', async () => {
     mockGetEvent.mockResolvedValue({ event: deletedEvent });
     const ctx = createMockContext({ errors: earthquakeEventResource.errors });
-    const params = earthquakeEventResource.params.parse({ event_id: 'us9999999' });
+    const params = earthquakeEventResource.params!.parse({ event_id: 'us9999999' });
     await earthquakeEventResource.handler(params, ctx);
     expect(mockGetEvent).toHaveBeenCalledWith('us9999999', ctx);
   });
@@ -66,7 +66,7 @@ describe('earthquakeEventResource — handler behavior', () => {
   it('returns a deleted event without crashing', async () => {
     mockGetEvent.mockResolvedValue({ event: deletedEvent });
     const ctx = createMockContext({ errors: earthquakeEventResource.errors });
-    const params = earthquakeEventResource.params.parse({ event_id: 'us9999999' });
+    const params = earthquakeEventResource.params!.parse({ event_id: 'us9999999' });
     const result = await earthquakeEventResource.handler(params, ctx);
     expect(result.event.status).toBe('deleted');
   });
@@ -76,7 +76,7 @@ describe('earthquakeEventResource — handler behavior', () => {
       new McpError(JsonRpcErrorCode.NotFound, 'No event for ID "xx"', { eventId: 'xx' }),
     );
     const ctx = createMockContext({ errors: earthquakeEventResource.errors });
-    const params = earthquakeEventResource.params.parse({ event_id: 'xx' });
+    const params = earthquakeEventResource.params!.parse({ event_id: 'xx' });
     await expect(earthquakeEventResource.handler(params, ctx)).rejects.toMatchObject({
       code: JsonRpcErrorCode.NotFound,
       data: { reason: 'not_found', recovery: { hint: contractRecovery('not_found') } },
@@ -91,10 +91,10 @@ describe('earthquakeEventResource — handler behavior', () => {
     async (reason, code, message) => {
       mockGetEvent.mockRejectedValue(new McpError(code, message, {}));
       const ctx = createMockContext({ errors: earthquakeEventResource.errors });
-      const params = earthquakeEventResource.params.parse({ event_id: 'ci38457511' });
-      const err = (await earthquakeEventResource
-        .handler(params, ctx)
-        .catch((e: unknown) => e)) as McpError;
+      const params = earthquakeEventResource.params!.parse({ event_id: 'ci38457511' });
+      const err = (await Promise.resolve(earthquakeEventResource.handler(params, ctx)).catch(
+        (e: unknown) => e,
+      )) as McpError;
 
       expect(err.code).toBe(code);
       expect((err.data as { reason?: string }).reason).toBe(reason);
@@ -109,8 +109,10 @@ describe('earthquakeEventResource — handler behavior', () => {
     const originalErr = new McpError(JsonRpcErrorCode.RateLimited, 'Slow down', {});
     mockGetEvent.mockRejectedValue(originalErr);
     const ctx = createMockContext({ errors: earthquakeEventResource.errors });
-    const params = earthquakeEventResource.params.parse({ event_id: 'ci38457511' });
-    const err = await earthquakeEventResource.handler(params, ctx).catch((e: unknown) => e);
+    const params = earthquakeEventResource.params!.parse({ event_id: 'ci38457511' });
+    const err = await Promise.resolve(earthquakeEventResource.handler(params, ctx)).catch(
+      (e: unknown) => e,
+    );
     expect(err).toBe(originalErr);
   });
 });
@@ -132,8 +134,10 @@ describe('earthquakeEventResource — security', () => {
     );
 
     const ctx = createMockContext({ errors: earthquakeEventResource.errors });
-    const params = earthquakeEventResource.params.parse({ event_id: traversalId });
-    const err = await earthquakeEventResource.handler(params, ctx).catch((e: unknown) => e);
+    const params = earthquakeEventResource.params!.parse({ event_id: traversalId });
+    const err = await Promise.resolve(earthquakeEventResource.handler(params, ctx)).catch(
+      (e: unknown) => e,
+    );
 
     // Should throw a NotFound error (the ID is echoed in the message, which is fine —
     // the key assertion is that the handler throws NotFound rather than attempting a
@@ -152,7 +156,7 @@ describe('earthquakeEventResource — security', () => {
     mockGetEvent.mockRejectedValue(new McpError(JsonRpcErrorCode.NotFound, 'No event found', {}));
 
     const ctx = createMockContext({ errors: earthquakeEventResource.errors });
-    const params = earthquakeEventResource.params.parse({ event_id: longId });
+    const params = earthquakeEventResource.params!.parse({ event_id: longId });
     // Must not crash (may throw NotFound, which is expected)
     await expect(earthquakeEventResource.handler(params, ctx)).rejects.toBeDefined();
   });

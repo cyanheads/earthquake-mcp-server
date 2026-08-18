@@ -73,7 +73,7 @@ describe('earthquakeEventResource', () => {
     mockGetEvent.mockResolvedValue({ event: sampleEvent });
 
     const ctx = createMockContext({ errors: earthquakeEventResource.errors });
-    const params = earthquakeEventResource.params.parse({ event_id: 'ci38457511' });
+    const params = earthquakeEventResource.params!.parse({ event_id: 'ci38457511' });
     const result = await earthquakeEventResource.handler(params, ctx);
 
     expect(result.event.id).toBe('ci38457511');
@@ -87,7 +87,7 @@ describe('earthquakeEventResource', () => {
     mockGetEvent.mockResolvedValue({ event: sampleEvent, detail: sampleDetail });
 
     const ctx = createMockContext({ errors: earthquakeEventResource.errors });
-    const params = earthquakeEventResource.params.parse({ event_id: 'ci38457511' });
+    const params = earthquakeEventResource.params!.parse({ event_id: 'ci38457511' });
     const result = await earthquakeEventResource.handler(params, ctx);
 
     expect(result.detail).toEqual(sampleDetail);
@@ -97,7 +97,7 @@ describe('earthquakeEventResource', () => {
     mockGetEvent.mockResolvedValue({ event: sparseEvent });
 
     const ctx = createMockContext({ errors: earthquakeEventResource.errors });
-    const params = earthquakeEventResource.params.parse({ event_id: 'nc12345678' });
+    const params = earthquakeEventResource.params!.parse({ event_id: 'nc12345678' });
     const result = await earthquakeEventResource.handler(params, ctx);
 
     expect(result).not.toHaveProperty('detail');
@@ -111,7 +111,7 @@ describe('earthquakeEventResource', () => {
     );
 
     const ctx = createMockContext({ errors: earthquakeEventResource.errors });
-    const params = earthquakeEventResource.params.parse({ event_id: 'bad-id' });
+    const params = earthquakeEventResource.params!.parse({ event_id: 'bad-id' });
 
     await expect(earthquakeEventResource.handler(params, ctx)).rejects.toThrow();
   });
@@ -120,7 +120,7 @@ describe('earthquakeEventResource', () => {
     mockGetEvent.mockResolvedValue({ event: sparseEvent });
 
     const ctx = createMockContext({ errors: earthquakeEventResource.errors });
-    const params = earthquakeEventResource.params.parse({ event_id: 'nc12345678' });
+    const params = earthquakeEventResource.params!.parse({ event_id: 'nc12345678' });
     const result = await earthquakeEventResource.handler(params, ctx);
 
     expect(result.event.id).toBe('nc12345678');
@@ -133,7 +133,7 @@ describe('earthquakeEventResource', () => {
     mockGetEvent.mockRejectedValue(new Error('Network failure'));
 
     const ctx = createMockContext({ errors: earthquakeEventResource.errors });
-    const params = earthquakeEventResource.params.parse({ event_id: 'us6000sznj' });
+    const params = earthquakeEventResource.params!.parse({ event_id: 'us6000sznj' });
 
     await expect(earthquakeEventResource.handler(params, ctx)).rejects.toThrow('Network failure');
   });

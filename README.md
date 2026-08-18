@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.3.1-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/earthquake-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.29.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/earthquake-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/earthquake-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^6.0.3-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.3.2-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/earthquake-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^1.30.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/earthquake-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/earthquake-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.3.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -61,6 +61,7 @@ Search earthquakes by time range, magnitude, depth, location radius, PAGER alert
 - USGS-specific filters: PAGER alert level (`green`/`yellow`/`orange`/`red`), DYFI felt reports count, significance score, event type
 - Every event carries its upstream `event_type` — USGS spells it out (`earthquake`, `quarry blast`, `explosion`, `ice quake`), EMSC publishes a code (`ke` known earthquake, `ue` unknown event) — and the `event_type` filter narrows to one of them on USGS
 - Location-based queries: provide `latitude`, `longitude`, and `radius_km` together
+- Rectangular study areas: `min_latitude`, `max_latitude`, `min_longitude`, `max_longitude`, each independently optional and forwarded to both sources; combining a box with the radius circle intersects the two. Longitude accepts up to ±360 so a box can cross the antimeridian
 - Sort by time (newest first) or magnitude (largest first), ascending or descending
 - One call returns at most 20,000 events; page beyond that with `offset`, forwarded straight to the upstream FDSN `offset` parameter on both sources
 - `offset` counts from 1, matching both upstream APIs — a capped result carries `totalCount` and the `nextOffset` to pass on the following call
@@ -74,7 +75,7 @@ Search earthquakes by time range, magnitude, depth, location radius, PAGER alert
 Count earthquakes matching filters without fetching full records.
 
 - Lightweight alternative to `earthquake_search` for statistical queries ("how many M5+ events in 2025?")
-- Same filter surface as `earthquake_search`: time, magnitude, depth, location radius, PAGER, DYFI, significance, event type
+- Same filter surface as `earthquake_search`: time, magnitude, depth, location radius, bounding box, PAGER, DYFI, significance, event type
 - A radius over a mining region counts quarry blasts alongside earthquakes — pass `event_type="earthquake"` on USGS to exclude them
 - Returns `exceeds_limit` flag when count exceeds 20,000 — signals a full search needs paging
 - Echoes the effective query back as `queryEcho`, including the resolved time window — omitting `start_time` counts only the last 30 days

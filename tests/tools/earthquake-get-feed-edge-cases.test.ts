@@ -82,7 +82,7 @@ describe('earthquakeGetFeed — all magnitude/window combinations', () => {
       feedUrl: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson',
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
     let callCount = 0;
 
     for (const tier of tiers) {
@@ -123,7 +123,7 @@ describe('earthquakeGetFeed — security', () => {
       feedUrl: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson',
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
     const input = earthquakeGetFeed.input.parse({ magnitude_tier: '2.5', time_window: 'day' });
     const result = await earthquakeGetFeed.handler(input, ctx);
 
