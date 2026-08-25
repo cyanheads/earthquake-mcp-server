@@ -1,6 +1,6 @@
 # earthquake-mcp-server - Directory Structure
 
-Generated on: 2026-08-18 12:42:06
+Generated on: 2026-08-25 08:19:47
 
 ```text
 earthquake-mcp-server/
@@ -165,9 +165,11 @@ earthquake-mcp-server/
 │   │   ├── earthquake-feed-edge-cases.resource.test.ts
 │   │   └── earthquake-feed.resource.test.ts
 │   ├── services/
+│   │   ├── cancellation.test.ts
 │   │   ├── emsc-service.test.ts
 │   │   └── usgs-service.test.ts
 │   └── tools/
+│       ├── advertised-wire-contract.test.ts
 │       ├── earthquake-count-edge-cases.test.ts
 │       ├── earthquake-count.tool.test.ts
 │       ├── earthquake-get-event-edge-cases.test.ts

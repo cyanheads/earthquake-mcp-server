@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.4](changelog/0.3.x/0.3.4.md) — 2026-08-25
+
+Adopt mcp-ts-core 0.12.3 and MCP SDK v2: strict tool inputs, JSON Schema 2020-12, protocol revision 2026-07-28 with cache hints, and HTTP session mode settled on stateless.
+
 ## [0.3.3](changelog/0.3.x/0.3.3.md) — 2026-08-18
 
 Correct max_pga's unit label, normalize EMSC event classification to USGS's vocabulary, and disclose failed count lookups in earthquake_search.
