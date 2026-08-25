@@ -34,19 +34,13 @@ function epochMsToIso(ms: number | null | undefined): string {
 
 /**
  * Build an operation-labelled child of the handler context for withRetry/fetchWithTimeout.
- * Both accept the handler `Context` directly, but `fetchWithTimeout` reads
- * `context.operation` for its log and error labels and `Context` carries none —
- * so the label is what this helper exists for, not the field slice.
+ * `Context extends RequestContext`, so passing `ctx` as the parent inherits every
+ * correlation field. The label is what the child adds: `ctx.operation` names the calling
+ * tool, while `fetchWithTimeout` reports `context.operation` on a timeout — so the error
+ * names the upstream call that hung, not whichever tool reached it.
  */
 function makeReqCtx(operation: string, ctx: Context) {
-  return requestContextService.createRequestContext({
-    operation,
-    parentContext: {
-      requestId: ctx.requestId,
-      traceId: ctx.traceId,
-      tenantId: ctx.tenantId,
-    },
-  });
+  return requestContextService.createRequestContext({ operation, parentContext: ctx });
 }
 
 /** Normalize a USGS GeoJSON feature to the shared EarthquakeEvent domain type. */

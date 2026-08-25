@@ -31,6 +31,10 @@ export const earthquakeFeedResource = resource('earthquake://feed/{magnitude_tie
     '("all" or "1.0" with "week" or "month") can run to thousands of events. ' +
     'Use the earthquake_get_feed tool for those: it serves the same data a bounded page at a time.',
   mimeType: 'application/json',
+  // USGS regenerates these feeds about once a minute and serves them CDN-cached,
+  // so a caller re-reading inside that window cannot get anything a fresh fetch
+  // would not also return. Public: the payload is the same for every caller.
+  cacheHint: { ttlMs: 60_000, cacheScope: 'public' },
 
   params: z.object({
     magnitude_tier: z.string().describe('Magnitude tier: all, 1.0, 2.5, 4.5, or significant.'),

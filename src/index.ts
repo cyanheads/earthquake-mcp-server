@@ -31,6 +31,17 @@ await createApp({
     // regardless of MCP_AUTH_MODE setting (0.9.13: requireAuth defaults to true for jwt/oauth)
     requireAuth: false,
   },
+  // 2026-07-28 cache hints. The inventory surfaces are fixed at build time — no
+  // definition declares an auth scope, so every caller sees the same list and it
+  // cannot change without a redeploy, which is what makes a long public TTL correct.
+  // `resources/read` is deliberately absent: it stays on the SDK's conservative
+  // default and each resource opts in through its own `cacheHint`.
+  cacheHints: {
+    'tools/list': { ttlMs: 3_600_000, cacheScope: 'public' },
+    'resources/list': { ttlMs: 3_600_000, cacheScope: 'public' },
+    'resources/templates/list': { ttlMs: 3_600_000, cacheScope: 'public' },
+    'server/discover': { ttlMs: 3_600_000, cacheScope: 'public' },
+  },
   setup(core) {
     const config = getServerConfig();
     initUsgsService(core.config, core.storage, config.usgsBaseUrl, config.requestTimeoutMs);

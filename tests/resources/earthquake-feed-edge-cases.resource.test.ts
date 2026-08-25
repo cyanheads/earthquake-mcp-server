@@ -3,6 +3,7 @@
  * @module tests/resources/earthquake-feed-edge-cases.resource.test
  */
 
+import type { ListExtra } from '@cyanheads/mcp-ts-core/resources';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { earthquakeFeedResource } from '@/mcp-server/resources/definitions/earthquake-feed.resource.js';
@@ -10,15 +11,16 @@ import type { EarthquakeEventOutput } from '@/mcp-server/tools/schemas.js';
 import * as usgsModule from '@/services/usgs/usgs-service.js';
 
 /**
- * `list` receives the SDK's request-handler extra, not a Context. This listing
- * ignores it, so a minimal literal is enough.
+ * `list` receives the SDK's `ServerContext`, not a handler `Context`. This
+ * listing ignores it, so a minimal stub stands in for the full shape rather
+ * than reconstructing `mcpReq` and its request machinery.
  */
 const listExtra = {
   signal: new AbortController().signal,
   requestId: 'test',
   sendNotification: () => Promise.resolve(),
   sendRequest: () => Promise.resolve({} as never),
-};
+} as unknown as ListExtra;
 
 const baseEvent: EarthquakeEventOutput = {
   id: 'us7654321',

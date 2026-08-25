@@ -5,7 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { paginateArray, requestContextService } from '@cyanheads/mcp-ts-core/utils';
+import { paginateArray } from '@cyanheads/mcp-ts-core/utils';
 import { EarthquakeEventSchema, formatEvent } from '@/mcp-server/tools/schemas.js';
 import { getUsgsService, type UsgsService } from '@/services/usgs/usgs-service.js';
 
@@ -167,21 +167,15 @@ export const earthquakeGetFeed = tool('earthquake_get_feed', {
 
     // USGS serves the feed as one precomputed document with no upstream paging
     // parameter, so a page is a slice of the array already in memory — the shape
-    // paginateArray's opaque cursor is built for.
+    // paginateArray's opaque cursor is built for. `Context extends RequestContext`,
+    // so the handler ctx goes in directly: a cursor rejection can only come from this
+    // call site, and a separate label would name nothing `ctx.operation` does not.
     const page = paginateArray(
       result.events,
       input.cursor,
       input.limit ?? DEFAULT_PAGE_SIZE,
       MAX_PAGE_SIZE,
-      requestContextService.createRequestContext({
-        operation: 'earthquakeGetFeed.paginate',
-        parentContext: {
-          requestId: ctx.requestId,
-          traceId: ctx.traceId,
-          tenantId: ctx.tenantId,
-          timestamp: new Date().toISOString(),
-        },
-      }),
+      ctx,
     );
 
     const totalCount = result.events.length;
