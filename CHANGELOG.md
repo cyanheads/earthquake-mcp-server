@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.5](changelog/0.3.x/0.3.5.md) — 2026-09-13 · ⚠️ Breaking
+
+Adopt mcp-ts-core 0.13.0: an upstream 501 reaches the caller as non-retryable with a switch-source hint, an upstream 500 retries, argument rejections carry the structured error envelope, blank and unsubstituted ${…} env values read as unset, and the Bun engines floor rises to >=1.4.0.
+
 ## [0.3.4](changelog/0.3.x/0.3.4.md) — 2026-08-25
 
 Adopt mcp-ts-core 0.12.3 and MCP SDK v2: strict tool inputs, JSON Schema 2020-12, protocol revision 2026-07-28 with cache hints, and HTTP session mode settled on stateless.
