@@ -27,9 +27,11 @@
 
 ---
 
-## Tools
+## Overview
 
-4 tools for querying global earthquake data from USGS and EMSC:
+An MCP server over USGS ComCat and the EMSC SeismicPortal. Fetch real-time earthquake feeds, search and count seismic events by time, magnitude, depth, and location, and pull full analysis detail for a single event. Runs as a stdio process, a local Streamable HTTP server, or the public hosted endpoint above.
+
+### Tools
 
 | Tool | Description |
 |:---|:---|
@@ -38,55 +40,46 @@
 | `earthquake_count` | Count earthquakes matching filters without fetching full records |
 | `earthquake_get_event` | Fetch complete detail for a specific earthquake by USGS event ID |
 
-### `earthquake_get_feed`
+### Resources
 
-Fetch a USGS pre-computed real-time earthquake feed by magnitude tier and time window.
+| Resource | Description |
+|:---|:---|
+| `earthquake://feed/{magnitude_tier}/{time_window}` | USGS real-time earthquake feed as injectable context — returns the whole feed, so use the `earthquake_get_feed` tool for the broad tiers |
+| `earthquake://event/{event_id}` | Full USGS earthquake event detail by ID as injectable context, including the same `detail` product projection as `earthquake_get_event` |
 
-- CDN-cached by USGS — faster and more available than the FDSN query API
-- Five magnitude tiers: `all` (microseisms), `1.0`, `2.5`, `4.5`, and `significant` (USGS-curated by magnitude, felt reports, and PAGER impact)
-- Four time windows: `hour`, `day`, `week`, `month`
+## Capability reference
+
+### `earthquake_get_feed` <sub>tool</sub>
+
+- CDN-cached by USGS — faster and more available than the FDSN query API; best for real-time "what's happening now" queries (use `earthquake_search` for historical or filtered queries)
+- Five magnitude tiers: `all` (microseisms), `1.0`, `2.5`, `4.5`, `significant` (USGS-curated by magnitude, felt reports, and PAGER impact); four time windows: `hour`, `day`, `week`, `month`
 - Returns event list with counts and the source feed URL
-- Paged with an opaque `cursor`: `limit` bounds a page (default 100, max 1000), `totalCount` reports the whole feed, and `nextCursor` retrieves the rest — the broad tiers run past 10,000 events for `month`
-- The cursor is opaque because these feeds have no upstream paging parameter and USGS regenerates them about once a minute; a numeric offset across two calls would skip or repeat events
-- Best for real-time "what's happening now" queries; use `earthquake_search` for historical or filtered queries
+- Paged with an opaque `cursor`: `limit` bounds a page (default 100, max 1000), `totalCount` reports the whole feed, `nextCursor` retrieves the rest — the broad tiers run past 10,000 events for `month`
+- The cursor is opaque because these feeds have no upstream paging parameter and USGS regenerates them about once a minute — a numeric offset across two calls would skip or repeat events
 
 ---
 
-### `earthquake_search`
+### `earthquake_search` <sub>tool</sub>
 
-Search earthquakes by time range, magnitude, depth, location radius, PAGER alert level, or felt reports.
-
-- Dual-source: USGS (global, richer metadata) or EMSC (an independent global catalog from the European-Mediterranean Seismological Centre, for cross-verification anywhere)
-- Full FDSN ComCat query API parameters: time range, magnitude, depth, location radius
-- USGS-specific filters: PAGER alert level (`green`/`yellow`/`orange`/`red`), DYFI felt reports count, significance score, event type
-- Every event carries an `event_type` in one vocabulary whichever source served it — the QuakeML names USGS publishes (`earthquake`, `quarry blast`, `explosion`, `ice quake`); EMSC's two-character code is decoded to the same names, with how sure EMSC was kept beside it in `event_certainty` — and the `event_type` filter narrows to one of them on USGS
-- Location-based queries: provide `latitude`, `longitude`, and `radius_km` together
-- Rectangular study areas: `min_latitude`, `max_latitude`, `min_longitude`, `max_longitude`, each independently optional and forwarded to both sources; combining a box with the radius circle intersects the two. Longitude accepts up to ±360 so a box can cross the antimeridian
-- Sort by time (newest first) or magnitude (largest first), ascending or descending
-- One call returns at most 20,000 events; page beyond that with `offset`, forwarded straight to the upstream FDSN `offset` parameter on both sources
-- `offset` counts from 1, matching both upstream APIs — a capped result carries `totalCount` and the `nextOffset` to pass on the following call, and says so with `countUnavailable` when the follow-up count query failed rather than leaving the total silently absent
-- Use `earthquake_count` first to gauge result size
-- USGS-specific filters are not supported by EMSC — when `source=emsc` they are dropped and named in `ignoredFilters`, so an unconstrained result set is never mistaken for a filtered one
+- Dual-source: `usgs` (global, PAGER/DYFI/ShakeMap metadata) or `emsc` (independent European-Mediterranean catalog, for cross-verification anywhere); USGS-only filters (`alert_level`, `min_felt`, `min_significance`, `event_type`) are dropped and named in `ignoredFilters` when `source=emsc`
+- Location filters: `latitude` + `longitude` + `radius_km` together for a radius search, or independently-optional `min_latitude`/`max_latitude`/`min_longitude`/`max_longitude` for a bounding box (longitude up to ±360 to cross the antimeridian); combining both intersects the two
+- Every event carries `event_type` in one vocabulary regardless of source (USGS's QuakeML names, EMSC's code decoded to match), with `event_certainty` alongside for EMSC; the `event_type` filter narrows to one value on USGS
+- Sort by `time` or `magnitude`, ascending or descending; up to 20,000 events per call, paged with a 1-based `offset` forwarded straight to the upstream FDSN API
+- A capped result carries `totalCount` and `nextOffset` for the next page, or `countUnavailable` when the follow-up count query failed — use `earthquake_count` first to size the match set
 
 ---
 
-### `earthquake_count`
+### `earthquake_count` <sub>tool</sub>
 
-Count earthquakes matching filters without fetching full records.
-
-- Lightweight alternative to `earthquake_search` for statistical queries ("how many M5+ events in 2025?")
-- Same filter surface as `earthquake_search`: time, magnitude, depth, location radius, bounding box, PAGER, DYFI, significance, event type
+- Lightweight alternative to `earthquake_search` for statistical queries; same filter surface (time, magnitude, depth, location radius, bounding box, PAGER, DYFI, significance, event type)
+- `exceeds_limit` flags when the count exceeds 20,000, signaling a full search would need paging; USGS returns the `max_allowed` cap (20,000), EMSC's count endpoint does not (`max_allowed` is null)
+- Omitting `start_time` counts only the last 30 days — `queryEcho` reports the resolved window and every filter actually applied
 - A radius over a mining region counts quarry blasts alongside earthquakes — pass `event_type="earthquake"` on USGS to exclude them
-- Returns `exceeds_limit` flag when count exceeds 20,000 — signals a full search needs paging
-- Echoes the effective query back as `queryEcho`, including the resolved time window — omitting `start_time` counts only the last 30 days
-- USGS returns the `max_allowed` cap (20,000); EMSC count endpoint does not expose this field (`max_allowed` will be null)
-- USGS-specific filters are dropped and named in `ignoredFilters` when `source=emsc`, the same as on `earthquake_search`
+- USGS-specific filters are dropped and named in `ignoredFilters` when `source=emsc`, the same as `earthquake_search`
 
 ---
 
-### `earthquake_get_event`
-
-Fetch complete detail for a specific earthquake by USGS event ID.
+### `earthquake_get_event` <sub>tool</sub>
 
 - Returns the normalized event a search result already carries, plus `detail` — a projection of the analysis products only the single-event response holds
 - `detail` groups: PAGER alert and report link, ShakeMap peak MMI/PGA/PGV and intensity map, DYFI response count and max CDI, moment-tensor scalar moment and nodal planes, landslide and liquefaction alerts, origin quality (azimuthal gap, station count, location and depth uncertainty), finite-fault rupture length and width
@@ -94,40 +87,40 @@ Fetch complete detail for a specific earthquake by USGS event ID.
 - Event IDs appear in the `id` field of `earthquake_get_feed` and `earthquake_search` results (e.g. `us6000sznj`, `hv74966427`)
 - USGS-only — EMSC events have no per-event detail endpoint
 
-## Resources
+---
 
-| Type | URI pattern | Description |
-|:---|:---|:---|
-| Resource | `earthquake://feed/{magnitude_tier}/{time_window}` | USGS real-time earthquake feed as injectable context — returns the whole feed, so use the `earthquake_get_feed` tool for the broad tiers |
-| Resource | `earthquake://event/{event_id}` | Full USGS earthquake event detail by ID as injectable context, including the same `detail` product projection as `earthquake_get_event` |
+### `earthquake://feed/{magnitude_tier}/{time_window}` <sub>resource</sub>
+
+- Path params: `magnitude_tier` (`all` / `1.0` / `2.5` / `4.5` / `significant`) and `time_window` (`hour` / `day` / `week` / `month`)
+- Returns the whole feed in one read as `application/json`, no paging — the broad combinations (`all` or `1.0` with `week`/`month`) can run to thousands of events; use `earthquake_get_feed` for those
+- Cached 60 seconds, public scope — USGS regenerates the underlying feed about once a minute
+- Lists all 20 tier/window combinations as browsable resources
+
+---
+
+### `earthquake://event/{event_id}` <sub>resource</sub>
+
+- `event_id` is a USGS event ID from an `earthquake_get_feed` or `earthquake_search` result
+- Returns the same normalized event plus the `detail` product projection (PAGER, ShakeMap, DYFI, moment tensor, ground-failure alerts, origin quality, finite-fault), omitted when USGS produced none
+- Typed `not_found`, `source_unavailable`, and `source_timeout` errors — the same contract as `earthquake_get_event`
 
 ## Features
 
-Built on [`@cyanheads/mcp-ts-core`](https://github.com/cyanheads/mcp-ts-core):
+Built on [`@cyanheads/mcp-ts-core`](https://github.com/cyanheads/mcp-ts-core): stdio and Streamable HTTP transports, pluggable auth (`none` / `jwt` / `oauth`), swappable storage (`in-memory`, `filesystem`, `Supabase`, `Cloudflare KV/R2/D1`), structured logging with optional OpenTelemetry tracing.
 
-- Declarative tool definitions — single file per tool, framework handles registration and validation
-- Unified error handling across all tools
-- Pluggable auth (`none`, `jwt`, `oauth`)
-- Swappable storage backends: `in-memory`, `filesystem`, `Supabase`, `Cloudflare KV/R2/D1`
-- Structured logging with optional OpenTelemetry tracing
-- Runs locally over stdio or Streamable HTTP, with a Docker image for hosting
+USGS/EMSC-specific:
 
-Earthquake-specific:
-
-- Two independent global data sources: USGS ComCat (full metadata) and EMSC SeismicPortal (an independent catalog from the European-Mediterranean Seismological Centre, with no PAGER/DYFI/ShakeMap metadata and station coverage densest around Europe and the Mediterranean)
-- USGS real-time GeoJSON feeds (CDN-cached, fast availability) plus FDSN event query API
-- EMSC FDSN-WS event and count endpoints
-- No API key required — both USGS and EMSC are fully public
+- Type-safe clients for the USGS FDSN/GeoJSON API and the EMSC FDSN-WS API, normalizing both into one shared earthquake domain schema
+- Automatic retry with backoff and per-request timeouts on every upstream call; detects USGS's rate-limited/CDN failure mode (HTML served instead of GeoJSON) and maps it to a typed service-unavailable error instead of parsing it as data
+- EMSC's two-character `evtype` code is decoded against the published event-type/certainty nomenclature into the same vocabulary USGS publishes, so `event_type` carries one meaning across both sources
+- No API key or rate-limit tier required — both USGS and EMSC are fully public, keyless APIs
 
 Agent-friendly output:
 
-- Source attribution on every response (`usgs` / `emsc`) so agents can reason about data provenance
-- `exceeds_limit` flag on count responses surfaces truncation risk before a full search
-- Fields a source does not publish come back `null`, never as a fabricated zero — `tsunami` and `status` are null on EMSC events, and the rendered text says "not published by source" rather than "no tsunami" or "reviewed"
-- `source_catalog` and `auth` carry provenance (which catalog and which authoritative agency produced a solution) so agents can weigh two sources against each other
-- USGS-only filters dropped for an EMSC query are named in `ignoredFilters` on both `earthquake_search` and `earthquake_count`
-- An upstream rejection surfaces the service's own explanation (the offending parameter and its accepted format) in the error message, not just a status code; when the service explains nothing, the error says so under its own reason rather than passing the raw upstream body through
-- `event_type` travels with every event, so a quarry blast or explosion is never silently read as an earthquake, and `event_certainty` keeps a suspected one from reading as confirmed
+- Provenance — `source: "usgs" | "emsc"` on every response, plus `source_catalog`/`auth` fields naming the catalog and authoritative agency, so agents can weigh two independent solutions against each other
+- Discriminated output contracts — `event_type` and `event_certainty` travel with every event so a quarry blast or a suspected explosion is never silently read as a confirmed earthquake; `exceeds_limit`, `countUnavailable`, and `truncated` flags let callers branch on data instead of parsing prose
+- Response shaping — fields a source does not publish come back `null`, never a fabricated zero (`tsunami`, `status`, and `mmi` are always null on EMSC events); USGS-only filters dropped for an EMSC query are named in `ignoredFilters` rather than silently ignored
+- Graceful degradation — an upstream rejection surfaces the service's own explanation (offending parameter, accepted format) in the error message instead of a bare status code, and a failed follow-up count degrades to `countUnavailable` rather than failing the whole search
 
 ## Getting started
 
@@ -275,6 +268,15 @@ Empty values and unsubstituted whole-value `${…}` placeholders use the default
   bun run devcheck  # Lints, formats, type-checks, and more
   bun run test      # Runs the test suite
   ```
+
+### Docker
+
+```sh
+docker build -t earthquake-mcp-server .
+docker run --rm -p 3010:3010 earthquake-mcp-server
+```
+
+The Dockerfile defaults to HTTP transport, stateless session mode, and logs to `/var/log/earthquake-mcp-server`. OpenTelemetry peer dependencies are installed by default — build with `--build-arg OTEL_ENABLED=false` to omit them.
 
 ## Project structure
 
