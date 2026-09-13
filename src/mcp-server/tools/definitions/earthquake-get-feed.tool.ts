@@ -145,9 +145,22 @@ export const earthquakeGetFeed = tool('earthquake_get_feed', {
       result = await getUsgsService().getFeed(input.magnitude_tier, input.time_window, ctx);
     } catch (err) {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.ServiceUnavailable) {
-        throw ctx.fail('feed_unavailable', err.message, {
-          ...ctx.recoveryFor('feed_unavailable'),
-        });
+        throw ctx.fail(
+          'feed_unavailable',
+          err.message,
+          {
+            ...ctx.recoveryFor('feed_unavailable'),
+            ...(err.data?.retryable === false
+              ? {
+                  retryable: false,
+                  recovery: {
+                    hint: 'Do not retry this USGS feed: it is not implemented upstream. Use earthquake_search with source=emsc for recent events.',
+                  },
+                }
+              : {}),
+          },
+          { cause: err },
+        );
       }
       // A timeout classifies as Timeout, not ServiceUnavailable — it needs its own
       // branch or it bypasses the contract and reaches the caller with no recovery hint.

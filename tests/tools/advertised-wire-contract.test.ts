@@ -13,6 +13,8 @@
  */
 
 import { z } from '@cyanheads/mcp-ts-core';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
+import { runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { describe, expect, it } from 'vitest';
 import { earthquakeFeedResource } from '@/mcp-server/resources/definitions/earthquake-feed.resource.js';
 import { earthquakeCount } from '@/mcp-server/tools/definitions/earthquake-count.tool.js';
@@ -38,6 +40,21 @@ const emit = (schema: z.ZodType) =>
   z.toJSONSchema(schema, { io: 'input' }) as unknown as EmittedSchema;
 
 describe.each(tools)('$name — advertised inputSchema', ({ tool, valid }) => {
+  it('mirrors a contract-runner argument rejection into both client surfaces', async () => {
+    const argumentsWithUnknownKey = { ...valid, bogus_key: 1 };
+    const result = await runToolContract(
+      tool,
+      argumentsWithUnknownKey as z.input<typeof tool.input>,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      // runToolContract parses directly; the HTTP pipeline classifies this as InvalidParams.
+      error: { code: JsonRpcErrorCode.ValidationError },
+    });
+    expect(JSON.stringify(result.structuredContent)).toContain('bogus_key');
+    expect(JSON.stringify(result.content)).toContain('bogus_key');
+  });
+
   it('advertises additionalProperties: false at the root', () => {
     expect(emit(tool.input).additionalProperties).toBe(false);
   });

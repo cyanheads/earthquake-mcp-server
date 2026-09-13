@@ -74,9 +74,22 @@ export const earthquakeEventResource = resource('earthquake://event/{event_id}',
         );
       }
       if (err instanceof McpError && err.code === JsonRpcErrorCode.ServiceUnavailable) {
-        throw ctx.fail('source_unavailable', err.message, {
-          ...ctx.recoveryFor('source_unavailable'),
-        });
+        throw ctx.fail(
+          'source_unavailable',
+          err.message,
+          {
+            ...ctx.recoveryFor('source_unavailable'),
+            ...(err.data?.retryable === false
+              ? {
+                  retryable: false,
+                  recovery: {
+                    hint: 'Do not retry this USGS lookup: it is not implemented upstream. Use earthquake_search with source=emsc to find the event by time and location.',
+                  },
+                }
+              : {}),
+          },
+          { cause: err },
+        );
       }
       // A timeout classifies as Timeout, not ServiceUnavailable — it needs its own
       // branch or it bypasses the contract and reaches the caller with no recovery hint.

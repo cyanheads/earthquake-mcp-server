@@ -360,9 +360,22 @@ export const earthquakeSearch = tool('earthquake_search', {
           : await getUsgsService().searchEvents(params, ctx);
     } catch (err) {
       if (err instanceof McpError && err.code === JsonRpcErrorCode.ServiceUnavailable) {
-        throw ctx.fail('source_unavailable', err.message, {
-          ...ctx.recoveryFor('source_unavailable'),
-        });
+        throw ctx.fail(
+          'source_unavailable',
+          err.message,
+          {
+            ...ctx.recoveryFor('source_unavailable'),
+            ...(err.data?.retryable === false
+              ? {
+                  retryable: false,
+                  recovery: {
+                    hint: 'Do not retry this source: it does not implement the operation. Change source to the other catalog (usgs or emsc).',
+                  },
+                }
+              : {}),
+          },
+          { cause: err },
+        );
       }
       // A timeout classifies as Timeout, not ServiceUnavailable — it needs its own
       // branch or it bypasses the contract and reaches the caller with no recovery hint.
