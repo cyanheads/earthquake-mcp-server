@@ -1,13 +1,17 @@
 {
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "earthquake-mcp-server",
   "version": "0.3.4",
   "description": "Search USGS and EMSC seismic data — real-time feeds, event queries, and earthquake counts via MCP. STDIO or Streamable HTTP.",
   "author": {
-    "name": "cyanheads"
+    "name": "cyanheads",
+    "email": "casey@caseyjhand.com",
+    "url": "https://github.com/cyanheads"
   },
   "homepage": "https://github.com/cyanheads/earthquake-mcp-server#readme",
   "repository": "https://github.com/cyanheads/earthquake-mcp-server",
   "license": "Apache-2.0",
+  "keywords": ["mcp", "mcp-server", "model-context-protocol", "earthquake", "seismic", "usgs", "emsc"],
   "mcpServers": {
     "earthquake-mcp-server": {
       "command": "npx",
