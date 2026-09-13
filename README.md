@@ -29,7 +29,7 @@
 
 ## Overview
 
-An MCP server over USGS ComCat and the EMSC SeismicPortal. Fetch real-time earthquake feeds, search and count seismic events by time, magnitude, depth, and location, and pull full analysis detail for a single event. Runs as a stdio process, a local Streamable HTTP server, or the public hosted endpoint above.
+Seismic data from USGS ComCat and the EMSC SeismicPortal. Fetch real-time earthquake feeds, search and count seismic events by time, magnitude, depth, and location, and pull full analysis detail for a single event. Runs as a stdio process, a local Streamable HTTP server, or the public hosted endpoint above.
 
 ### Tools
 
@@ -55,7 +55,6 @@ An MCP server over USGS ComCat and the EMSC SeismicPortal. Fetch real-time earth
 - Five magnitude tiers: `all` (microseisms), `1.0`, `2.5`, `4.5`, `significant` (USGS-curated by magnitude, felt reports, and PAGER impact); four time windows: `hour`, `day`, `week`, `month`
 - Returns event list with counts and the source feed URL
 - Paged with an opaque `cursor`: `limit` bounds a page (default 100, max 1000), `totalCount` reports the whole feed, `nextCursor` retrieves the rest — the broad tiers run past 10,000 events for `month`
-- The cursor is opaque because these feeds have no upstream paging parameter and USGS regenerates them about once a minute — a numeric offset across two calls would skip or repeat events
 
 ---
 
