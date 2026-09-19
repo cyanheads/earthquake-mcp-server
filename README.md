@@ -232,7 +232,7 @@ All configuration is validated at startup via Zod schemas in `src/config/server-
 | `MCP_HTTP_PORT` | HTTP server port | `3010` |
 | `MCP_HTTP_ENDPOINT_PATH` | HTTP endpoint path where the MCP server is mounted | `/mcp` |
 | `MCP_PUBLIC_URL` | Public origin override for TLS-terminating reverse-proxy deployments | none |
-| `MCP_SESSION_MODE` | HTTP session handling: `stateful`, `stateless`, or `auto`. The Docker image and `.env.example` ship `stateless`. | `auto` (resolves to `stateful`) |
+| `MCP_SESSION_MODE` | HTTP session handling: `stateful`, `stateless`, or `auto`. `src/index.ts` declares `stateless` via `createApp()`; setting this variable overrides that. The Docker image and `.env.example` set it explicitly too. | `stateless` (declared in `src/index.ts`) |
 | `MCP_AUTH_MODE` | Authentication: `none`, `jwt`, or `oauth` | `none` |
 | `MCP_LOG_LEVEL` | Log level (`debug`, `info`, `warning`, `error`, etc.) | `info` |
 | `MCP_GC_PRESSURE_INTERVAL_MS` | Opt-in Bun-only forced-GC pressure loop (ms). Try `60000` if heap growth is observed under sustained HTTP load. | `0` (disabled) |
