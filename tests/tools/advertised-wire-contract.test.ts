@@ -48,8 +48,9 @@ describe.each(tools)('$name — advertised inputSchema', ({ tool, valid }) => {
     );
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toMatchObject({
-      // runToolContract parses directly; the HTTP pipeline classifies this as InvalidParams.
-      error: { code: JsonRpcErrorCode.ValidationError },
+      // runToolContract routes through the same parseToolArguments call the HTTP
+      // pipeline makes, so an argument rejection carries the code a client receives.
+      error: { code: JsonRpcErrorCode.InvalidParams },
     });
     expect(JSON.stringify(result.structuredContent)).toContain('bogus_key');
     expect(JSON.stringify(result.content)).toContain('bogus_key');
