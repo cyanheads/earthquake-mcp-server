@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.6](changelog/0.3.x/0.3.6.md) — 2026-09-19 · 🛡️ Security
+
+Adopt mcp-ts-core 0.13.1-0.13.6: linear-time regex hardening, sharper tool-error text, parameter-name alias resolution, and an explicit stateless session-mode declaration.
+
 ## [0.3.5](changelog/0.3.x/0.3.5.md) — 2026-09-13 · ⚠️ Breaking
 
 Adopt mcp-ts-core 0.13.0: an upstream 501 reaches the caller as non-retryable with a switch-source hint, an upstream 500 retries, argument rejections carry the structured error envelope, blank and unsubstituted ${…} env values read as unset, and the Bun engines floor rises to >=1.4.0.
