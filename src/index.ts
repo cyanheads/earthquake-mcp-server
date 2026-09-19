@@ -18,6 +18,8 @@ import { initUsgsService } from './services/usgs/usgs-service.js';
 await createApp({
   name: 'earthquake-mcp-server',
   title: 'earthquake-mcp-server',
+  // No handler calls ctx.requestInput, so no deployment needs a session. MCP_SESSION_MODE overrides.
+  sessionMode: 'stateless',
   instructions:
     'Use the earthquake_* tools to query seismic data from USGS ComCat and the EMSC SeismicPortal; no API key required. ' +
     'earthquake_get_feed gives USGS real-time magnitude tiers for current activity; earthquake_search handles historical or filtered queries, sized first with earthquake_count (search caps at 20,000 events). ' +
