@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.7](changelog/0.3.x/0.3.7.md) — 2026-09-26
+
+Framework input recovery and diagnostics updates, with guarded Docker dependency installs.
+
 ## [0.3.6](changelog/0.3.x/0.3.6.md) — 2026-09-19 · 🛡️ Security
 
 Adopt mcp-ts-core 0.13.1-0.13.6: linear-time regex hardening, sharper tool-error text, parameter-name alias resolution, and an explicit stateless session-mode declaration.
