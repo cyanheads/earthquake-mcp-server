@@ -7,7 +7,7 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/badge/Version-0.3.6-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/earthquake-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.0.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/earthquake-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/earthquake-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.0-blueviolet.svg?style=flat-square)](https://bun.sh/)
+[![Version](https://img.shields.io/badge/Version-0.3.6-blue.svg?style=flat-square)](./CHANGELOG.md) [![License](https://img.shields.io/badge/License-Apache%202.0-orange.svg?style=flat-square)](./LICENSE) [![Docker](https://img.shields.io/badge/Docker-ghcr.io-2496ED?style=flat-square&logo=docker&logoColor=white)](https://github.com/users/cyanheads/packages/container/package/earthquake-mcp-server) [![MCP SDK](https://img.shields.io/badge/MCP%20SDK-^2.1.0-green.svg?style=flat-square)](https://modelcontextprotocol.io/) [![npm](https://img.shields.io/npm/v/@cyanheads/earthquake-mcp-server?style=flat-square&logo=npm&logoColor=white)](https://www.npmjs.com/package/@cyanheads/earthquake-mcp-server) [![TypeScript](https://img.shields.io/badge/TypeScript-^7.0.2-3178C6.svg?style=flat-square)](https://www.typescriptlang.org/) [![Bun](https://img.shields.io/badge/Bun-v1.4.2-blueviolet.svg?style=flat-square)](https://bun.sh/)
 
 </div>
 
@@ -51,57 +51,45 @@ Seismic data from USGS ComCat and the EMSC SeismicPortal. Fetch real-time earthq
 
 ### `earthquake_get_feed` <sub>tool</sub>
 
-- CDN-cached by USGS — faster and more available than the FDSN query API; best for real-time "what's happening now" queries (use `earthquake_search` for historical or filtered queries)
-- Five magnitude tiers: `all` (microseisms), `1.0`, `2.5`, `4.5`, `significant` (USGS-curated by magnitude, felt reports, and PAGER impact); four time windows: `hour`, `day`, `week`, `month`
-- Returns event list with counts and the source feed URL
-- Paged with an opaque `cursor`: `limit` bounds a page (default 100, max 1000), `totalCount` reports the whole feed, `nextCursor` retrieves the rest — the broad tiers run past 10,000 events for `month`
+- Choose a magnitude tier (`all`, `1.0`, `2.5`, `4.5`, `significant`) and a window (`hour`, `day`, `week`, `month`). USGS caches these feeds; use `earthquake_search` for historical or filtered queries.
+- Returns events, page count, generation time, and source feed URL. `all` includes microseisms; `significant` is USGS-curated using magnitude, felt reports, and PAGER impact.
+- `limit` defaults to 100, max 1000. `totalCount` reports the whole feed and `nextCursor` retrieves another page; pass the opaque cursor back unchanged.
 
 ---
 
 ### `earthquake_search` <sub>tool</sub>
 
-- Dual-source: `usgs` (global, PAGER/DYFI/ShakeMap metadata) or `emsc` (independent European-Mediterranean catalog, for cross-verification anywhere); USGS-only filters (`alert_level`, `min_felt`, `min_significance`, `event_type`) are dropped and named in `ignoredFilters` when `source=emsc`
-- Location filters: `latitude` + `longitude` + `radius_km` together for a radius search, or independently-optional `min_latitude`/`max_latitude`/`min_longitude`/`max_longitude` for a bounding box (longitude up to ±360 to cross the antimeridian); combining both intersects the two
-- Every event carries `event_type` in one vocabulary regardless of source (USGS's QuakeML names, EMSC's code decoded to match), with `event_certainty` alongside for EMSC; the `event_type` filter narrows to one value on USGS
-- Sort by `time` or `magnitude`, ascending or descending; up to 20,000 events per call, paged with a 1-based `offset` forwarded straight to the upstream FDSN API
-- A capped result carries `totalCount` and `nextOffset` for the next page, or `countUnavailable` when the follow-up count query failed — use `earthquake_count` first to size the match set
+- Search `usgs` or `emsc` by time, magnitude, depth, radius, or bounding box. A radius requires `latitude`, `longitude`, and `radius_km` together; box edges are independently optional, support antimeridian bounds up to ±360°, and intersect a supplied circle.
+- Returns normalized events with `event_type` and EMSC's `event_certainty`. `ignoredFilters` names unsupported filters; `queryEcho` reports the effective query.
+- Sort by time or magnitude in either direction. `limit` defaults to 100, max 20,000; paging uses a 1-based `offset`. Capped results carry `nextOffset` and `totalCount`, or `countUnavailable` if the count lookup failed. Use `earthquake_count` first to size the match set.
 
 ---
 
 ### `earthquake_count` <sub>tool</sub>
 
-- Lightweight alternative to `earthquake_search` for statistical queries; same filter surface (time, magnitude, depth, location radius, bounding box, PAGER, DYFI, significance, event type)
-- `exceeds_limit` flags when the count exceeds 20,000, signaling a full search would need paging; USGS returns the `max_allowed` cap (20,000), EMSC's count endpoint does not (`max_allowed` is null)
-- Omitting `start_time` counts only the last 30 days — `queryEcho` reports the resolved window and every filter actually applied
-- A radius over a mining region counts quarry blasts alongside earthquakes — pass `event_type="earthquake"` on USGS to exclude them
-- USGS-specific filters are dropped and named in `ignoredFilters` when `source=emsc`, the same as `earthquake_search`
+- Count matches using the same filters as `earthquake_search`, without fetching events. Omit `start_time` for the last 30 days; `queryEcho` reports the resolved window and applied filters.
+- `exceeds_limit` flags counts above 20,000. `max_allowed` is 20,000 for USGS and null for EMSC; `ignoredFilters` names filters the source cannot apply.
 
 ---
 
 ### `earthquake_get_event` <sub>tool</sub>
 
-- Returns the normalized event a search result already carries, plus `detail` — a projection of the analysis products only the single-event response holds
-- `detail` groups: PAGER alert and report link, ShakeMap peak MMI/PGA/PGV and intensity map, DYFI response count and max CDI, moment-tensor scalar moment and nodal planes, landslide and liquefaction alerts, origin quality (azimuthal gap, station count, location and depth uncertainty), finite-fault rupture length and width
-- A group is omitted when USGS produced no such product — a small automatic event usually has none, a large reviewed one has most of them
-- Event IDs appear in the `id` field of `earthquake_get_feed` and `earthquake_search` results (e.g. `us6000sznj`, `hv74966427`)
-- USGS-only — EMSC events have no per-event detail endpoint
+- Pass a USGS `event_id` from the `id` field of a feed or search result (e.g. `us6000sznj`). EMSC has no per-event detail endpoint.
+- Returns the normalized event plus optional `detail`: PAGER, ShakeMap, DYFI, moment tensor, ground-failure alerts, origin quality, and finite-fault dimensions. Groups are omitted when USGS produced no corresponding product.
 
 ---
 
 ### `earthquake://feed/{magnitude_tier}/{time_window}` <sub>resource</sub>
 
-- Path params: `magnitude_tier` (`all` / `1.0` / `2.5` / `4.5` / `significant`) and `time_window` (`hour` / `day` / `week` / `month`)
-- Returns the whole feed in one read as `application/json`, no paging — the broad combinations (`all` or `1.0` with `week`/`month`) can run to thousands of events; use `earthquake_get_feed` for those
-- Cached 60 seconds, public scope — USGS regenerates the underlying feed about once a minute
-- Lists all 20 tier/window combinations as browsable resources
+- Choose the same magnitude tiers and time windows as `earthquake_get_feed`; all 20 combinations are listed as browsable resources.
+- Returns the whole feed as `application/json`, with a public 60-second cache hint. Broad week/month feeds can contain thousands of events; use `earthquake_get_feed` for paging.
 
 ---
 
 ### `earthquake://event/{event_id}` <sub>resource</sub>
 
-- `event_id` is a USGS event ID from an `earthquake_get_feed` or `earthquake_search` result
-- Returns the same normalized event plus the `detail` product projection (PAGER, ShakeMap, DYFI, moment tensor, ground-failure alerts, origin quality, finite-fault), omitted when USGS produced none
-- Typed `not_found`, `source_unavailable`, and `source_timeout` errors — the same contract as `earthquake_get_event`
+- Pass a USGS `event_id` from a feed or search result. Returns the same event and optional `detail` products as `earthquake_get_event`.
+- Uses that tool's `not_found`, `source_unavailable`, and `source_timeout` error contract.
 
 ## Features
 
@@ -112,6 +100,7 @@ USGS/EMSC-specific:
 - Type-safe clients for the USGS FDSN/GeoJSON API and the EMSC FDSN-WS API, normalizing both into one shared earthquake domain schema
 - Automatic retry with backoff and per-request timeouts on every upstream call; detects USGS's rate-limited/CDN failure mode (HTML served instead of GeoJSON) and maps it to a typed service-unavailable error instead of parsing it as data
 - EMSC's two-character `evtype` code is decoded against the published event-type/certainty nomenclature into the same vocabulary USGS publishes, so `event_type` carries one meaning across both sources
+- USGS-only filters (`alert_level`, `min_felt`, `min_significance`, `event_type`) are named in `ignoredFilters` when `source=emsc`. On USGS, `event_type="earthquake"` excludes quarry blasts and other non-tectonic records.
 - No API key or rate-limit tier required — both USGS and EMSC are fully public, keyless APIs
 
 Agent-friendly output:
@@ -232,17 +221,21 @@ All configuration is validated at startup via Zod schemas in `src/config/server-
 | `MCP_HTTP_PORT` | HTTP server port | `3010` |
 | `MCP_HTTP_ENDPOINT_PATH` | HTTP endpoint path where the MCP server is mounted | `/mcp` |
 | `MCP_PUBLIC_URL` | Public origin override for TLS-terminating reverse-proxy deployments | none |
-| `MCP_SESSION_MODE` | HTTP session handling: `stateful`, `stateless`, or `auto`. `src/index.ts` declares `stateless` via `createApp()`; setting this variable overrides that. The Docker image and `.env.example` set it explicitly too. | `stateless` (declared in `src/index.ts`) |
+| `MCP_SESSION_MODE` | HTTP sessions: `stateful`, `stateless`, or `auto` (resolves to stateful). Overrides the `createApp()` declaration; Docker and `.env.example` also pin stateless. | `stateless` (declared in `src/index.ts`) |
 | `MCP_AUTH_MODE` | Authentication: `none`, `jwt`, or `oauth` | `none` |
 | `MCP_LOG_LEVEL` | Log level (`debug`, `info`, `warning`, `error`, etc.) | `info` |
 | `MCP_GC_PRESSURE_INTERVAL_MS` | Opt-in Bun-only forced-GC pressure loop (ms). Try `60000` if heap growth is observed under sustained HTTP load. | `0` (disabled) |
-| `LOGS_DIR` | Directory for log files (Node.js only) | `<project-root>/logs` |
+| `LOGS_DIR` | Directory for log files on Node.js and Bun | `<project-root>/logs` |
+| `LOG_TOOL_FAILURE_PAYLOADS` | Log failed tool arguments and results, redacted by key name. Secrets inside free-form values remain. | `false` |
+| `LOG_TOOL_FAILURE_PAYLOAD_MAX_BYTES` | UTF-8 byte cap per logged failure payload | `16384` |
 | `STORAGE_PROVIDER_TYPE` | Storage backend: `in-memory`, `filesystem`, `supabase`, `cloudflare-kv/r2/d1` | `in-memory` |
 | `USGS_BASE_URL` | USGS API base URL. Override for testing or mirroring. | `https://earthquake.usgs.gov` |
 | `EMSC_BASE_URL` | EMSC API base URL. Override for testing or mirroring. | `https://www.seismicportal.eu` |
 | `DEFAULT_LIMIT` | Default result limit for `earthquake_search` | `100` |
 | `REQUEST_TIMEOUT_MS` | HTTP timeout in milliseconds for upstream API calls | `10000` |
 | `OTEL_ENABLED` | Enable OpenTelemetry | `false` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Base URL for traces (`/v1/traces`) and metrics (`/v1/metrics`); signal-specific endpoint variables override it | none |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | Opt-in OTLP log endpoint, used as-is; the base URL never enables logs | none |
 
 Empty values and unsubstituted whole-value `${…}` placeholders use the defaults. See [`.env.example`](./.env.example) for optional overrides.
 

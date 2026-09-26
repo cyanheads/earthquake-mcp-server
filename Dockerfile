@@ -7,7 +7,7 @@
 # Pinned to $BUILDPLATFORM: Bun >= 1.4 aborts under QEMU user-mode emulation, so a
 # build stage left on the target platform kills the linux/amd64 leg of the
 # multi-arch buildx. This stage emits architecture-independent JavaScript.
-FROM --platform=$BUILDPLATFORM oven/bun:1.4.0 AS build
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.2 AS build
 
 WORKDIR /usr/src/app
 
@@ -24,9 +24,8 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
 # Copy the rest of the source code
 COPY . .
 
-# Build the application. Use bun directly rather than through the build script wrapper
-# to avoid tsx (Node CJS) failing under Bun's Linux runtime when bunfig.toml is present.
-RUN bun scripts/build.ts
+# Build the application
+RUN bun run build
 
 
 # ==============================================================================
@@ -36,7 +35,7 @@ RUN bun scripts/build.ts
 # application. It uses a slim base image and only includes production
 # dependencies and build artifacts.
 # ==============================================================================
-FROM oven/bun:1.4.0-slim AS production
+FROM oven/bun:1.4.2-slim AS production
 
 WORKDIR /usr/src/app
 
@@ -52,8 +51,12 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 LABEL org.opencontainers.image.version="${APP_VERSION}"
 LABEL org.opencontainers.image.source="https://github.com/cyanheads/earthquake-mcp-server"
 
-# Copy dependency manifests
-COPY package.json bun.lock ./
+# Copy dependency manifests. Every production install uses the same release-age
+# gate and security scanner as a local install.
+COPY package.json bun.lock bunfig.toml ./
+
+# Seed the dev-only scanner before the production-filtered install omits it.
+COPY --from=build /usr/src/app/node_modules/@socketsecurity/bun-security-scanner ./node_modules/@socketsecurity/bun-security-scanner
 
 # Install only production dependencies, ignoring any lifecycle scripts (like 'prepare')
 # that are not needed in the final production image.
@@ -66,21 +69,32 @@ RUN --mount=type=cache,target=/root/.bun/install/cache \
     bun install --production --omit=peer --frozen-lockfile --ignore-scripts
 
 # Conditionally install OpenTelemetry optional peer dependencies (Tier 3).
-# These are not bundled by default to keep the base image lean. Enable at build time
-# with: docker build --build-arg OTEL_ENABLED=true
+# Installed by default; omit with --build-arg OTEL_ENABLED=false.
+# Resolve each package within the installed framework's tested peer range.
 ARG OTEL_ENABLED=true
 RUN --mount=type=cache,target=/root/.bun/install/cache \
     if [ "$OTEL_ENABLED" = "true" ]; then \
-      bun add --omit=dev --omit=peer --ignore-scripts @hono/otel \
-        @opentelemetry/instrumentation-http \
+      specs=$(bun -e ' \
+        const { peerDependencies: peers } = await Bun.file("node_modules/@cyanheads/mcp-ts-core/package.json").json(); \
+        const names = process.argv.slice(1); \
+        const missing = names.filter((name) => !peers?.[name]); \
+        if (missing.length > 0) throw new Error(`no peerDependencies range for ${missing.join(", ")}`); \
+        console.log(names.map((name) => `${name}@${peers[name]}`).join(" ")); \
+      ' \
+        @hono/otel \
+        @opentelemetry/api-logs \
+        @opentelemetry/exporter-logs-otlp-http \
         @opentelemetry/exporter-metrics-otlp-http \
         @opentelemetry/exporter-trace-otlp-http \
+        @opentelemetry/instrumentation-http \
         @opentelemetry/instrumentation-pino \
         @opentelemetry/resources \
+        @opentelemetry/sdk-logs \
         @opentelemetry/sdk-metrics \
         @opentelemetry/sdk-node \
         @opentelemetry/sdk-trace-node \
-        @opentelemetry/semantic-conventions; \
+        @opentelemetry/semantic-conventions) \
+      && bun add --omit=dev --omit=peer --ignore-scripts $specs; \
     fi
 
 # Copy the compiled application code from the build stage
@@ -107,7 +121,6 @@ ENV MCP_TRANSPORT_TYPE="http"
 ENV MCP_SESSION_MODE="stateless"
 ENV MCP_LOG_LEVEL="info"
 ENV LOGS_DIR="/var/log/earthquake-mcp-server"
-ENV MCP_FORCE_CONSOLE_LOGGING="true"
 
 # Expose the port the server listens on
 EXPOSE ${MCP_HTTP_PORT}

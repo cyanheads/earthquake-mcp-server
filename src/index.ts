@@ -18,7 +18,10 @@ import { initUsgsService } from './services/usgs/usgs-service.js';
 await createApp({
   name: 'earthquake-mcp-server',
   title: 'earthquake-mcp-server',
-  // No handler calls ctx.requestInput, so no deployment needs a session. MCP_SESSION_MODE overrides.
+  /**
+   * No handler calls ctx.requestInput. MCP_SESSION_MODE overrides this default;
+   * explicitly choosing auto uses the framework's stateful resolution.
+   */
   sessionMode: 'stateless',
   instructions:
     'Use the earthquake_* tools to query seismic data from USGS ComCat and the EMSC SeismicPortal; no API key required. ' +
