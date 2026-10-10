@@ -12,14 +12,14 @@
       "url": "https://earthquake.caseyjhand.com/mcp"
     }
   ],
-  "version": "0.3.7",
+  "version": "0.3.8",
   "packages": [
     {
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/earthquake-mcp-server",
       "runtimeHint": "npx",
-      "version": "0.3.7",
+      "version": "0.3.8",
       "environmentVariables": [
         {
           "name": "MCP_LOG_LEVEL",
@@ -38,7 +38,7 @@
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/earthquake-mcp-server",
       "runtimeHint": "npx",
-      "version": "0.3.7",
+      "version": "0.3.8",
       "environmentVariables": [
         {
           "name": "MCP_HTTP_HOST",

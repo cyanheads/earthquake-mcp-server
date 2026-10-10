@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.3.8](changelog/0.3.x/0.3.8.md) — 2026-10-10
+
+Feed and search limits accept numeric strings, optional cursor and max_magnitude nulls are omitted, and tool errors carry request IDs.
+
 ## [0.3.7](changelog/0.3.x/0.3.7.md) — 2026-09-26
 
 Framework input recovery and diagnostics updates, with guarded Docker dependency installs.
