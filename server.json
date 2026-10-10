@@ -18,18 +18,8 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/earthquake-mcp-server",
-      "runtimeHint": "bun",
+      "runtimeHint": "npx",
       "version": "0.3.7",
-      "packageArguments": [
-        {
-          "type": "positional",
-          "value": "run"
-        },
-        {
-          "type": "positional",
-          "value": "start:stdio"
-        }
-      ],
       "environmentVariables": [
         {
           "name": "MCP_LOG_LEVEL",
@@ -47,18 +37,8 @@
       "registryType": "npm",
       "registryBaseUrl": "https://registry.npmjs.org",
       "identifier": "@cyanheads/earthquake-mcp-server",
-      "runtimeHint": "bun",
+      "runtimeHint": "npx",
       "version": "0.3.7",
-      "packageArguments": [
-        {
-          "type": "positional",
-          "value": "run"
-        },
-        {
-          "type": "positional",
-          "value": "start:http"
-        }
-      ],
       "environmentVariables": [
         {
           "name": "MCP_HTTP_HOST",
@@ -66,6 +46,12 @@
           "format": "string",
           "isRequired": false,
           "default": "127.0.0.1"
+        },
+        {
+          "name": "MCP_TRANSPORT_TYPE",
+          "description": "Selects the HTTP transport.",
+          "format": "string",
+          "value": "http"
         },
         {
           "name": "MCP_HTTP_PORT",
