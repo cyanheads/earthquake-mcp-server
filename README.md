@@ -87,7 +87,7 @@ Seismic data from USGS ComCat and the EMSC SeismicPortal. Fetch real-time earthq
 
 - Choose the same magnitude tiers and time windows as `earthquake_get_feed`; all 20 combinations are listed as browsable resources.
 - Returns a bounded `application/json` page using the existing compact event projection, plus `totalCount`, `truncated`, `nextCursor`, and `next_uri`. Read `next_uri` verbatim until it is absent. The continuation URI is `earthquake://feed/{magnitude_tier}/{time_window}/page/{cursor}`.
-- Feed resources share retained generations with `earthquake_get_feed`. Cache hints are private with zero lifetime because continuation tokens belong to the requesting tenant. Fetch failures expose `feed_unavailable` or `feed_timeout` with recovery guidance; a non-retryable USGS failure points to EMSC search.
+- Feed resources share retained generations with `earthquake_get_feed`. Cache hints are private with zero lifetime because continuation tokens belong to the requesting tenant. Upstream failures classified as `ServiceUnavailable` expose `feed_unavailable`; those classified as `Timeout` expose `feed_timeout`, each with recovery guidance and no captured upstream body. Availability failures preserve numeric HTTP status; HTTP 501 remains non-retryable and points to EMSC search. Other error classes propagate unchanged.
 
 ---
 
