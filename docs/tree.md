@@ -1,6 +1,6 @@
 # earthquake-mcp-server - Directory Structure
 
-Generated on: 2026-10-18 12:05:05
+Generated on: 2026-10-18 12:33:42
 
 ```text
 earthquake-mcp-server/
@@ -27,6 +27,7 @@ earthquake-mcp-server/
 │   ├── 0.1.x/
 │   ├── 0.2.x/
 │   ├── 0.3.x/
+│   ├── 0.4.x/
 │   └── template.md
 ├── docs/
 │   ├── design.md
