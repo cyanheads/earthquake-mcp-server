@@ -6,18 +6,24 @@
 
 import { createApp } from '@cyanheads/mcp-ts-core';
 import { getServerConfig } from './config/server-config.js';
+import { setPageIdentity } from './mcp-server/page-budget.js';
 import { earthquakeEventResource } from './mcp-server/resources/definitions/earthquake-event.resource.js';
-import { earthquakeFeedResource } from './mcp-server/resources/definitions/earthquake-feed.resource.js';
-import { earthquakeCount } from './mcp-server/tools/definitions/earthquake-count.tool.js';
+import {
+  earthquakeFeedPageResource,
+  earthquakeFeedResource,
+} from './mcp-server/resources/definitions/earthquake-feed.resource.js';
+import { earthquakeCountEvents } from './mcp-server/tools/definitions/earthquake-count-events.tool.js';
 import { earthquakeGetEvent } from './mcp-server/tools/definitions/earthquake-get-event.tool.js';
 import { earthquakeGetFeed } from './mcp-server/tools/definitions/earthquake-get-feed.tool.js';
-import { earthquakeSearch } from './mcp-server/tools/definitions/earthquake-search.tool.js';
+import { earthquakeSearchEvents } from './mcp-server/tools/definitions/earthquake-search-events.tool.js';
 import { initEmscService } from './services/emsc/emsc-service.js';
 import { initUsgsService } from './services/usgs/usgs-service.js';
 
+const SERVER_TITLE = 'earthquake-mcp-server';
+
 await createApp({
   name: 'earthquake-mcp-server',
-  title: 'earthquake-mcp-server',
+  title: SERVER_TITLE,
   /**
    * No handler calls ctx.requestInput. MCP_SESSION_MODE overrides this default;
    * explicitly choosing auto uses the framework's stateful resolution.
@@ -25,11 +31,11 @@ await createApp({
   sessionMode: 'stateless',
   instructions:
     'Use the earthquake_* tools to query seismic data from USGS ComCat and the EMSC SeismicPortal; no API key required. ' +
-    'earthquake_get_feed gives USGS real-time magnitude tiers for current activity; earthquake_search handles historical or filtered queries, sized first with earthquake_count (search caps at 20,000 events). ' +
+    'earthquake_get_feed gives USGS real-time magnitude tiers for current activity; earthquake_search_events handles historical or filtered queries, sized first with earthquake_count_events. Search accepts limit up to 20,000 and returns byte-bounded pages with nextOffset. ' +
     'Both emit network-specific event IDs (e.g. us6000sznj) for earthquake_get_event, which returns full USGS detail (EMSC has no per-event endpoint). ' +
     'USGS carries richer metadata (PAGER, DYFI, ShakeMap); source=emsc is an independent global catalog from the European-Mediterranean Seismological Centre, useful for cross-checking an event of any region against a separate network, and does not apply USGS-only filters (the response names them in ignoredFilters).',
-  tools: [earthquakeGetFeed, earthquakeSearch, earthquakeGetEvent, earthquakeCount],
-  resources: [earthquakeFeedResource, earthquakeEventResource],
+  tools: [earthquakeGetFeed, earthquakeSearchEvents, earthquakeGetEvent, earthquakeCountEvents],
+  resources: [earthquakeFeedResource, earthquakeFeedPageResource, earthquakeEventResource],
   prompts: [],
   landing: {
     // Public catalog server — serve full inventory to unauthenticated callers
@@ -48,6 +54,11 @@ await createApp({
     'server/discover': { ttlMs: 3_600_000, cacheScope: 'public' },
   },
   setup(core) {
+    setPageIdentity({
+      name: core.config.mcpServerName,
+      version: core.config.mcpServerVersion,
+      title: SERVER_TITLE,
+    });
     const config = getServerConfig();
     initUsgsService(core.config, core.storage, config.usgsBaseUrl, config.requestTimeoutMs);
     initEmscService(core.config, core.storage, config.emscBaseUrl, config.requestTimeoutMs);

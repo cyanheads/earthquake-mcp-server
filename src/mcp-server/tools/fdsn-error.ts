@@ -2,7 +2,7 @@
  * @fileoverview Pulls the actionable sentence out of an FDSN service's 4xx error body.
  * `fetchWithTimeout` captures the upstream body into `error.data.body` but leaves the
  * thrown message at a bare status code, so a content[]-only client sees "Status: 400"
- * and nothing to act on. Shared by earthquake_search and earthquake_count, which catch
+ * and nothing to act on. Shared by earthquake_search_events and earthquake_count_events, which catch
  * the same upstream error shape.
  * @module mcp-server/tools/fdsn-error
  */

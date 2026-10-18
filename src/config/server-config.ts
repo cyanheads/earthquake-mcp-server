@@ -23,14 +23,16 @@ const ServerConfigSchema = z.object({
     .min(1)
     .max(20000)
     .default(100)
-    .describe('Default result limit for earthquake_search.'),
+    .describe('Default result limit for earthquake_search_events.'),
   requestTimeoutMs: z.coerce
     .number()
     .int()
     .min(1000)
     .max(120000)
     .default(10000)
-    .describe('HTTP timeout in milliseconds.'),
+    .describe(
+      'Per-attempt HTTP timeout in milliseconds. Feed/search operations also share a 50-second total deadline; standalone event/count calls use this per-attempt value.',
+    ),
 });
 
 let _config: z.infer<typeof ServerConfigSchema> | undefined;

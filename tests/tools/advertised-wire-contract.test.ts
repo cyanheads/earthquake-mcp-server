@@ -17,16 +17,16 @@ import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import { runToolContract } from '@cyanheads/mcp-ts-core/testing';
 import { describe, expect, it } from 'vitest';
 import { earthquakeFeedResource } from '@/mcp-server/resources/definitions/earthquake-feed.resource.js';
-import { earthquakeCount } from '@/mcp-server/tools/definitions/earthquake-count.tool.js';
+import { earthquakeCountEvents } from '@/mcp-server/tools/definitions/earthquake-count-events.tool.js';
 import { earthquakeGetEvent } from '@/mcp-server/tools/definitions/earthquake-get-event.tool.js';
 import { earthquakeGetFeed } from '@/mcp-server/tools/definitions/earthquake-get-feed.tool.js';
-import { earthquakeSearch } from '@/mcp-server/tools/definitions/earthquake-search.tool.js';
+import { earthquakeSearchEvents } from '@/mcp-server/tools/definitions/earthquake-search-events.tool.js';
 
 /** Every tool, plus one input each that satisfies its required fields. */
 const tools = [
   { name: 'earthquake_get_feed', tool: earthquakeGetFeed, valid: {} },
-  { name: 'earthquake_search', tool: earthquakeSearch, valid: { min_magnitude: 5 } },
-  { name: 'earthquake_count', tool: earthquakeCount, valid: { min_magnitude: 5 } },
+  { name: 'earthquake_search_events', tool: earthquakeSearchEvents, valid: { min_magnitude: 5 } },
+  { name: 'earthquake_count_events', tool: earthquakeCountEvents, valid: { min_magnitude: 5 } },
   { name: 'earthquake_get_event', tool: earthquakeGetEvent, valid: { event_id: 'us6000sznj' } },
 ] as const;
 
@@ -102,9 +102,7 @@ describe.each(tools)('$name — advertised inputSchema', ({ tool, valid }) => {
 });
 
 describe('earthquake-feed resource — cache hint', () => {
-  it('caps a cached read at the USGS feed regeneration interval', () => {
-    // USGS regenerates these feeds about once a minute, so a re-read inside the
-    // window cannot return anything staler than a fresh fetch would.
-    expect(earthquakeFeedResource.cacheHint).toEqual({ ttlMs: 60_000, cacheScope: 'public' });
+  it('keeps tenant-bound continuation tokens out of shared caches', () => {
+    expect(earthquakeFeedResource.cacheHint).toEqual({ ttlMs: 0, cacheScope: 'private' });
   });
 });

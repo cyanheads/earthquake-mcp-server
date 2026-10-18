@@ -1,5 +1,5 @@
 /**
- * @fileoverview Tests for the filter surface earthquake_search and earthquake_count share —
+ * @fileoverview Tests for the filter surface earthquake_search_events and earthquake_count_events share —
  * the extracted validators (issue #32), FDSN timestamp validation and normalization (#29),
  * the alert-level minimum (#31), the bounding box (#37), and the invariant tying every
  * queryEcho entry to a parameter the adapter actually sent.
@@ -12,8 +12,8 @@ import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { earthquakeCount } from '@/mcp-server/tools/definitions/earthquake-count.tool.js';
-import { earthquakeSearch } from '@/mcp-server/tools/definitions/earthquake-search.tool.js';
+import { earthquakeCountEvents } from '@/mcp-server/tools/definitions/earthquake-count-events.tool.js';
+import { earthquakeSearchEvents } from '@/mcp-server/tools/definitions/earthquake-search-events.tool.js';
 import { earthquakeFilterFields } from '@/mcp-server/tools/query-params.js';
 import type { EarthquakeEventOutput } from '@/mcp-server/tools/schemas.js';
 import * as emscModule from '@/services/emsc/emsc-service.js';
@@ -46,15 +46,15 @@ const minimalEvent: EarthquakeEventOutput = {
 
 /** Both tools, so every shared-surface assertion below runs against each of them. */
 const tools = [
-  { name: 'earthquakeSearch', tool: earthquakeSearch },
-  { name: 'earthquakeCount', tool: earthquakeCount },
+  { name: 'earthquakeSearchEvents', tool: earthquakeSearchEvents },
+  { name: 'earthquakeCountEvents', tool: earthquakeCountEvents },
 ] as const;
 
 // --- Schema-level: the shared validators reach both tools identically -------------------
 
 describe('shared filter surface — bounds are identical across both tools (issue #32)', () => {
   it('emits byte-identical JSON Schema for every shared field, descriptions aside', () => {
-    const shapeOf = (tool: typeof earthquakeSearch | typeof earthquakeCount) => {
+    const shapeOf = (tool: typeof earthquakeSearchEvents | typeof earthquakeCountEvents) => {
       const emitted = z.toJSONSchema(tool.input, { io: 'input' }) as {
         properties: Record<string, Record<string, unknown>>;
       };
@@ -66,14 +66,14 @@ describe('shared filter surface — bounds are identical across both tools (issu
       );
     };
 
-    expect(shapeOf(earthquakeSearch)).toEqual(shapeOf(earthquakeCount));
+    expect(shapeOf(earthquakeSearchEvents)).toEqual(shapeOf(earthquakeCountEvents));
     // Guard the guard: a typo in SHARED_FIELDS would make the comparison vacuous.
     expect(SHARED_FIELDS).toContain('radius_km');
-    expect(Object.keys(shapeOf(earthquakeSearch))).toHaveLength(17);
+    expect(Object.keys(shapeOf(earthquakeSearchEvents))).toHaveLength(17);
   });
 
   it('publishes a readable pattern for the date fields so a caller can self-correct', () => {
-    const emitted = z.toJSONSchema(earthquakeSearch.input, { io: 'input' }) as {
+    const emitted = z.toJSONSchema(earthquakeSearchEvents.input, { io: 'input' }) as {
       properties: Record<string, { pattern?: string }>;
     };
     for (const field of ['start_time', 'end_time']) {
@@ -221,14 +221,14 @@ describe('shared filter surface — handler behavior', () => {
   });
 
   const invoke = {
-    earthquakeSearch: (input: unknown, ctx: Context) =>
-      earthquakeSearch.handler(earthquakeSearch.input.parse(input), ctx as never),
-    earthquakeCount: (input: unknown, ctx: Context) =>
-      earthquakeCount.handler(earthquakeCount.input.parse(input), ctx as never),
+    earthquakeSearchEvents: (input: unknown, ctx: Context) =>
+      earthquakeSearchEvents.handler(earthquakeSearchEvents.input.parse(input), ctx as never),
+    earthquakeCountEvents: (input: unknown, ctx: Context) =>
+      earthquakeCountEvents.handler(earthquakeCountEvents.input.parse(input), ctx as never),
   };
   const spyFor = {
-    earthquakeSearch: { usgs: () => mockUsgsSearch, emsc: () => mockEmscSearch },
-    earthquakeCount: { usgs: () => mockUsgsCount, emsc: () => mockEmscCount },
+    earthquakeSearchEvents: { usgs: () => mockUsgsSearch, emsc: () => mockEmscSearch },
+    earthquakeCountEvents: { usgs: () => mockUsgsCount, emsc: () => mockEmscCount },
   };
 
   describe.each(tools)(
@@ -249,7 +249,7 @@ describe('shared filter surface — handler behavior', () => {
         const ctx = createMockContext({ errors: tool.errors });
         await invoke[name]({ start_time: '2020-01-01' }, ctx as Context);
         const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
-        expect(echo.start_time).toBe('2020-01-01');
+        expect(echo.start_time).toBe('2020-01-01T00:00:00');
         expect(Object.values(echo)).not.toContain('');
       });
     },
@@ -259,8 +259,8 @@ describe('shared filter surface — handler behavior', () => {
     '$name — normalized dates reach both sources (issue #29)',
     ({ name, tool }) => {
       it.each([
-        ['2020-3-5', '2020-03-05'],
-        ['2020', '2020-01-01'],
+        ['2020-3-5', '2020-03-05T00:00:00'],
+        ['2020', '2020-01-01T00:00:00'],
       ])('sends %s upstream as %s on source=usgs', async (supplied, normalized) => {
         const ctx = createMockContext({ errors: tool.errors });
         await invoke[name]({ start_time: supplied }, ctx as Context);
@@ -279,12 +279,12 @@ describe('shared filter surface — handler behavior', () => {
         );
 
         expect(spyFor[name].emsc().mock.calls[0]?.[0]).toMatchObject({
-          startTime: '2020-01-01',
-          endTime: '2020-03-06',
+          startTime: '2020-01-01T00:00:00',
+          endTime: '2020-03-06T00:00:00',
         });
         expect(getEnrichment(ctx).queryEcho).toMatchObject({
-          start_time: '2020-01-01',
-          end_time: '2020-03-06',
+          start_time: '2020-01-01T00:00:00',
+          end_time: '2020-03-06T00:00:00',
         });
       });
     },
@@ -564,33 +564,35 @@ describe('shared filter surface — handler behavior', () => {
   );
 
   it('search still renders its events for a box-only query, and says so when empty', async () => {
-    const ctx = createMockContext({ errors: earthquakeSearch.errors });
-    const result = await invoke.earthquakeSearch(
+    const ctx = createMockContext({ errors: earthquakeSearchEvents.errors });
+    const result = await invoke.earthquakeSearchEvents(
       { min_latitude: 30, max_latitude: 40 },
       ctx as Context,
     );
-    expect((earthquakeSearch.format!(result)[0] as { text: string }).text).toContain('us1234567');
+    expect((earthquakeSearchEvents.format!(result)[0] as { text: string }).text).toContain(
+      'us1234567',
+    );
 
     mockUsgsSearch.mockResolvedValue({ events: [], count: 0 });
-    const emptyCtx = createMockContext({ errors: earthquakeSearch.errors });
-    const empty = await invoke.earthquakeSearch(
+    const emptyCtx = createMockContext({ errors: earthquakeSearchEvents.errors });
+    const empty = await invoke.earthquakeSearchEvents(
       { min_latitude: 30, max_latitude: 40 },
       emptyCtx as Context,
     );
     expect(empty.count).toBe(0);
-    expect((earthquakeSearch.format!(empty)[0] as { text: string }).text).toContain(
+    expect((earthquakeSearchEvents.format!(empty)[0] as { text: string }).text).toContain(
       'No events matched the query.',
     );
     expect(getEnrichment(emptyCtx).notice).toContain('broadening');
   });
 
   it('count renders its box-scoped total on the content[] surface', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const result = await invoke.earthquakeCount(
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const result = await invoke.earthquakeCountEvents(
       { min_latitude: 30, max_latitude: 40 },
       ctx as Context,
     );
-    const text = (earthquakeCount.format!(result)[0] as { text: string }).text;
+    const text = (earthquakeCountEvents.format!(result)[0] as { text: string }).text;
     expect(text).toContain('12');
     expect(text).toContain('USGS');
   });

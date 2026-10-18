@@ -21,6 +21,7 @@ import type { UsgsFeature } from '@/services/usgs/types.js';
 import { UsgsService } from '@/services/usgs/usgs-service.js';
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -144,10 +145,49 @@ describe('a live signal does not interfere', () => {
 });
 
 describe('cancellation past the first upstream call', () => {
+  it.each(['feed', 'usgs', 'emsc'] as const)(
+    '%s shares one deadline across requests and retry backoff',
+    async (source) => {
+      vi.useFakeTimers();
+      const started = Date.now();
+      let requests = 0;
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          (_url: string, init?: RequestInit) =>
+            new Promise<Response>((resolve, reject) => {
+              requests += 1;
+              if (source !== 'feed' && requests === 1) setTimeout(() => resolve(page(2)), 30_000);
+              const fail = () => reject(new DOMException('Aborted', 'AbortError'));
+              if (init?.signal?.aborted) fail();
+              else init?.signal?.addEventListener('abort', fail, { once: true });
+            }),
+        ),
+      );
+      const ctx = createMockContext() as Context;
+      const service =
+        source === 'emsc'
+          ? new EmscService({} as AppConfig, {} as StorageService, 'https://test', 45000)
+          : new UsgsService({} as AppConfig, {} as StorageService, 'https://test', 45000);
+      const promise =
+        source === 'feed'
+          ? (service as UsgsService).getFeed('all', 'day', ctx)
+          : service.searchEvents({ limit: 2 }, ctx);
+      const observed = promise.then(
+        (value) => value,
+        (error: unknown) => error,
+      );
+      await vi.runAllTimersAsync();
+      expect(Date.now() - started).toBeLessThan(60_000);
+      expect(await observed).toMatchObject(
+        source === 'feed' ? { code: -32004 } : { count: 2, countUnavailable: true },
+      );
+    },
+  );
   it.each([
     { name: 'UsgsService', search: (ctx: Context) => usgs().searchEvents({ limit: 2 }, ctx) },
     { name: 'EmscService', search: (ctx: Context) => emsc().searchEvents({ limit: 2 }, ctx) },
-  ])('$name keeps the page when the count sub-call is aborted', async ({ search }) => {
+  ])('$name preserves cancellation when the count sub-call is aborted', async ({ search }) => {
     // A page truncated at the limit triggers a second request for the match total.
     // Aborting between the two exercises the failover branch, not the happy path.
     const controller = new AbortController();
@@ -158,13 +198,9 @@ describe('cancellation past the first upstream call', () => {
     });
     vi.stubGlobal('fetch', fetchSpy);
 
-    const result = await search(createMockContext({ signal: controller.signal }) as Context);
+    const pending = search(createMockContext({ signal: controller.signal }) as Context);
+    await expect(pending).rejects.toThrow(/abort/i);
 
     expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect(result.count).toBe(2);
-    // The page is worth more than the total: losing the events to report a failed
-    // count would throw away the work the first request already paid for.
-    expect(result.totalCount).toBeUndefined();
-    expect(result.countUnavailable).toBe(true);
   });
 });

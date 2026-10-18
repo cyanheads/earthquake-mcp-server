@@ -1,16 +1,16 @@
 /**
- * @fileoverview Tests for the earthquake-count tool.
- * @module tests/tools/earthquake-count.tool.test
+ * @fileoverview Tests for the earthquake-count-events tool.
+ * @module tests/tools/earthquake-count-events.tool.test
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { earthquakeCount } from '@/mcp-server/tools/definitions/earthquake-count.tool.js';
+import { earthquakeCountEvents } from '@/mcp-server/tools/definitions/earthquake-count-events.tool.js';
 import * as emscModule from '@/services/emsc/emsc-service.js';
 import * as usgsModule from '@/services/usgs/usgs-service.js';
 
-describe('earthquakeCount', () => {
+describe('earthquakeCountEvents', () => {
   let mockUsgsCount: ReturnType<typeof vi.fn>;
   let mockEmscCount: ReturnType<typeof vi.fn>;
 
@@ -28,9 +28,9 @@ describe('earthquakeCount', () => {
   it('returns count from USGS by default', async () => {
     mockUsgsCount.mockResolvedValue({ count: 342, maxAllowed: 20000, exceedsLimit: false });
 
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ min_magnitude: 2.5 });
-    const result = await earthquakeCount.handler(input, ctx);
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ min_magnitude: 2.5 });
+    const result = await earthquakeCountEvents.handler(input, ctx);
 
     expect(result.source).toBe('usgs');
     expect(result.count).toBe(342);
@@ -43,9 +43,9 @@ describe('earthquakeCount', () => {
   it('returns count from EMSC when source=emsc', async () => {
     mockEmscCount.mockResolvedValue({ count: 88, maxAllowed: null, exceedsLimit: false });
 
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ source: 'emsc', min_magnitude: 3.0 });
-    const result = await earthquakeCount.handler(input, ctx);
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ source: 'emsc', min_magnitude: 3.0 });
+    const result = await earthquakeCountEvents.handler(input, ctx);
 
     expect(result.source).toBe('emsc');
     expect(result.count).toBe(88);
@@ -57,28 +57,28 @@ describe('earthquakeCount', () => {
   it('reports exceeds_limit when count > max_allowed', async () => {
     mockUsgsCount.mockResolvedValue({ count: 25000, maxAllowed: 20000, exceedsLimit: true });
 
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({});
-    const result = await earthquakeCount.handler(input, ctx);
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({});
+    const result = await earthquakeCountEvents.handler(input, ctx);
 
     expect(result.exceeds_limit).toBe(true);
     expect(result.count).toBe(25000);
   });
 
   it('throws invalid_radius when lat/lon provided without radius_km', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ latitude: 35.0, longitude: 139.0 });
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ latitude: 35.0, longitude: 139.0 });
 
-    await expect(earthquakeCount.handler(input, ctx)).rejects.toMatchObject({
+    await expect(earthquakeCountEvents.handler(input, ctx)).rejects.toMatchObject({
       data: { reason: 'invalid_radius' },
     });
   });
 
   it('throws invalid_radius when only radius_km is provided', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ radius_km: 200 });
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ radius_km: 200 });
 
-    await expect(earthquakeCount.handler(input, ctx)).rejects.toMatchObject({
+    await expect(earthquakeCountEvents.handler(input, ctx)).rejects.toMatchObject({
       data: { reason: 'invalid_radius' },
     });
   });
@@ -86,13 +86,13 @@ describe('earthquakeCount', () => {
   it('accepts complete radius params', async () => {
     mockUsgsCount.mockResolvedValue({ count: 5, maxAllowed: 20000, exceedsLimit: false });
 
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({
       latitude: 35.0,
       longitude: 139.0,
       radius_km: 100,
     });
-    const result = await earthquakeCount.handler(input, ctx);
+    const result = await earthquakeCountEvents.handler(input, ctx);
 
     expect(result.count).toBe(5);
   });
@@ -100,10 +100,10 @@ describe('earthquakeCount', () => {
   it('propagates service errors', async () => {
     mockUsgsCount.mockRejectedValue(new Error('Count endpoint down'));
 
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ min_magnitude: 5.0 });
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ min_magnitude: 5.0 });
 
-    await expect(earthquakeCount.handler(input, ctx)).rejects.toThrow('Count endpoint down');
+    await expect(earthquakeCountEvents.handler(input, ctx)).rejects.toThrow('Count endpoint down');
   });
 
   it('formats USGS count result', () => {
@@ -113,7 +113,7 @@ describe('earthquakeCount', () => {
       source: 'usgs' as const,
       exceeds_limit: false,
     };
-    const blocks = earthquakeCount.format!(output);
+    const blocks = earthquakeCountEvents.format!(output);
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('USGS');
     expect(text).toContain('342');
@@ -128,7 +128,7 @@ describe('earthquakeCount', () => {
       source: 'usgs' as const,
       exceeds_limit: true,
     };
-    const blocks = earthquakeCount.format!(output);
+    const blocks = earthquakeCountEvents.format!(output);
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('Yes');
     expect(text).toContain('truncated');
@@ -141,14 +141,14 @@ describe('earthquakeCount', () => {
       source: 'emsc' as const,
       exceeds_limit: false,
     };
-    const blocks = earthquakeCount.format!(output);
+    const blocks = earthquakeCountEvents.format!(output);
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('EMSC');
     expect(text).toContain('Not reported by EMSC');
   });
 });
 
-describe('earthquakeCount — 30-day default time window (issue #12)', () => {
+describe('earthquakeCountEvents — 30-day default time window (issue #12)', () => {
   let mockUsgsCount: ReturnType<typeof vi.fn>;
   let mockEmscCount: ReturnType<typeof vi.fn>;
 
@@ -164,9 +164,9 @@ describe('earthquakeCount — 30-day default time window (issue #12)', () => {
   });
 
   it('sends an explicit startTime of end_time − 30 days when start_time is omitted', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ end_time: '2026-06-30' });
-    await earthquakeCount.handler(input, ctx);
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ end_time: '2026-06-30' });
+    await earthquakeCountEvents.handler(input, ctx);
 
     const expected = new Date(new Date('2026-06-30').getTime() - 30 * 86_400_000).toISOString();
     expect(mockUsgsCount).toHaveBeenCalledWith(
@@ -176,9 +176,9 @@ describe('earthquakeCount — 30-day default time window (issue #12)', () => {
   });
 
   it('sends the same explicit startTime to EMSC instead of querying the full catalog', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ source: 'emsc', end_time: '2026-06-30' });
-    await earthquakeCount.handler(input, ctx);
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ source: 'emsc', end_time: '2026-06-30' });
+    await earthquakeCountEvents.handler(input, ctx);
 
     const expected = new Date(new Date('2026-06-30').getTime() - 30 * 86_400_000).toISOString();
     expect(mockEmscCount).toHaveBeenCalledWith(
@@ -187,19 +187,19 @@ describe('earthquakeCount — 30-day default time window (issue #12)', () => {
     );
   });
 
-  it('passes an explicit start_time through unchanged', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ source: 'emsc', start_time: '2026-05-31' });
-    await earthquakeCount.handler(input, ctx);
+  it('resolves an explicit date-only start_time to midnight', async () => {
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ source: 'emsc', start_time: '2026-05-31' });
+    await earthquakeCountEvents.handler(input, ctx);
 
     expect(mockEmscCount).toHaveBeenCalledWith(
-      expect.objectContaining({ startTime: '2026-05-31' }),
+      expect.objectContaining({ startTime: '2026-05-31T00:00:00' }),
       ctx,
     );
   });
 });
 
-describe('earthquakeCount — queryEcho enrichment (issue #21)', () => {
+describe('earthquakeCountEvents — queryEcho enrichment (issue #21)', () => {
   let mockUsgsCount: ReturnType<typeof vi.fn>;
   let mockEmscCount: ReturnType<typeof vi.fn>;
 
@@ -217,65 +217,65 @@ describe('earthquakeCount — queryEcho enrichment (issue #21)', () => {
   });
 
   it('discloses the server-resolved 30-day window when start_time is omitted', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ min_magnitude: 5, end_time: '2026-06-30' });
-    await earthquakeCount.handler(input, ctx);
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ min_magnitude: 5, end_time: '2026-06-30' });
+    await earthquakeCountEvents.handler(input, ctx);
 
     const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
     expect(echo).toMatchObject({
       start_time: new Date(new Date('2026-06-30').getTime() - 30 * 86_400_000).toISOString(),
-      end_time: '2026-06-30',
+      end_time: '2026-06-30T00:00:00',
       min_magnitude: 5,
       source: 'usgs',
     });
   });
 
   it('a bare count still carries the window it covers', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ min_magnitude: 5 });
-    await earthquakeCount.handler(input, ctx);
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ min_magnitude: 5 });
+    await earthquakeCountEvents.handler(input, ctx);
 
     const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
     expect(echo.start_time).toBeDefined();
     expect(typeof echo.start_time).toBe('string');
   });
 
-  it('passes an explicit start_time through to the echo unchanged', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({
+  it('echoes an explicit date-only start_time as midnight', async () => {
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({
       start_time: '2025-01-01',
       end_time: '2026-01-01',
       min_magnitude: 5,
     });
-    await earthquakeCount.handler(input, ctx);
+    await earthquakeCountEvents.handler(input, ctx);
 
     const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
-    expect(echo.start_time).toBe('2025-01-01');
-    expect(echo.end_time).toBe('2026-01-01');
+    expect(echo.start_time).toBe('2025-01-01T00:00:00');
+    expect(echo.end_time).toBe('2026-01-01T00:00:00');
   });
 
   it('includes USGS-only filters in the echo for source=usgs', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({
       alert_level: 'yellow',
       min_felt: 10,
       min_significance: 600,
     });
-    await earthquakeCount.handler(input, ctx);
+    await earthquakeCountEvents.handler(input, ctx);
 
     const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
     expect(echo).toMatchObject({ alert_level: 'yellow', min_felt: 10, min_significance: 600 });
   });
 
   it('omits USGS-only filters from the echo for source=emsc (not sent upstream)', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({
       source: 'emsc',
       alert_level: 'yellow',
       min_felt: 10,
       min_significance: 600,
     });
-    await earthquakeCount.handler(input, ctx);
+    await earthquakeCountEvents.handler(input, ctx);
 
     const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
     expect(echo.source).toBe('emsc');
@@ -285,20 +285,20 @@ describe('earthquakeCount — queryEcho enrichment (issue #21)', () => {
   });
 
   it('echoes the radius filters for a location-scoped count', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({
       latitude: 35.0,
       longitude: 139.0,
       radius_km: 100,
     });
-    await earthquakeCount.handler(input, ctx);
+    await earthquakeCountEvents.handler(input, ctx);
 
     const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
     expect(echo).toMatchObject({ latitude: 35.0, longitude: 139.0, radius_km: 100 });
   });
 
   it('renders queryEcho as a markdown trailer line, not a JSON blob', () => {
-    const render = earthquakeCount.enrichmentTrailer?.queryEcho?.render;
+    const render = earthquakeCountEvents.enrichmentTrailer?.queryEcho?.render;
     expect(render).toBeDefined();
     const text = render!({
       start_time: '2026-05-31T00:00:00.000Z',
@@ -311,7 +311,7 @@ describe('earthquakeCount — queryEcho enrichment (issue #21)', () => {
   });
 });
 
-describe('earthquakeCount — ignored USGS-only filters for EMSC (issue #16)', () => {
+describe('earthquakeCountEvents — ignored USGS-only filters for EMSC (issue #16)', () => {
   let mockUsgsCount: ReturnType<typeof vi.fn>;
   let mockEmscCount: ReturnType<typeof vi.fn>;
 
@@ -331,27 +331,27 @@ describe('earthquakeCount — ignored USGS-only filters for EMSC (issue #16)', (
   });
 
   it('names alert_level when an EMSC count supplies it', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({
       source: 'emsc',
       min_magnitude: 4.5,
       alert_level: 'red',
     });
-    const result = await earthquakeCount.handler(input, ctx);
+    const result = await earthquakeCountEvents.handler(input, ctx);
 
     expect(result.count).toBe(638);
     expect(getEnrichment(ctx).ignoredFilters).toEqual(['alert_level']);
   });
 
   it('names every dropped filter, in schema order', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({
       source: 'emsc',
       alert_level: 'yellow',
       min_felt: 10,
       min_significance: 600,
     });
-    await earthquakeCount.handler(input, ctx);
+    await earthquakeCountEvents.handler(input, ctx);
 
     expect(getEnrichment(ctx).ignoredFilters).toEqual([
       'alert_level',
@@ -361,43 +361,43 @@ describe('earthquakeCount — ignored USGS-only filters for EMSC (issue #16)', (
   });
 
   it('names min_felt alone', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ source: 'emsc', min_felt: 25 });
-    await earthquakeCount.handler(input, ctx);
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ source: 'emsc', min_felt: 25 });
+    await earthquakeCountEvents.handler(input, ctx);
 
     expect(getEnrichment(ctx).ignoredFilters).toEqual(['min_felt']);
   });
 
   it('names min_significance alone', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ source: 'emsc', min_significance: 600 });
-    await earthquakeCount.handler(input, ctx);
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ source: 'emsc', min_significance: 600 });
+    await earthquakeCountEvents.handler(input, ctx);
 
     expect(getEnrichment(ctx).ignoredFilters).toEqual(['min_significance']);
   });
 
   it('stays absent for a USGS count, where the filters are applied', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({
       alert_level: 'yellow',
       min_felt: 10,
       min_significance: 600,
     });
-    await earthquakeCount.handler(input, ctx);
+    await earthquakeCountEvents.handler(input, ctx);
 
     expect(getEnrichment(ctx).ignoredFilters).toBeUndefined();
   });
 
   it('stays absent for an EMSC count that supplies no USGS-only filter', async () => {
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ source: 'emsc', min_magnitude: 4.5 });
-    await earthquakeCount.handler(input, ctx);
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ source: 'emsc', min_magnitude: 4.5 });
+    await earthquakeCountEvents.handler(input, ctx);
 
     expect(getEnrichment(ctx).ignoredFilters).toBeUndefined();
   });
 
   it('renders the dropped filters into content[] with the consequence spelled out', () => {
-    const render = earthquakeCount.enrichmentTrailer?.ignoredFilters?.render;
+    const render = earthquakeCountEvents.enrichmentTrailer?.ignoredFilters?.render;
     expect(render).toBeDefined();
 
     const text = render!(['alert_level', 'min_significance']);
@@ -409,10 +409,10 @@ describe('earthquakeCount — ignored USGS-only filters for EMSC (issue #16)', (
   });
 });
 
-describe('earthquakeCount — EMSC described as a global catalog (issue #23)', () => {
+describe('earthquakeCountEvents — EMSC described as a global catalog (issue #23)', () => {
   const sourceDescription = () =>
-    earthquakeCount.input.shape.source.description ??
-    earthquakeCount.input.shape.source.def.innerType?.description ??
+    earthquakeCountEvents.input.shape.source.description ??
+    earthquakeCountEvents.input.shape.source.def.innerType?.description ??
     '';
 
   it('does not scope the EMSC catalog to a region', () => {
@@ -425,11 +425,11 @@ describe('earthquakeCount — EMSC described as a global catalog (issue #23)', (
   });
 
   it('leaves usgs as the default source', () => {
-    expect(earthquakeCount.input.parse({}).source).toBe('usgs');
+    expect(earthquakeCountEvents.input.parse({}).source).toBe('usgs');
   });
 });
 
-describe('earthquakeCount — upstream 4xx reason reaches the caller (issue #26)', () => {
+describe('earthquakeCountEvents — upstream 4xx reason reaches the caller (issue #26)', () => {
   let mockUsgsCount: ReturnType<typeof vi.fn>;
   let mockEmscCount: ReturnType<typeof vi.fn>;
 
@@ -476,9 +476,9 @@ Service version: v 2.2
   it('folds the USGS reason into the message, which is what content[] renders', async () => {
     mockUsgsCount.mockRejectedValue(upstreamError(400, usgsBody));
 
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ start_time: '2026-13-45' });
-    const err = (await Promise.resolve(earthquakeCount.handler(input, ctx)).catch(
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ start_time: '2026-13-45' });
+    const err = (await Promise.resolve(earthquakeCountEvents.handler(input, ctx)).catch(
       (e) => e,
     )) as McpError;
 
@@ -491,10 +491,10 @@ Service version: v 2.2
   it('carries the contract recovery hint and status in structuredContent data', async () => {
     mockUsgsCount.mockRejectedValue(upstreamError(400, usgsBody));
 
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ start_time: '2026-13-45' });
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ start_time: '2026-13-45' });
 
-    await expect(earthquakeCount.handler(input, ctx)).rejects.toMatchObject({
+    await expect(earthquakeCountEvents.handler(input, ctx)).rejects.toMatchObject({
       code: JsonRpcErrorCode.InvalidParams,
       data: {
         reason: 'upstream_rejected',
@@ -507,9 +507,9 @@ Service version: v 2.2
   it('does the same for EMSC, whose 400 is worded differently', async () => {
     mockEmscCount.mockRejectedValue(upstreamError(400, emscBody));
 
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ source: 'emsc', start_time: '2026-13-45' });
-    const err = (await Promise.resolve(earthquakeCount.handler(input, ctx)).catch(
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ source: 'emsc', start_time: '2026-13-45' });
+    const err = (await Promise.resolve(earthquakeCountEvents.handler(input, ctx)).catch(
       (e) => e,
     )) as McpError;
 
@@ -522,10 +522,10 @@ Service version: v 2.2
   it('leaves a 5xx on the source_unavailable contract', async () => {
     mockUsgsCount.mockRejectedValue(upstreamError(503, 'Error 503: Service Unavailable'));
 
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ min_magnitude: 5 });
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ min_magnitude: 5 });
 
-    await expect(earthquakeCount.handler(input, ctx)).rejects.toMatchObject({
+    await expect(earthquakeCountEvents.handler(input, ctx)).rejects.toMatchObject({
       code: JsonRpcErrorCode.ServiceUnavailable,
       data: { reason: 'source_unavailable', recovery: { hint: expect.any(String) } },
     });

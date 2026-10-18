@@ -16,6 +16,13 @@ import {
 const DAY_MS = 86_400_000;
 
 describe('defaultStartTime', () => {
+  it('anchors offsetless FDSN midnight in UTC for date-only and explicit forms', () => {
+    const expected = '2026-09-10T00:00:00.000Z';
+    expect(buildQueryParams({ end_time: '2026-10-10' }).startTime).toBe(expected);
+    expect(buildQueryParams({ end_time: '2026-10-10T00:00:00' }).startTime).toBe(expected);
+    expect(buildQueryParams({ end_time: '2026-10-10T02:00:00+02:00' }).startTime).toBe(expected);
+  });
+
   it('resolves to exactly 30 days before an explicit end_time', () => {
     expect(defaultStartTime('2026-06-30')).toBe(
       new Date(new Date('2026-06-30').getTime() - 30 * DAY_MS).toISOString(),
@@ -41,13 +48,13 @@ describe('buildQueryParams', () => {
     expect(params.startTime).toBe(
       new Date(new Date('2026-06-30').getTime() - 30 * DAY_MS).toISOString(),
     );
-    expect(params.endTime).toBe('2026-06-30');
+    expect(params.endTime).toBe('2026-06-30T00:00:00');
     expect(params.minMagnitude).toBe(5);
   });
 
-  it('passes an explicit start_time through unchanged', () => {
+  it('resolves an explicit date-only start_time to midnight', () => {
     const params = buildQueryParams({ start_time: '2026-05-31', end_time: '2026-06-30' });
-    expect(params.startTime).toBe('2026-05-31');
+    expect(params.startTime).toBe('2026-05-31T00:00:00');
   });
 
   it('maps all filter fields to their FDSN param names', () => {
@@ -67,8 +74,8 @@ describe('buildQueryParams', () => {
       event_type: 'quarry blast',
     });
     expect(params).toEqual({
-      startTime: '2026-01-01',
-      endTime: '2026-02-01',
+      startTime: '2026-01-01T00:00:00',
+      endTime: '2026-02-01T00:00:00',
       minMagnitude: 2.5,
       maxMagnitude: 8,
       latitude: 35,
@@ -118,17 +125,30 @@ describe('ignoredUsgsFilters', () => {
 
 describe('normalizeFdsnTimestamp (issue #29)', () => {
   it.each([
-    ['2020', '2020-01-01'],
-    ['2020-3', '2020-03-01'],
-    ['2020-3-5', '2020-03-05'],
-    ['2020-03-5', '2020-03-05'],
-    ['2020-3-05', '2020-03-05'],
+    '2026-05-23T04:05',
+    '2026-05-23 04:05:06.123456-0700',
+    '2026-05-23T04:05:06.123456+02:30',
+  ])('preserves the explicit timestamp bytes for %s', (value) => {
+    expect(normalizeFdsnTimestamp(value)).toBe(value);
+    expect(buildQueryParams({ start_time: value, end_time: value })).toMatchObject({
+      startTime: value,
+      endTime: value,
+    });
+  });
+
+  it.each([
+    ['2020', '2020-01-01T00:00:00'],
+    ['2020-3', '2020-03-01T00:00:00'],
+    ['2020-3-5', '2020-03-05T00:00:00'],
+    ['2020-03-05', '2020-03-05T00:00:00'],
+    ['2020-03-5', '2020-03-05T00:00:00'],
+    ['2020-3-05', '2020-03-05T00:00:00'],
   ])('expands and zero-pads %s to %s', (input, expected) => {
     expect(normalizeFdsnTimestamp(input)).toBe(expected);
   });
 
   it.each([
-    '2020-03-05',
+    '2020-03-05T00:00:00',
     '2026-05-23T00:00:00',
     '2020-03-05T00:00:00.000Z',
     '2026-05-23T00:00:00+02:00',
@@ -144,7 +164,7 @@ describe('normalizeFdsnTimestamp (issue #29)', () => {
   it('leaves a calendar-invalid but digit-shaped value for the upstream to reject', () => {
     // Local validation is shape-only on purpose — USGS names the offending parameter
     // far better than a local calendar check could.
-    expect(normalizeFdsnTimestamp('2026-13-45')).toBe('2026-13-45');
+    expect(normalizeFdsnTimestamp('2026-13-45')).toBe('2026-13-45T00:00:00');
   });
 
   it('returns an unrecognized value unchanged rather than inventing a date', () => {
@@ -188,18 +208,18 @@ describe('FDSN_TIMESTAMP_PATTERN (issue #29)', () => {
 
 describe('buildQueryParams — timestamp normalization (issue #29)', () => {
   it('normalizes an explicit start_time before it reaches either adapter', () => {
-    expect(buildQueryParams({ start_time: '2020-3-5' }).startTime).toBe('2020-03-05');
-    expect(buildQueryParams({ start_time: '2020' }).startTime).toBe('2020-01-01');
+    expect(buildQueryParams({ start_time: '2020-3-5' }).startTime).toBe('2020-03-05T00:00:00');
+    expect(buildQueryParams({ start_time: '2020' }).startTime).toBe('2020-01-01T00:00:00');
   });
 
   it('normalizes end_time on the same rule', () => {
     const params = buildQueryParams({ start_time: '2020-01-01', end_time: '2020-3-5' });
-    expect(params.endTime).toBe('2020-03-05');
+    expect(params.endTime).toBe('2020-03-05T00:00:00');
   });
 
   it('anchors the 30-day default to the normalized end_time, not the raw one', () => {
     const params = buildQueryParams({ end_time: '2020' });
-    expect(params.endTime).toBe('2020-01-01');
+    expect(params.endTime).toBe('2020-01-01T00:00:00');
     expect(params.startTime).toBe(
       new Date(new Date('2020-01-01').getTime() - 30 * DAY_MS).toISOString(),
     );
@@ -211,7 +231,7 @@ describe('buildQueryParams — timestamp normalization (issue #29)', () => {
   });
 
   it('forwards a calendar-invalid date so the upstream is what rejects it', () => {
-    expect(buildQueryParams({ start_time: '2026-13-45' }).startTime).toBe('2026-13-45');
+    expect(buildQueryParams({ start_time: '2026-13-45' }).startTime).toBe('2026-13-45T00:00:00');
   });
 });
 

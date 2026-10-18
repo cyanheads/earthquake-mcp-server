@@ -1,6 +1,6 @@
 # earthquake-mcp-server - Directory Structure
 
-Generated on: 2026-10-10 23:37:45
+Generated on: 2026-10-18 12:05:05
 
 ```text
 earthquake-mcp-server/
@@ -147,21 +147,23 @@ earthquake-mcp-server/
 │   │   │   └── definitions/
 │   │   │       ├── earthquake-event.resource.ts
 │   │   │       └── earthquake-feed.resource.ts
-│   │   └── tools/
-│   │       ├── definitions/
-│   │       │   ├── earthquake-count.tool.ts
-│   │       │   ├── earthquake-get-event.tool.ts
-│   │       │   ├── earthquake-get-feed.tool.ts
-│   │       │   └── earthquake-search.tool.ts
-│   │       ├── fdsn-error.ts
-│   │       ├── query-params.ts
-│   │       └── schemas.ts
+│   │   ├── tools/
+│   │   │   ├── definitions/
+│   │   │   │   ├── earthquake-count-events.tool.ts
+│   │   │   │   ├── earthquake-get-event.tool.ts
+│   │   │   │   ├── earthquake-get-feed.tool.ts
+│   │   │   │   └── earthquake-search-events.tool.ts
+│   │   │   ├── fdsn-error.ts
+│   │   │   ├── query-params.ts
+│   │   │   └── schemas.ts
+│   │   └── page-budget.ts
 │   ├── services/
 │   │   ├── emsc/
 │   │   │   └── emsc-service.ts
-│   │   └── usgs/
-│   │       ├── types.ts
-│   │       └── usgs-service.ts
+│   │   ├── usgs/
+│   │   │   ├── types.ts
+│   │   │   └── usgs-service.ts
+│   │   └── feed-snapshots.ts
 │   └── index.ts
 ├── tests/
 │   ├── config/
@@ -175,18 +177,22 @@ earthquake-mcp-server/
 │   ├── services/
 │   │   ├── cancellation.test.ts
 │   │   ├── emsc-service.test.ts
+│   │   ├── feed-snapshots.test.ts
 │   │   └── usgs-service.test.ts
 │   └── tools/
 │       ├── advertised-wire-contract.test.ts
-│       ├── earthquake-count-edge-cases.test.ts
-│       ├── earthquake-count.tool.test.ts
+│       ├── date-midnight-contract.test.ts
+│       ├── earthquake-count-events-edge-cases.test.ts
+│       ├── earthquake-count-events.tool.test.ts
 │       ├── earthquake-get-event-edge-cases.test.ts
 │       ├── earthquake-get-event.tool.test.ts
 │       ├── earthquake-get-feed-edge-cases.test.ts
 │       ├── earthquake-get-feed.tool.test.ts
-│       ├── earthquake-search-edge-cases.test.ts
-│       ├── earthquake-search.tool.test.ts
+│       ├── earthquake-search-events-edge-cases.test.ts
+│       ├── earthquake-search-events.tool.test.ts
 │       ├── fdsn-error.test.ts
+│       ├── feed-retention.test.ts
+│       ├── paging-wire.test.ts
 │       ├── query-params.test.ts
 │       ├── schemas.test.ts
 │       ├── shared-filter-surface.test.ts

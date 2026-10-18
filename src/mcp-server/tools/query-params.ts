@@ -1,6 +1,6 @@
 /**
  * @fileoverview Shared tool-input filter schema and FDSN query-param builder for
- * earthquake_search and earthquake_count. Owns the single copy of every filter validator
+ * earthquake_search_events and earthquake_count_events. Owns the single copy of every filter validator
  * the two tools share, so a bound can never drift between them. Resolves the documented
  * 30-day default time window server-side so USGS and EMSC behave identically (EMSC applies
  * no upstream default and would otherwise query its entire catalog), normalizes recoverable
@@ -36,8 +36,8 @@ const FDSN_DATE_PARTS = /^(\d{4})(?:-(\d{1,2})(?:-(\d{1,2}))?)?(.*)$/;
  * Zero-pads an unpadded month or day and expands a bare year (or year-month) to the first
  * day of the period — `2020` means nothing to USGS (HTTP 200, zero matches) and means
  * `2020-01-01` to EMSC, so the divergence is resolved here rather than left to `source`.
- * Any value the pattern above admits is returned in `YYYY-MM-DD` form with its time part
- * untouched; anything else is returned unchanged for the upstream to reject.
+ * Date-only bounds use explicit midnight (`T00:00:00`) so EMSC cannot interpret an end
+ * date as the whole named day. Existing time and timezone suffixes remain untouched.
  */
 export function normalizeFdsnTimestamp(value: string): string {
   const parts = FDSN_DATE_PARTS.exec(value);
@@ -45,11 +45,11 @@ export function normalizeFdsnTimestamp(value: string): string {
   if (year === undefined) return value;
   const month = (parts?.[2] ?? '1').padStart(2, '0');
   const day = (parts?.[3] ?? '1').padStart(2, '0');
-  return `${year}-${month}-${day}${parts?.[4] ?? ''}`;
+  return `${year}-${month}-${day}${parts?.[4] || 'T00:00:00'}`;
 }
 
 /**
- * Filter validators shared by the earthquake_search and earthquake_count input schemas.
+ * Filter validators shared by the earthquake_search_events and earthquake_count_events input schemas.
  * Each tool spreads this object into its own `z.object({ ...earthquakeFilterFields, ... })`
  * and re-describes only the fields whose tool-specific wording earns it, so the bounds
  * themselves exist in exactly one place.
@@ -62,7 +62,7 @@ export const earthquakeFilterFields = {
     .describe(
       'Start of time range as ISO 8601 (e.g. "2026-01-01" or "2026-05-23T00:00:00"). ' +
         'A bare year expands to January 1st and an unpadded month or day is zero-padded, ' +
-        'so both sources honor the same window. ' +
+        'with date-only values resolved to midnight (T00:00:00) on both sources. Explicit time and timezone suffixes are preserved. ' +
         'Defaults to 30 days before end_time (or before the current time) if omitted — ' +
         'applied server-side so USGS and EMSC honor the same window.',
     ),
@@ -72,7 +72,7 @@ export const earthquakeFilterFields = {
     .optional()
     .describe(
       'End of time range as ISO 8601, in the same forms start_time accepts. ' +
-        'Defaults to current time if omitted.',
+        'Date-only values mean midnight at the start of the named day, not the whole day. Defaults to current time if omitted.',
     ),
   min_magnitude: z
     .number()
@@ -193,7 +193,7 @@ export const earthquakeFilterFields = {
 
 const earthquakeFilterSchema = z.object(earthquakeFilterFields);
 
-/** Filter inputs shared by the earthquake_search and earthquake_count input schemas. */
+/** Filter inputs shared by the earthquake_search_events and earthquake_count_events input schemas. */
 export type EarthquakeFilterInput = z.infer<typeof earthquakeFilterSchema>;
 
 /**
@@ -223,11 +223,20 @@ const DAY_MS = 86_400_000;
 
 /**
  * Resolve the default start time: 30 days before end_time, or before now when
- * end_time is also omitted. Returns undefined for an unparseable end_time —
- * the upstream API rejects the bad end_time itself.
+ * end_time is also omitted. FDSN offsetless timestamps denote UTC. Returns undefined
+ * for an unparseable end_time — the upstream API rejects the bad end_time itself.
  */
 export function defaultStartTime(endTime?: string): string | undefined {
-  const anchor = endTime != null ? new Date(endTime) : new Date();
+  const suffix = endTime != null ? FDSN_DATE_PARTS.exec(endTime)?.[4]?.slice(-6) : undefined;
+  const utcEndTime =
+    endTime != null &&
+    suffix != null &&
+    !suffix.includes('Z') &&
+    !suffix.includes('+') &&
+    !suffix.includes('-')
+      ? `${normalizeFdsnTimestamp(endTime)}Z`
+      : endTime;
+  const anchor = utcEndTime != null ? new Date(utcEndTime) : new Date();
   if (Number.isNaN(anchor.getTime())) return;
   return new Date(anchor.getTime() - DEFAULT_WINDOW_DAYS * DAY_MS).toISOString();
 }

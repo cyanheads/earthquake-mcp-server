@@ -5,7 +5,12 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
-import { notFound, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
+import {
+  JsonRpcErrorCode,
+  McpError,
+  notFound,
+  serviceUnavailable,
+} from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { fetchWithTimeout, requestContextService, withRetry } from '@cyanheads/mcp-ts-core/utils';
 import type {
@@ -260,11 +265,16 @@ export class UsgsService {
     const reqCtx = makeReqCtx('UsgsService.getFeed', ctx);
 
     return withRetry(
-      async () => {
-        const response = await fetchWithTimeout(feedUrl, this.timeoutMs, reqCtx, {
-          signal: ctx.signal,
-          headers: { Accept: 'application/json' },
-        });
+      async ({ signal, remainingMs }) => {
+        const response = await fetchWithTimeout(
+          feedUrl,
+          Math.min(this.timeoutMs, remainingMs),
+          reqCtx,
+          {
+            signal,
+            headers: { Accept: 'application/json' },
+          },
+        );
 
         // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
         // returning, so a Response here is always 2xx.
@@ -288,6 +298,7 @@ export class UsgsService {
       },
       {
         operation: 'UsgsService.getFeed',
+        deadlineMs: 50_000,
         context: reqCtx,
         baseDelayMs: 1000,
         signal: ctx.signal,
@@ -315,13 +326,19 @@ export class UsgsService {
     const query = this.buildFdsnQuery(params);
     const url = `${this.baseUrl}/fdsnws/event/1/query?format=geojson&${query}`;
     const reqCtx = makeReqCtx('UsgsService.searchEvents', ctx);
+    const deadline = Date.now() + 50_000;
 
     const result = await withRetry(
-      async () => {
-        const response = await fetchWithTimeout(url, this.timeoutMs, reqCtx, {
-          signal: ctx.signal,
-          headers: { Accept: 'application/json' },
-        });
+      async ({ signal, remainingMs }) => {
+        const response = await fetchWithTimeout(
+          url,
+          Math.min(this.timeoutMs, remainingMs),
+          reqCtx,
+          {
+            signal,
+            headers: { Accept: 'application/json' },
+          },
+        );
 
         // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
         // returning, so a Response here is always 2xx.
@@ -340,6 +357,7 @@ export class UsgsService {
       },
       {
         operation: 'UsgsService.searchEvents',
+        deadlineMs: 50_000,
         context: reqCtx,
         baseDelayMs: 1000,
         signal: ctx.signal,
@@ -356,9 +374,18 @@ export class UsgsService {
       // limit, and orderBy are stripped so every page reports the same total.
       const { limit: _limit, offset: _offset, orderBy: _orderBy, ...countParams } = params;
       try {
-        const { count: totalCount } = await this.countEvents(countParams, ctx);
+        const { count: totalCount } = await this.countEvents(
+          countParams,
+          ctx,
+          Math.max(1, deadline - Date.now()),
+        );
         return { ...result, totalCount };
       } catch (err) {
+        if (
+          ctx.signal?.aborted ||
+          (err instanceof McpError && err.code === JsonRpcErrorCode.RequestCancelled)
+        )
+          throw err;
         ctx.log.warning('Count sub-call for totalCount failed — returning results without it', {
           error: err instanceof Error ? err.message : String(err),
         });
@@ -426,6 +453,7 @@ export class UsgsService {
   countEvents(
     params: EarthquakeQueryParams,
     ctx: Context,
+    deadlineMs?: number,
   ): Promise<{
     count: number;
     maxAllowed: number | null;
@@ -436,11 +464,16 @@ export class UsgsService {
     const reqCtx = makeReqCtx('UsgsService.countEvents', ctx);
 
     return withRetry(
-      async () => {
-        const response = await fetchWithTimeout(url, this.timeoutMs, reqCtx, {
-          signal: ctx.signal,
-          headers: { Accept: 'application/json' },
-        });
+      async ({ signal, remainingMs }) => {
+        const response = await fetchWithTimeout(
+          url,
+          Math.min(this.timeoutMs, remainingMs),
+          reqCtx,
+          {
+            signal,
+            headers: { Accept: 'application/json' },
+          },
+        );
 
         // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
         // returning, so a Response here is always 2xx.
@@ -459,6 +492,7 @@ export class UsgsService {
       },
       {
         operation: 'UsgsService.countEvents',
+        ...(deadlineMs != null ? { deadlineMs } : {}),
         context: reqCtx,
         baseDelayMs: 1000,
         signal: ctx.signal,

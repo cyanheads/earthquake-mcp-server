@@ -20,10 +20,10 @@ import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { fetchWithTimeout, requestContextService } from '@cyanheads/mcp-ts-core/utils';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { earthquakeEventResource } from '@/mcp-server/resources/definitions/earthquake-event.resource.js';
-import { earthquakeCount } from '@/mcp-server/tools/definitions/earthquake-count.tool.js';
+import { earthquakeCountEvents } from '@/mcp-server/tools/definitions/earthquake-count-events.tool.js';
 import { earthquakeGetEvent } from '@/mcp-server/tools/definitions/earthquake-get-event.tool.js';
 import { earthquakeGetFeed } from '@/mcp-server/tools/definitions/earthquake-get-feed.tool.js';
-import { earthquakeSearch } from '@/mcp-server/tools/definitions/earthquake-search.tool.js';
+import { earthquakeSearchEvents } from '@/mcp-server/tools/definitions/earthquake-search-events.tool.js';
 import * as usgsModule from '@/services/usgs/usgs-service.js';
 
 /** What `fetchWithTimeout` raises on a deadline overrun, as the services see it. */
@@ -73,36 +73,36 @@ describe('tool contracts — an upstream timeout lands on a declared reason', ()
     vi.restoreAllMocks();
   });
 
-  it('earthquake_search maps a timeout to source_timeout with the contract hint', async () => {
+  it('earthquake_search_events maps a timeout to source_timeout with the contract hint', async () => {
     vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
       searchEvents: vi.fn().mockRejectedValue(upstreamTimeout()),
     } as unknown as usgsModule.UsgsService);
 
-    const ctx = createMockContext({ errors: earthquakeSearch.errors });
-    const input = earthquakeSearch.input.parse({ min_magnitude: 5.0 });
+    const ctx = createMockContext({ errors: earthquakeSearchEvents.errors });
+    const input = earthquakeSearchEvents.input.parse({ min_magnitude: 5.0 });
 
-    await expect(earthquakeSearch.handler(input, ctx)).rejects.toMatchObject({
+    await expect(earthquakeSearchEvents.handler(input, ctx)).rejects.toMatchObject({
       code: JsonRpcErrorCode.Timeout,
       data: {
         reason: 'source_timeout',
-        recovery: { hint: contractRecovery(earthquakeSearch.errors, 'source_timeout') },
+        recovery: { hint: contractRecovery(earthquakeSearchEvents.errors, 'source_timeout') },
       },
     });
   });
 
-  it('earthquake_count maps a timeout to source_timeout with the contract hint', async () => {
+  it('earthquake_count_events maps a timeout to source_timeout with the contract hint', async () => {
     vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
       countEvents: vi.fn().mockRejectedValue(upstreamTimeout()),
     } as unknown as usgsModule.UsgsService);
 
-    const ctx = createMockContext({ errors: earthquakeCount.errors });
-    const input = earthquakeCount.input.parse({ min_magnitude: 5.0 });
+    const ctx = createMockContext({ errors: earthquakeCountEvents.errors });
+    const input = earthquakeCountEvents.input.parse({ min_magnitude: 5.0 });
 
-    await expect(earthquakeCount.handler(input, ctx)).rejects.toMatchObject({
+    await expect(earthquakeCountEvents.handler(input, ctx)).rejects.toMatchObject({
       code: JsonRpcErrorCode.Timeout,
       data: {
         reason: 'source_timeout',
-        recovery: { hint: contractRecovery(earthquakeCount.errors, 'source_timeout') },
+        recovery: { hint: contractRecovery(earthquakeCountEvents.errors, 'source_timeout') },
       },
     });
   });
@@ -129,10 +129,10 @@ describe('tool contracts — an upstream timeout lands on a declared reason', ()
       searchEvents: vi.fn().mockRejectedValue(upstreamTimeout()),
     } as unknown as usgsModule.UsgsService);
 
-    const ctx = createMockContext({ errors: earthquakeSearch.errors });
-    const input = earthquakeSearch.input.parse({ min_magnitude: 5.0 });
+    const ctx = createMockContext({ errors: earthquakeSearchEvents.errors });
+    const input = earthquakeSearchEvents.input.parse({ min_magnitude: 5.0 });
 
-    await expect(earthquakeSearch.handler(input, ctx)).rejects.not.toMatchObject({
+    await expect(earthquakeSearchEvents.handler(input, ctx)).rejects.not.toMatchObject({
       data: { reason: 'source_unavailable' },
     });
   });
@@ -175,8 +175,8 @@ describe('tool contracts — an upstream timeout lands on a declared reason', ()
     // A tool or resource with no timeout reason lets the framework's Timeout code
     // bubble with no recovery hint — the gap issue #28 closed on the event lookup.
     const declared = [
-      earthquakeSearch.errors,
-      earthquakeCount.errors,
+      earthquakeSearchEvents.errors,
+      earthquakeCountEvents.errors,
       earthquakeGetFeed.errors,
       earthquakeGetEvent.errors,
       earthquakeEventResource.errors,

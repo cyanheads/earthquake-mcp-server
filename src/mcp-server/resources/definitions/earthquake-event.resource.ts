@@ -16,7 +16,7 @@ export const earthquakeEventResource = resource('earthquake://event/{event_id}',
     'Returns the normalized event plus the analysis products only the single-event response ' +
     'holds: PAGER alert, ShakeMap ground motion, DYFI felt reports, moment tensor, ground-failure ' +
     'alerts, origin quality, and finite-fault rupture dimensions, each omitted when USGS ' +
-    'produced none. Use event IDs from earthquake_get_feed or earthquake_search results.',
+    'produced none. Use event IDs from earthquake_get_feed or earthquake_search_events results.',
   mimeType: 'application/json',
 
   params: z.object({
@@ -46,7 +46,7 @@ export const earthquakeEventResource = resource('earthquake://event/{event_id}',
       when: 'The USGS event API returns a 5xx, serves HTML, or is unreachable.',
       retryable: true,
       recovery:
-        'Retry after a short delay. The same event also appears in earthquake_search and ' +
+        'Retry after a short delay. The same event also appears in earthquake_search_events and ' +
         'earthquake_get_feed results, which carry the normalized record without the products.',
     },
     {
@@ -56,7 +56,7 @@ export const earthquakeEventResource = resource('earthquake://event/{event_id}',
       retryable: true,
       recovery:
         'Retry the same event ID — a single-event lookup carries no filters to reduce. If it ' +
-        'keeps timing out, read the event from an earthquake_search or earthquake_get_feed result.',
+        'keeps timing out, read the event from an earthquake_search_events or earthquake_get_feed result.',
     },
   ],
 
@@ -83,7 +83,7 @@ export const earthquakeEventResource = resource('earthquake://event/{event_id}',
               ? {
                   retryable: false,
                   recovery: {
-                    hint: 'Do not retry this USGS lookup: it is not implemented upstream. Use earthquake_search with source=emsc to find the event by time and location.',
+                    hint: 'Do not retry this USGS lookup: it is not implemented upstream. Use earthquake_search_events with source=emsc to find the event by time and location.',
                   },
                 }
               : {}),

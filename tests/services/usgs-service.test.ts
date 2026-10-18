@@ -140,7 +140,11 @@ describe('UsgsService.searchEvents — totalCount count sub-call (issue #11)', (
     expect(result.count).toBe(3);
     expect(result.totalCount).toBe(4821);
     // Count sub-call reuses the query filters but strips limit/orderBy
-    expect(countSpy).toHaveBeenCalledWith({ minMagnitude: 5 }, expect.anything());
+    expect(countSpy).toHaveBeenCalledWith(
+      { minMagnitude: 5 },
+      expect.anything(),
+      expect.any(Number),
+    );
     vi.unstubAllGlobals();
   });
 
@@ -245,7 +249,11 @@ describe('UsgsService — FDSN offset forwarding (issue #19)', () => {
       createMockContext() as Context,
     );
 
-    expect(countSpy).toHaveBeenCalledWith({ minMagnitude: 5 }, expect.anything());
+    expect(countSpy).toHaveBeenCalledWith(
+      { minMagnitude: 5 },
+      expect.anything(),
+      expect.any(Number),
+    );
     vi.unstubAllGlobals();
   });
 });

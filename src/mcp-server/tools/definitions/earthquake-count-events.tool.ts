@@ -1,6 +1,6 @@
 /**
  * @fileoverview Tool definition for counting earthquakes matching filters without fetching full records.
- * @module mcp-server/tools/definitions/earthquake-count.tool
+ * @module mcp-server/tools/definitions/earthquake-count-events.tool
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
@@ -16,12 +16,12 @@ import { getEmscService } from '@/services/emsc/emsc-service.js';
 import type { EarthquakeQueryParams } from '@/services/usgs/types.js';
 import { getUsgsService, type UsgsService } from '@/services/usgs/usgs-service.js';
 
-export const earthquakeCount = tool('earthquake_count', {
+export const earthquakeCountEvents = tool('earthquake_count_events', {
   title: 'Count Earthquakes',
   description:
     'Count earthquakes matching filters without fetching full records. ' +
     'Use for statistical queries ("how many M5+ earthquakes in 2025?") or to gauge result size ' +
-    'before calling earthquake_search. ' +
+    'before calling earthquake_search_events. ' +
     'Omitting start_time counts only the last 30 days, so pass an explicit range for any ' +
     'period-specific question; queryEcho reports the window and filters the count actually covers. ' +
     'When exceeds_limit is true, the count exceeds 20,000 and a full search would be truncated — ' +
@@ -75,7 +75,7 @@ export const earthquakeCount = tool('earthquake_count', {
     exceeds_limit: z
       .boolean()
       .describe(
-        'True when count exceeds 20000 — a full earthquake_search would be truncated. ' +
+        'True when count exceeds 20000 — a full earthquake_search_events would be truncated. ' +
           'For EMSC, evaluated against the known 20000 limit since max_allowed is not returned. ' +
           'Narrow filters to retrieve all matching events.',
       ),

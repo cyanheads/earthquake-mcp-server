@@ -55,7 +55,7 @@ describe('earthquakeFeedResource — handler service error propagation', () => {
   it('propagates service errors from getFeed', async () => {
     mockGetFeed.mockRejectedValue(new Error('CDN unavailable'));
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeFeedResource.errors });
     const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: '2.5',
       time_window: 'day',
@@ -70,7 +70,7 @@ describe('earthquakeFeedResource — handler service error propagation', () => {
       new McpError(JsonRpcErrorCode.ServiceUnavailable, 'USGS feed timeout', {}),
     );
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeFeedResource.errors });
     const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: '4.5',
       time_window: 'week',
@@ -100,7 +100,7 @@ describe('earthquakeFeedResource — field projection', () => {
       feedUrl: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson',
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeFeedResource.errors });
     const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: '2.5',
       time_window: 'day',
@@ -134,7 +134,7 @@ describe('earthquakeFeedResource — field projection', () => {
       feedUrl: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/1.0_day.geojson',
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeFeedResource.errors });
     const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: '1.0',
       time_window: 'day',
@@ -215,7 +215,7 @@ describe('earthquakeFeedResource — params validation', () => {
 
   it('handler throws validationError for invalid magnitude_tier', async () => {
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeFeedResource.errors });
     const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: '99.9',
       time_window: 'day',
@@ -228,7 +228,7 @@ describe('earthquakeFeedResource — params validation', () => {
 
   it('handler throws validationError for invalid time_window', async () => {
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeFeedResource.errors });
     const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: '2.5',
       time_window: 'century',
@@ -241,7 +241,7 @@ describe('earthquakeFeedResource — params validation', () => {
 
   it('handler throws validationError for injection-attempt tier', async () => {
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeFeedResource.errors });
     const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: "'; DROP TABLE events; --",
       time_window: 'day',
@@ -254,7 +254,7 @@ describe('earthquakeFeedResource — params validation', () => {
 
   it('handler throws validationError for injection-attempt window', async () => {
     const { JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeFeedResource.errors });
     const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: '2.5',
       time_window: '../../../etc/passwd',

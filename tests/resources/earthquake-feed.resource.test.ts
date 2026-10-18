@@ -60,7 +60,7 @@ describe('earthquakeFeedResource', () => {
       feedUrl: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson',
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeFeedResource.errors });
     const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: '2.5',
       time_window: 'day',
@@ -77,7 +77,7 @@ describe('earthquakeFeedResource', () => {
 
   it('throws validationError for invalid magnitude_tier', async () => {
     const { McpError, JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeFeedResource.errors });
     const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: 'invalid',
       time_window: 'day',
@@ -91,7 +91,7 @@ describe('earthquakeFeedResource', () => {
 
   it('throws validationError for invalid time_window', async () => {
     const { McpError, JsonRpcErrorCode } = await import('@cyanheads/mcp-ts-core/errors');
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeFeedResource.errors });
     const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: '2.5',
       time_window: 'decade',
@@ -111,7 +111,7 @@ describe('earthquakeFeedResource', () => {
       feedUrl: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson',
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeFeedResource.errors });
     for (const tier of ['all', '1.0', '2.5', '4.5', 'significant']) {
       const params = earthquakeFeedResource.params!.parse({
         magnitude_tier: tier,
@@ -130,7 +130,7 @@ describe('earthquakeFeedResource', () => {
       feedUrl: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_month.geojson',
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeFeedResource.errors });
     for (const window of ['hour', 'day', 'week', 'month']) {
       const params = earthquakeFeedResource.params!.parse({
         magnitude_tier: '2.5',
@@ -150,7 +150,7 @@ describe('earthquakeFeedResource', () => {
       feedUrl: 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.geojson',
     });
 
-    const ctx = createMockContext();
+    const ctx = createMockContext({ errors: earthquakeFeedResource.errors });
     const params = earthquakeFeedResource.params!.parse({
       magnitude_tier: '2.5',
       time_window: 'day',

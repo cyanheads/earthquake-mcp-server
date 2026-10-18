@@ -234,8 +234,9 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
     const input = earthquakeGetFeed.input.parse({ magnitude_tier: 'all', time_window: 'month' });
     const result = await earthquakeGetFeed.handler(input, ctx);
 
-    expect(result.count).toBe(100);
-    expect(result.events).toHaveLength(100);
+    expect(result.count).toBeGreaterThan(0);
+    expect(result.count).toBeLessThanOrEqual(100);
+    expect(result.events).toHaveLength(result.count);
     expect(getEnrichment(ctx).totalCount).toBe(10_656);
     expect(getEnrichment(ctx).truncated).toBe(true);
     expect(getEnrichment(ctx).nextCursor).toEqual(expect.any(String));
@@ -245,10 +246,10 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
     mockGetFeed.mockResolvedValue(bigFeed(500));
 
     const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
-    const input = earthquakeGetFeed.input.parse({ limit: 25 });
+    const input = earthquakeGetFeed.input.parse({ limit: 3 });
     const result = await earthquakeGetFeed.handler(input, ctx);
 
-    expect(result.count).toBe(25);
+    expect(result.count).toBe(3);
     expect(result.events[0]?.id).toBe('us0');
   });
 
@@ -269,9 +270,10 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
       seen.push(...result.events.map((e) => e.id));
       cursor = getEnrichment(ctx).nextCursor as string | undefined;
       pages += 1;
-    } while (cursor != null && pages < 10);
+    } while (cursor != null && pages < 30);
 
-    expect(pages).toBe(3);
+    expect(cursor).toBeUndefined();
+    expect(pages).toBeGreaterThan(3);
     expect(seen).toHaveLength(250);
     expect(new Set(seen).size).toBe(250);
     expect(seen[0]).toBe('us0');
@@ -279,22 +281,22 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
   });
 
   it('omits nextCursor on the last page', async () => {
-    mockGetFeed.mockResolvedValue(bigFeed(150));
+    mockGetFeed.mockResolvedValue(bigFeed(6));
 
     const firstCtx = createMockContext({ errors: earthquakeGetFeed.errors });
-    await earthquakeGetFeed.handler(earthquakeGetFeed.input.parse({ limit: 100 }), firstCtx);
+    await earthquakeGetFeed.handler(earthquakeGetFeed.input.parse({ limit: 4 }), firstCtx);
     const cursor = getEnrichment(firstCtx).nextCursor as string;
 
     const lastCtx = createMockContext({ errors: earthquakeGetFeed.errors });
     const result = await earthquakeGetFeed.handler(
-      earthquakeGetFeed.input.parse({ limit: 100, cursor }),
+      earthquakeGetFeed.input.parse({ limit: 4, cursor }),
       lastCtx,
     );
 
-    expect(result.count).toBe(50);
+    expect(result.count).toBe(2);
     expect(getEnrichment(lastCtx).nextCursor).toBeUndefined();
     expect(getEnrichment(lastCtx).truncated).toBeUndefined();
-    expect(getEnrichment(lastCtx).totalCount).toBe(150);
+    expect(getEnrichment(lastCtx).totalCount).toBe(6);
   });
 
   it('leaves a feed that fits in one page untruncated', async () => {
@@ -331,14 +333,13 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
     await expect(earthquakeGetFeed.handler(input, ctx)).rejects.toThrow(/cursor/i);
   });
 
-  it('reports an empty page past the end without claiming the feed is empty', async () => {
+  it('retains the initial events when the upstream feed shrinks', async () => {
     mockGetFeed.mockResolvedValue(bigFeed(10));
 
     const seedCtx = createMockContext({ errors: earthquakeGetFeed.errors });
     await earthquakeGetFeed.handler(earthquakeGetFeed.input.parse({ limit: 5 }), seedCtx);
     const cursor = getEnrichment(seedCtx).nextCursor as string;
 
-    // Shrink the feed under the cursor's offset, as a regeneration between calls would
     mockGetFeed.mockResolvedValue(bigFeed(3));
 
     const ctx = createMockContext({ errors: earthquakeGetFeed.errors });
@@ -347,10 +348,10 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
       ctx,
     );
 
-    expect(result.count).toBe(0);
-    expect(getEnrichment(ctx).totalCount).toBe(3);
-    const notice = getEnrichment(ctx).notice as string;
-    expect(notice).toContain('last one');
+    expect(result.count).toBe(5);
+    expect(result.events.map((event) => event.id)).toEqual(['us5', 'us6', 'us7', 'us8', 'us9']);
+    expect(getEnrichment(ctx).totalCount).toBe(10);
+    expect(getEnrichment(ctx).nextCursor).toBeUndefined();
   });
 
   it('still reports an empty feed as empty, not as a paging dead end', async () => {

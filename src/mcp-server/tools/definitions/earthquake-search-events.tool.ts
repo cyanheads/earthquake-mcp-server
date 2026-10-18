@@ -1,11 +1,12 @@
 /**
  * @fileoverview Tool definition for searching earthquakes via USGS or EMSC FDSN query API.
- * @module mcp-server/tools/definitions/earthquake-search.tool
+ * @module mcp-server/tools/definitions/earthquake-search-events.tool
  */
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
 import { getServerConfig } from '@/config/server-config.js';
+import { boundedPage, toolEnvelope } from '@/mcp-server/page-budget.js';
 import { upstreamRejection } from '@/mcp-server/tools/fdsn-error.js';
 import {
   buildQueryParams,
@@ -13,12 +14,40 @@ import {
   filterQueryEcho,
   ignoredUsgsFilters,
 } from '@/mcp-server/tools/query-params.js';
-import { EarthquakeEventSchema, formatEvent } from '@/mcp-server/tools/schemas.js';
+import {
+  type EarthquakeEventOutput,
+  EarthquakeEventSchema,
+  formatEvent,
+} from '@/mcp-server/tools/schemas.js';
 import { getEmscService } from '@/services/emsc/emsc-service.js';
 import type { EarthquakeQueryParams } from '@/services/usgs/types.js';
 import { getUsgsService, type UsgsService } from '@/services/usgs/usgs-service.js';
 
-export const earthquakeSearch = tool('earthquake_search', {
+function formatSearch(result: { source: string; count: number; events: EarthquakeEventOutput[] }) {
+  const lines = [`**Source:** ${result.source.toUpperCase()} | **Count:** ${result.count}`, ''];
+  if (result.count === 0) lines.push('_No events matched the query._');
+  else for (const event of result.events) lines.push(...formatEvent(event), '');
+  return [{ type: 'text' as const, text: lines.join('\n') }];
+}
+
+const searchTrailer = {
+  countUnavailable: {
+    render: () =>
+      '**Total match count unavailable:** the follow-up count query failed, so the total number of matches is unknown for this call. The returned events are unaffected.',
+  },
+  queryEcho: {
+    render: (q: object | undefined) =>
+      `**Query echo:** ${Object.entries(q ?? {})
+        .map(([key, value]) => `${key}=${String(value)}`)
+        .join(' · ')}`,
+  },
+  ignoredFilters: {
+    render: (f: string[] | undefined) =>
+      `**Ignored filters (not supported by EMSC, not sent upstream):** ${(f ?? []).join(', ')} — these results are NOT constrained by the listed filters. Re-run with source=usgs to apply them.`,
+  },
+};
+
+export const earthquakeSearchEvents = tool('earthquake_search_events', {
   title: 'Search Earthquakes',
   description:
     'Search earthquakes by time range, magnitude, depth, location radius, PAGER alert level, or felt reports. ' +
@@ -32,8 +61,8 @@ export const earthquakeSearch = tool('earthquake_search', {
     'its event_type, and event_type="earthquake" filters the rest out on USGS. ' +
     'USGS-specific filters (alert_level, event_type, min_felt, min_significance) are not sent when ' +
     'source=emsc — the response names them in ignoredFilters. ' +
-    'Use earthquake_count first to gauge result size before requesting large result sets. ' +
-    'A single call returns at most 20,000 events; larger result sets are retrieved by paging with ' +
+    'Use earthquake_count_events first to gauge result size before requesting large result sets. ' +
+    'A call accepts limit up to 20,000 but fetches at most 100 candidates and returns a 24,000-byte page; retrieve remaining results by paging with ' +
     'offset, which is passed straight through to the upstream FDSN API. When a result is capped, ' +
     'nextOffset carries the offset for the following page and totalCount the full match count — ' +
     'or countUnavailable reports that the count lookup failed and the total is unknown.',
@@ -66,7 +95,7 @@ export const earthquakeSearch = tool('earthquake_search', {
       .optional()
       .describe(
         'Maximum events to return per call. Default 100. ' +
-          'Large limits (>1000) may result in slow responses. Max 20000. ' +
+          'Accepts up to 20000; fetches at most 100 candidates and returns a byte-bounded page. ' +
           'Combine with offset to retrieve match sets larger than one call can return.',
       ),
     offset: z
@@ -113,14 +142,14 @@ export const earthquakeSearch = tool('earthquake_search', {
       .describe(
         'True when the follow-up total-count query failed, so the total is unknown for this ' +
           'call rather than never requested. The returned events are complete and unaffected; ' +
-          'only totalCount is missing. Retry earthquake_count with the same filters to recover ' +
+          'only totalCount is missing. Retry earthquake_count_events with the same filters to recover ' +
           'the total. Absent whenever the count succeeded or was never needed.',
       ),
     truncated: z
       .boolean()
       .optional()
       .describe(
-        'True when results were capped by the limit parameter. ' +
+        'True when results were capped by the requested limit, candidate limit, or response byte budget. ' +
           'totalCount carries the full match count when available, and nextOffset the input ' +
           'for the following page. With countUnavailable set the total is unknown, so this ' +
           'flag means the page was filled, not that more events are confirmed to remain.',
@@ -130,7 +159,7 @@ export const earthquakeSearch = tool('earthquake_search', {
       .optional()
       .describe(
         'Value to pass as the offset input to retrieve the next page, with every other input ' +
-          'unchanged. Present only when more events remain; absent means this was the last page.',
+          'unchanged. Present when more events remain or may remain with an unknown total; absent means this was the last page.',
       ),
     notice: z
       .string()
@@ -220,26 +249,16 @@ export const earthquakeSearch = tool('earthquake_search', {
       ),
   },
 
-  enrichmentTrailer: {
-    countUnavailable: {
-      render: () =>
-        '**Total match count unavailable:** the follow-up count query failed, so the total ' +
-        'number of matches is unknown for this call. The returned events are unaffected.',
-    },
-    queryEcho: {
-      render: (q) =>
-        `**Query echo:** ${Object.entries(q ?? {})
-          .map(([key, value]) => `${key}=${String(value)}`)
-          .join(' · ')}`,
-    },
-    ignoredFilters: {
-      render: (f) =>
-        `**Ignored filters (not supported by EMSC, not sent upstream):** ${(f ?? []).join(', ')} — ` +
-        'these results are NOT constrained by the listed filters. Re-run with source=usgs to apply them.',
-    },
-  },
+  enrichmentTrailer: searchTrailer,
 
   errors: [
+    {
+      reason: 'result_too_large',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'One event or page metadata cannot fit the response budget.',
+      recovery: 'Narrow the query or read the event directly upstream.',
+      thrownBy: 'service',
+    },
     {
       reason: 'invalid_radius',
       code: JsonRpcErrorCode.ValidationError,
@@ -269,7 +288,7 @@ export const earthquakeSearch = tool('earthquake_search', {
       retryable: true,
       recovery:
         'Narrow the time range, raise min_magnitude, or lower limit so the upstream query ' +
-        'returns faster, then retry. Use earthquake_count first to size the match set.',
+        'returns faster, then retry. Use earthquake_count_events first to size the match set.',
     },
     {
       reason: 'upstream_rejected',
@@ -334,7 +353,7 @@ export const earthquakeSearch = tool('earthquake_search', {
     }
 
     const config = getServerConfig();
-    const limit = input.limit ?? config.defaultLimit;
+    const limit = Math.min(input.limit ?? config.defaultLimit, 100);
 
     ctx.log.info('Searching earthquakes', {
       source: input.source,
@@ -412,92 +431,66 @@ export const earthquakeSearch = tool('earthquake_search', {
 
     ctx.log.info('Search completed', { source: input.source, count: result.count });
 
-    // Echo the effective upstream parameters on every success path — the shared echo
-    // drops the USGS-only filters for EMSC, which buildFdsnQuery does not send.
-    ctx.enrich({
-      queryEcho: {
-        ...filterQueryEcho(params, input.source),
-        source: input.source,
-        limit,
-        ...(input.offset != null ? { offset: input.offset } : {}),
-        order_by: input.order_by,
-      },
-    });
+    const queryEcho = {
+      ...filterQueryEcho(params, input.source),
+      source: input.source,
+      limit,
+      ...(input.offset != null ? { offset: input.offset } : {}),
+      order_by: input.order_by,
+    };
 
     // An absence from queryEcho is too quiet a signal that a supplied filter never
     // constrained the results — name the dropped filters outright.
     const ignoredFilters = ignoredUsgsFilters(input, input.source);
-    if (ignoredFilters.length > 0) ctx.enrich({ ignoredFilters });
 
     // Offsets are 1-based upstream, so the events consumed through this page are
     // (offset - 1) + count and the next page starts at offset + count. A full page
     // that exactly exhausts a known total is the last page, not a truncated one.
     const offset = input.offset ?? 1;
-    const nextOffset = offset + result.count;
-    const filledPage = result.count === limit && result.count > 0;
-    const truncated =
-      filledPage && (result.totalCount == null || offset - 1 + result.count < result.totalCount);
-
-    // Populate enrichment — totalCount, the truncation flag, and the next page's
-    // offset are meta about the result set, not domain payload; they reach both
-    // structuredContent and content[] via enrichment.
-    if (result.totalCount != null) ctx.enrich({ totalCount: result.totalCount });
-    if (result.countUnavailable) ctx.enrich({ countUnavailable: true });
-    if (truncated) ctx.enrich({ truncated: true, nextOffset });
-
-    if (result.count === 0) {
-      ctx.enrich.notice(
-        offset > 1
-          ? `No events at offset ${offset} — the previous page was the last one. ` +
-              'Lower offset to re-read earlier pages, or broaden the filters for a larger match set.'
-          : 'No events matched the query. ' +
-              'Try broadening the time range, lowering min_magnitude, or expanding the radius.',
-      );
-    } else if (truncated) {
-      const nextPage = `Call again with offset=${nextOffset} and the same filters for the next page`;
-      if (result.totalCount != null) {
-        ctx.enrich.notice(
-          `Showing events ${offset}–${offset + result.count - 1} of ${result.totalCount} matches. ` +
-            `${nextPage}, or narrow the filters.`,
-        );
-      } else if (result.countUnavailable) {
-        // The count was requested and failed, so "capped" is all that is known —
-        // whether events remain past this page is not.
-        ctx.enrich.notice(
-          `Results capped at the limit (${limit}), and the follow-up count query failed, so the ` +
-            'total match count is unknown — this page may or may not be the last. ' +
-            `${nextPage}, or retry earthquake_count with the same filters to recover the total.`,
-        );
-      } else {
-        ctx.enrich.notice(
-          `Results capped at the limit (${limit}). ` +
-            `${nextPage}, or use earthquake_count to get the total match count first.`,
-        );
-      }
-    }
-
-    return {
-      count: result.count,
+    const events = result.events.slice(0, limit);
+    const domain = (count: number) => ({
+      count,
       source: input.source,
-      events: result.events,
+      events: events.slice(0, count),
+    });
+    const metadata = (count: number) => {
+      const nextOffset = offset + count;
+      const truncated =
+        count < result.events.length ||
+        (result.count >= limit &&
+          count > 0 &&
+          (result.totalCount == null || nextOffset - 1 < result.totalCount));
+      let notice: string | undefined;
+      if (count === 0)
+        notice =
+          offset > 1
+            ? `No events at offset ${offset} — the previous page was the last one. Lower offset or broaden the filters.`
+            : 'No events matched the query. Try broadening the time range, lowering min_magnitude, or expanding the radius.';
+      else if (truncated)
+        notice =
+          (result.totalCount != null
+            ? `Showing events ${offset}–${nextOffset - 1} of ${result.totalCount} matches. `
+            : result.countUnavailable
+              ? 'Results capped; the follow-up count query failed, so the total is unknown. '
+              : `Results capped at the limit (${limit}) or response budget. Use earthquake_count_events to get the full count. `) +
+          `Call again with offset=${nextOffset} and the same filters, source, limit and order_by for the next page.`;
+      return {
+        queryEcho,
+        ...(ignoredFilters.length ? { ignoredFilters } : {}),
+        ...(result.totalCount != null ? { totalCount: result.totalCount } : {}),
+        ...(result.countUnavailable ? { countUnavailable: true } : {}),
+        ...(truncated ? { truncated: true, nextOffset } : {}),
+        ...(notice != null ? { notice } : {}),
+      };
     };
+    const count = boundedPage(events, limit, (n) =>
+      toolEnvelope(domain(n), formatSearch(domain(n)), metadata(n), searchTrailer),
+    );
+    const { notice, ...meta } = metadata(count);
+    ctx.enrich(meta);
+    if (notice != null) ctx.enrich.notice(notice);
+    return domain(count);
   },
 
-  format: (result) => {
-    const lines: string[] = [
-      `**Source:** ${result.source.toUpperCase()} | **Count:** ${result.count}`,
-      '',
-    ];
-
-    if (result.count === 0) {
-      lines.push('_No events matched the query._');
-    } else {
-      for (const event of result.events) {
-        lines.push(...formatEvent(event));
-        lines.push('');
-      }
-    }
-
-    return [{ type: 'text', text: lines.join('\n') }];
-  },
+  format: formatSearch,
 });

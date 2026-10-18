@@ -170,7 +170,11 @@ describe('EmscService.searchEvents — totalCount count sub-call (issue #11)', (
 
     expect(result.count).toBe(2);
     expect(result.totalCount).toBe(184);
-    expect(countSpy).toHaveBeenCalledWith({ minMagnitude: 4 }, expect.anything());
+    expect(countSpy).toHaveBeenCalledWith(
+      { minMagnitude: 4 },
+      expect.anything(),
+      expect.any(Number),
+    );
     vi.unstubAllGlobals();
   });
 
@@ -283,7 +287,11 @@ describe('EmscService — FDSN offset forwarding (issue #19)', () => {
       createMockContext() as Context,
     );
 
-    expect(countSpy).toHaveBeenCalledWith({ minMagnitude: 4 }, expect.anything());
+    expect(countSpy).toHaveBeenCalledWith(
+      { minMagnitude: 4 },
+      expect.anything(),
+      expect.any(Number),
+    );
     vi.unstubAllGlobals();
   });
 });

@@ -13,10 +13,10 @@ import {
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { earthquakeEventResource } from '@/mcp-server/resources/definitions/earthquake-event.resource.js';
 import { earthquakeFeedResource } from '@/mcp-server/resources/definitions/earthquake-feed.resource.js';
-import { earthquakeCount } from '@/mcp-server/tools/definitions/earthquake-count.tool.js';
+import { earthquakeCountEvents } from '@/mcp-server/tools/definitions/earthquake-count-events.tool.js';
 import { earthquakeGetEvent } from '@/mcp-server/tools/definitions/earthquake-get-event.tool.js';
 import { earthquakeGetFeed } from '@/mcp-server/tools/definitions/earthquake-get-feed.tool.js';
-import { earthquakeSearch } from '@/mcp-server/tools/definitions/earthquake-search.tool.js';
+import { earthquakeSearchEvents } from '@/mcp-server/tools/definitions/earthquake-search-events.tool.js';
 import { initEmscService } from '@/services/emsc/emsc-service.js';
 import { initUsgsService } from '@/services/usgs/usgs-service.js';
 
@@ -31,10 +31,10 @@ afterEach(() => {
 });
 
 const calls = [
-  { name: 'USGS search', run: () => runToolContract(earthquakeSearch, { source: 'usgs' }) },
-  { name: 'EMSC search', run: () => runToolContract(earthquakeSearch, { source: 'emsc' }) },
-  { name: 'USGS count', run: () => runToolContract(earthquakeCount, { source: 'usgs' }) },
-  { name: 'EMSC count', run: () => runToolContract(earthquakeCount, { source: 'emsc' }) },
+  { name: 'USGS search', run: () => runToolContract(earthquakeSearchEvents, { source: 'usgs' }) },
+  { name: 'EMSC search', run: () => runToolContract(earthquakeSearchEvents, { source: 'emsc' }) },
+  { name: 'USGS count', run: () => runToolContract(earthquakeCountEvents, { source: 'usgs' }) },
+  { name: 'EMSC count', run: () => runToolContract(earthquakeCountEvents, { source: 'emsc' }) },
   { name: 'feed', run: () => runToolContract(earthquakeGetFeed, {}) },
   { name: 'event', run: () => runToolContract(earthquakeGetEvent, { event_id: 'us6000sznj' }) },
 ];
@@ -81,7 +81,7 @@ it('preserves HTTP 501 on event and feed resource failures', async () => {
     () =>
       earthquakeFeedResource.handler(
         { magnitude_tier: '2.5', time_window: 'day' },
-        createMockContext(),
+        createMockContext({ errors: earthquakeFeedResource.errors }),
       ),
   ]) {
     await expect(pending()).rejects.toMatchObject({

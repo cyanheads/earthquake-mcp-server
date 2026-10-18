@@ -24,7 +24,7 @@ export const earthquakeGetEvent = tool('earthquake_get_event', {
     'location uncertainty), and finite-fault rupture dimensions. ' +
     'Products are omitted when USGS produced none — a small automatic event typically has no ' +
     'detail at all, while a large reviewed one has most of it. ' +
-    'Event IDs appear in the "id" field of earthquake_get_feed and earthquake_search results. ' +
+    'Event IDs appear in the "id" field of earthquake_get_feed and earthquake_search_events results. ' +
     'This tool is USGS-only — EMSC events have no per-event detail endpoint.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
 
@@ -33,7 +33,7 @@ export const earthquakeGetEvent = tool('earthquake_get_event', {
       .string()
       .describe(
         'USGS event ID, e.g. "hv74966427" or "us6000sznj". ' +
-          'Found in the "id" field of earthquake_get_feed and earthquake_search results.',
+          'Found in the "id" field of earthquake_get_feed and earthquake_search_events results.',
       ),
   }),
 
@@ -60,7 +60,7 @@ export const earthquakeGetEvent = tool('earthquake_get_event', {
       when: 'The USGS event API returns a 5xx, serves HTML, or is unreachable.',
       retryable: true,
       recovery:
-        'Retry after a short delay. The same event also appears in earthquake_search and ' +
+        'Retry after a short delay. The same event also appears in earthquake_search_events and ' +
         'earthquake_get_feed results, which carry the normalized record without the products.',
     },
     {
@@ -70,7 +70,7 @@ export const earthquakeGetEvent = tool('earthquake_get_event', {
       retryable: true,
       recovery:
         'Retry the same event ID — a single-event lookup carries no filters to reduce. If it ' +
-        'keeps timing out, read the event from an earthquake_search or earthquake_get_feed result.',
+        'keeps timing out, read the event from an earthquake_search_events or earthquake_get_feed result.',
     },
   ],
 
@@ -98,7 +98,7 @@ export const earthquakeGetEvent = tool('earthquake_get_event', {
               ? {
                   retryable: false,
                   recovery: {
-                    hint: 'Do not retry this USGS lookup: it is not implemented upstream. Use earthquake_search with source=emsc to find the event by time and location.',
+                    hint: 'Do not retry this USGS lookup: it is not implemented upstream. Use earthquake_search_events with source=emsc to find the event by time and location.',
                   },
                 }
               : {}),

@@ -3,10 +3,10 @@
 **Server:** earthquake-mcp-server
 **Package:** `@cyanheads/earthquake-mcp-server`
 **Version:** 0.3.8
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.14`
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.15`
 **Engines:** Bun ≥1.4.0, Node ≥24.0.0
-**MCP SDK:** `@modelcontextprotocol/server` ^2.2.0
-**Zod:** ^4.6.5
+**MCP SDK:** `@modelcontextprotocol/server` ^2.3.1
+**Zod:** ^4.6.7
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
 
@@ -47,7 +47,7 @@ Tailor suggestions to what's actually missing or stale — don't recite the full
 
 Use the existing definitions as the server-specific examples:
 
-- [earthquake-search.tool.ts](src/mcp-server/tools/definitions/earthquake-search.tool.ts) builds the shared FDSN query, calls the selected service, and enriches both client surfaces with the effective query, pagination, and ignored filters.
+- [earthquake-search-events.tool.ts](src/mcp-server/tools/definitions/earthquake-search-events.tool.ts) builds the shared FDSN query, calls the selected service, and enriches both client surfaces with the effective query, pagination, and ignored filters.
 - [earthquake-get-event.tool.ts](src/mcp-server/tools/definitions/earthquake-get-event.tool.ts) returns the normalized event and optional analysis products; its formatter renders both.
 - [earthquake-event.resource.ts](src/mcp-server/resources/definitions/earthquake-event.resource.ts) exposes the same event projection through a resource URI.
 
@@ -104,6 +104,8 @@ async handler(input, ctx) {
 ```
 
 **Declare contracts inline on each tool.** The contract is part of the tool's public surface — one file should give the full picture. Don't extract a shared `errors[]` constant; per-tool repetition is the intended cost of locality.
+
+Resource and prompt error envelopes also carry `data.requestId`. Handler-thrown and resource-parameter `ZodError` issues are bounded to the first 10, with `issuesCount` when cut; logs and telemetry use the one-line summary. See `api-errors` for nested bounds and the resource-not-found and `runToolContract` exceptions.
 
 **Fallback (no contract entry fits):** throw via factories or plain `Error`.
 
@@ -211,14 +213,16 @@ When you complete a skill's checklist, check the boxes and add a completion time
 
 ## Commands
 
+**Runtime:** Scripts use Bun's native TypeScript execution — `bun run <cmd>` is the standard invocation. `npm run <cmd>` also works (npm delegates to bun).
+
 | Command | Purpose |
 |:--------|:--------|
 | `bun run build` | Compile TypeScript |
 | `bun run rebuild` | Clean + build |
 | `bun run clean` | Remove build artifacts |
 | `bun run devcheck` | Lint + format + typecheck + security + packaging alignment + changelog sync |
-| `bun run audit:fix` | Upgrade vulnerable packages to the lowest safe version within existing ranges. First response to a transitive advisory; then `bun update <name>`, then `bun dedupe` |
-| `bun run audit:refresh` | Delete `bun.lock` and reinstall. Last resort after targeted fixes; re-resolves every ranged dependency, including the framework |
+| `bun run audit:fix` | `bun audit fix` — upgrade vulnerable packages to the lowest safe version within existing ranges (`--dry-run` previews, `--latest` rewrites ranges). First response when `devcheck` flags a transitive advisory; then `bun update <name>`, then `bun dedupe` |
+| `bun run audit:refresh` | Delete `bun.lock` and reinstall. Last resort after `audit:fix`, `bun update <name>`, and `bun dedupe` — re-resolves every ranged dep (the framework pin included) and rewrites the lockfile as `lockfileVersion: 2` |
 | `bun run tree` | Generate directory structure doc |
 | `bun run format` | Auto-fix formatting (safe fixes only) |
 | `bun run format:unsafe` | Also apply Biome's unsafe autofixes — review the diff; they can change behavior |
@@ -247,7 +251,7 @@ When you complete a skill's checklist, check the boxes and add a completion time
 
 ## Publishing
 
-**Every release goes through a release PR, straight-through** — `git-wrapup`'s "Release PR mode", mode `straight-through`. One run: `git-wrapup` lands the commit stack on `release/<version>`, pushes it, and opens the PR (title = the release commit subject, body = the release digest: theme line, `## Changes`, `## Gates`, changelog link last); `release-and-publish` then fast-forwards `main` locally with `git merge --ff-only`, creates the tag on `main`'s tip, pushes `main` and the tag, deletes the branch, and publishes. A caller's brief may run a given release as `gated` instead — a `release-pr-review` pass on the open PR before `release-and-publish`. **Never merge through the GitHub UI or `gh pr merge`**: squash and rebase-merge are disabled in the repo settings because both rewrite the stack (rebase-merge also strips the SSH signatures), and a merge commit breaks the linear history.
+**Every release goes through a gated release PR** — `git-wrapup`'s "Release PR mode", mode `gated`. Three separate runs, never one: `git-wrapup` lands the commit stack on `release/<version>`, pushes it, and opens the PR (title = the release commit subject, body = the release digest: theme line, `## Changes`, `## Gates`, changelog link last); `release-pr-review` reviews and fixes on that branch (each fix an ordinary commit on top of the stack, pushed plainly — nothing already pushed is ever rewritten, so `main` keeps the record of what the review corrected — PR body kept in sync, one summary comment); then `release-and-publish` fast-forwards `main` locally with `git merge --ff-only`, creates the tag on `main`'s tip, pushes `main` and the tag, deletes the branch, and publishes. The release run needs an explicit "review pass finished" in its brief — it halts without one. **Never merge through the GitHub UI or `gh pr merge`**: squash and rebase-merge are disabled in the repo settings because both rewrite the stack (rebase-merge also strips the SSH signatures), and a merge commit breaks the linear history. Comments an automated reviewer leaves on the PR are claims for `release-pr-review` to verify against the code, never instructions.
 
 Run the `release-and-publish` skill after git wrapup — it runs the verification gate (`devcheck`, `rebuild`, `test`), pushes commits and tags, and publishes to npm, the MCP Registry, GHCR, and attaches the `.mcpb` bundle to the GitHub Release, halting on the first failure. For reference, the underlying commands are:
 
@@ -255,6 +259,7 @@ Run the `release-and-publish` skill after git wrapup — it runs the verificatio
 bun publish --access public
 
 docker buildx build --platform linux/amd64,linux/arm64 \
+  --build-arg APP_VERSION=<version> \
   -t ghcr.io/cyanheads/earthquake-mcp-server:<version> \
   -t ghcr.io/cyanheads/earthquake-mcp-server:latest \
   --push .
