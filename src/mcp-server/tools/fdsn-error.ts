@@ -7,7 +7,10 @@
  * @module mcp-server/tools/fdsn-error
  */
 
+import { z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+
+const DetailEnvelope = z.object({ detail: z.string() });
 
 /**
  * Boilerplate both FDSN implementations append after the reason — a usage URL, the
@@ -57,6 +60,19 @@ function completeLines(body: string): string {
  * beyond boilerplate survives.
  */
 export function extractFdsnReason(body: string): string | undefined {
+  const trimmed = body.trimStart();
+  if (trimmed.startsWith('{') || trimmed.startsWith('[') || trimmed.startsWith('"')) {
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(body);
+    } catch (err) {
+      if (err instanceof SyntaxError) return;
+      throw err;
+    }
+    const envelope = DetailEnvelope.safeParse(decoded);
+    if (!envelope.success) return;
+    body = envelope.data.detail;
+  }
   if (HTML_BODY.test(body)) return;
 
   const segments: string[] = [];

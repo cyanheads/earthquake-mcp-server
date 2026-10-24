@@ -10,6 +10,7 @@ import {
   McpError,
   notFound,
   serviceUnavailable,
+  validationError,
 } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { fetchWithTimeout, requestContextService, withRetry } from '@cyanheads/mcp-ts-core/utils';
@@ -161,6 +162,14 @@ function projectDetail(
     | UsgsGroundFailureProperties
     | undefined;
   const originProps = products.origin?.[0]?.properties as UsgsOriginProperties | undefined;
+  const codeVersion = shakemap?.properties?.['shakemap-code-version'];
+  const rawPgv = num(shakemap?.properties?.maxpgv);
+  // This producer revision exported ln(cm/s); later 4.0.2 revisions publish linear PGV.
+  const maxPgv =
+    rawPgv !== undefined &&
+    (codeVersion === '4.0.2+335.gcbad862' || codeVersion === '4.0.2+335.gcbad862.dirty')
+      ? Math.exp(rawPgv)
+      : rawPgv;
 
   return group({
     ...maybe(
@@ -175,7 +184,8 @@ function projectDetail(
       group({
         ...maybe('max_mmi', num(shakemap?.properties?.maxmmi)),
         ...maybe('max_pga', num(shakemap?.properties?.maxpga)),
-        ...maybe('max_pgv', num(shakemap?.properties?.maxpgv)),
+        ...maybe('max_pgv', Number.isFinite(maxPgv) ? maxPgv : undefined),
+        ...maybe('code_version', codeVersion),
         ...maybe(
           'intensity_map_url',
           contentUrl(shakemap, 'download/intensity.jpg', 'download/intensity.pdf'),
@@ -308,8 +318,9 @@ export class UsgsService {
 
   /**
    * Query USGS FDSN event API. `params.offset` pages through the match set
-   * (1-based, forwarded to the upstream `offset` parameter). When results are
-   * truncated at the requested limit, a follow-up count query populates
+   * (1-based, forwarded upstream). Nonempty short pages establish their total
+   * before byte shaping; an empty first page establishes zero.
+   * When the page fills the requested limit, a follow-up count query populates
    * totalCount with the real match total for the whole filter set. If that
    * follow-up fails, the page still returns and `countUnavailable` marks the
    * total as unknown rather than not attempted.
@@ -364,11 +375,11 @@ export class UsgsService {
       },
     );
 
-    // The query response's metadata.count is the returned-event count, not the
-    // database total — the real total comes from the FDSN count endpoint. Fetch
-    // it only when results were truncated at the limit; a count failure degrades
-    // to an absent totalCount rather than failing the search.
+    // Infer short-page totals before byte shaping. Empty later pages cannot establish
+    // the total; full pages use the count endpoint without making count failure fatal.
     const requestedLimit = params.limit ?? 100;
+    if (result.count < requestedLimit && (result.count > 0 || (params.offset ?? 1) === 1))
+      return { ...result, totalCount: (params.offset ?? 1) - 1 + result.count };
     if (result.count > 0 && result.count === requestedLimit) {
       // The total is a property of the filter set, not of the page — offset,
       // limit, and orderBy are stripped so every page reports the same total.
@@ -403,19 +414,35 @@ export class UsgsService {
    * so the caller gets more than a search result already holds, without a second
    * request. `detail` is absent when the event carries no projectable product.
    */
-  getEvent(
+  async getEvent(
     eventId: string,
     ctx: Context,
   ): Promise<{ event: EarthquakeEvent; detail?: EarthquakeEventDetail }> {
+    eventId = eventId.trim();
+    if (eventId.length === 0) {
+      throw validationError('Provide a nonblank USGS event ID from a feed or search result.');
+    }
     const url = `${this.baseUrl}/fdsnws/event/1/query?eventid=${encodeURIComponent(eventId)}&format=geojson`;
     const reqCtx = makeReqCtx('UsgsService.getEvent', ctx);
 
-    return withRetry(
+    return await withRetry(
       async () => {
-        const response = await fetchWithTimeout(url, this.timeoutMs, reqCtx, {
-          signal: ctx.signal,
-          headers: { Accept: 'application/json' },
-        });
+        let response: Response;
+        try {
+          response = await fetchWithTimeout(url, this.timeoutMs, reqCtx, {
+            signal: ctx.signal,
+            headers: { Accept: 'application/json' },
+          });
+        } catch (err) {
+          if (err instanceof McpError && err.data?.status === 409) {
+            throw notFound('This earthquake event was deleted by USGS.', {
+              reason: 'event_deleted',
+              retryable: false,
+              eventId,
+            });
+          }
+          throw err;
+        }
 
         // fetchWithTimeout throws McpError(NotFound) for 404 before we reach here.
         // Non-404 non-2xx responses are also thrown by fetchWithTimeout.
@@ -425,15 +452,22 @@ export class UsgsService {
           throw serviceUnavailable('USGS returned HTML instead of GeoJSON.', { eventId });
         }
 
+        if (text.trim().length === 0) {
+          throw notFound('USGS returned no event for the requested ID.', { eventId });
+        }
         const raw = JSON.parse(text) as UsgsFeature | UsgsFeatureCollection;
-        // USGS returns a bare Feature for eventid lookups, not a FeatureCollection
-        const feature = raw.type === 'Feature' ? raw : (raw as UsgsFeatureCollection).features?.[0];
-        if (!feature) {
+        const requestedId = eventId.toLowerCase();
+        if (
+          raw.type !== 'Feature' ||
+          (raw.id.toLowerCase() !== requestedId &&
+            !raw.properties.ids?.split(',').some((id) => id.trim().toLowerCase() === requestedId))
+        ) {
           throw notFound(
             `No earthquake event found for ID "${eventId}". Verify the ID from a feed or search result.`,
             { eventId },
           );
         }
+        const feature = raw;
         const detail = projectDetail(feature.properties.products);
         return {
           event: normalizeUsgsFeature(feature),
@@ -510,6 +544,9 @@ export class UsgsService {
     if (params.endTime != null) q.set('endtime', params.endTime);
     if (params.minMagnitude != null) q.set('minmagnitude', String(params.minMagnitude));
     if (params.maxMagnitude != null) q.set('maxmagnitude', String(params.maxMagnitude));
+    if (params.magnitudeType != null) q.set('magnitudetype', params.magnitudeType);
+    if (params.productType != null) q.set('producttype', params.productType);
+    if (params.reviewStatus != null) q.set('reviewstatus', params.reviewStatus);
     if (params.latitude != null) q.set('latitude', String(params.latitude));
     if (params.longitude != null) q.set('longitude', String(params.longitude));
     if (params.radiusKm != null) q.set('maxradiuskm', String(params.radiusKm));

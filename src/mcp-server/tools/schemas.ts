@@ -8,102 +8,77 @@ import { z } from '@cyanheads/mcp-ts-core';
 /** Zod schema for a normalized earthquake event returned by feeds and search results. */
 export const EarthquakeEventSchema = z.object({
   id: z.string().describe('USGS or EMSC event identifier.'),
-  title: z
-    .string()
-    .describe('Human-readable event summary, e.g. "M 6.0 - 13 km S of Honaunau-Napoopoo, Hawaii".'),
+  title: z.string().describe('Event summary, e.g. "M 6.0 - Hawaii".'),
   magnitude: z
     .number()
     .nullable()
-    .describe(
-      'Preferred magnitude value. Null when no magnitude was computed for the event (the title renders it as "M ?").',
-    ),
+    .describe('Preferred magnitude; null if not computed (title: "M ?").'),
   magnitude_type: z.string().describe('Magnitude type (ml, mww, mw, mb, etc.).'),
   time: z.string().describe('ISO 8601 UTC origin time.'),
   updated: z.string().describe('ISO 8601 UTC time this record was last updated.'),
   place: z.string().describe('Nearest named location.'),
   latitude: z.number().describe('Epicenter latitude in decimal degrees.'),
   longitude: z.number().describe('Epicenter longitude in decimal degrees.'),
-  depth_km: z
-    .number()
-    .nullable()
-    .describe(
-      'Hypocenter depth in kilometers. Shallow (<70 km), intermediate (70–300 km), or deep (>300 km). Null for historical events where depth was not measured.',
-    ),
+  depth_km: z.number().nullable().describe('Hypocenter depth in km; null if unmeasured.'),
   felt: z
     .number()
     .nullable()
     .describe(
-      'Number of DYFI (Did You Feel It?) responses. Null when USGS has received no reports for the event, and always null for EMSC, which publishes no DYFI field — a null is not evidence the event went unfelt.',
+      'DYFI (Did You Feel It?) response count; null if no USGS reports or source has no DYFI (EMSC). Null does not mean unfelt.',
     ),
   cdi: z
     .number()
     .nullable()
     .describe(
-      'Maximum reported intensity (Community Decimal Intensity, 0–12 scale), derived from DYFI responses. Null when USGS computed no DYFI intensity, and always null for EMSC, which publishes no such field.',
+      'Maximum DYFI Community Decimal Intensity (0–12); null if uncomputed or unsupported (EMSC).',
     ),
   mmi: z
     .number()
     .nullable()
     .describe(
-      'Maximum ShakeMap instrumental intensity (Modified Mercalli, 0–12 scale). Null when USGS produced no ShakeMap for the event, and always null for EMSC, which publishes no such field.',
+      'Maximum ShakeMap Modified Mercalli intensity (0–12); null without a ShakeMap or for EMSC.',
     ),
   alert: z
     .enum(['green', 'yellow', 'orange', 'red'])
     .nullable()
-    .describe(
-      'PAGER estimated impact alert level. Null when USGS ran no PAGER assessment, and always null for EMSC, which publishes no such field.',
-    ),
+    .describe('PAGER estimated impact; null without an assessment or for EMSC.'),
   tsunami: z
     .number()
     .nullable()
     .describe(
-      'USGS tsunami flag: 1 for large events in oceanic regions, 0 otherwise. It is not a warning — USGS states the flag does not indicate whether a tsunami did or will exist; check NOAA (tsunami.gov) for actual alert status. Null when the source publishes no such flag, as EMSC does not.',
+      'USGS tsunami flag: 1 for large oceanic events, 0 otherwise; null if unpublished (EMSC). Not a warning or evidence of a tsunami; check NOAA tsunami.gov for alerts.',
     ),
   significance: z
     .number()
     .nullable()
     .describe(
-      'USGS significance score (0–2000+). Combines magnitude, felt reports, PAGER. Null when USGS computed no score, and always null for EMSC, which publishes no such field.',
+      'USGS significance (0–2000+), combining magnitude, felt reports and PAGER; null if uncomputed or for EMSC.',
     ),
   status: z
     .enum(['automatic', 'reviewed', 'deleted'])
     .nullable()
     .describe(
-      'Human-review state: "automatic" (posted by automatic processing, not yet verified by a person), "reviewed" (examined by an analyst), or "deleted". Null when the source publishes no review status — EMSC does not, so treat an EMSC solution as unverified and subject to revision rather than final.',
+      'Review state: automatic (unverified), reviewed (analyst checked), or deleted. Null if unpublished (EMSC); such solutions remain unverified and subject to revision.',
     ),
   source_catalog: z
     .string()
     .optional()
-    .describe(
-      'Upstream catalog this solution came from, e.g. "EMSC-RTS" (EMSC real-time seismicity, revised as analysis continues). Absent for USGS, which publishes no catalog identifier on event records.',
-    ),
+    .describe('Solution catalog, e.g. EMSC-RTS (real-time, subject to revision). Absent for USGS.'),
   auth: z
     .string()
     .optional()
-    .describe(
-      'Code of the agency or network the source names as authoritative for this solution, e.g. "NEIC", "BMKG", "NDI" from EMSC or "us", "ci", "ak" from USGS. Absent when the source reports none.',
-    ),
+    .describe('Authoritative agency/network code (EMSC auth or USGS net); absent if unpublished.'),
   event_type: z
     .string()
     .optional()
     .describe(
-      'What kind of event this is, in one vocabulary whichever source served it — the QuakeML ' +
-        'type names USGS publishes ("earthquake", "quarry blast", "explosion", "ice quake"). ' +
-        "EMSC's two-character code is decoded to the same names, so the same event carries the " +
-        'same value from either source; how sure the source is rides on event_certainty instead. ' +
-        'A code outside the published nomenclature is forwarded verbatim rather than guessed at. ' +
-        'Not every record in either catalog is a tectonic earthquake. Absent when the source ' +
-        'publishes no classification.',
+      'QuakeML classification (earthquake, quarry blast, explosion, etc.). EMSC codes decode to USGS names; unknown codes pass through verbatim. Certainty is separate. Absent if unpublished; either catalog includes non-tectonic events.',
     ),
   event_certainty: z
     .enum(['known', 'suspected', 'unknown', 'unreported'])
     .optional()
     .describe(
-      'How certain the source is of event_type: "known" (asserted), "suspected", "unknown", or ' +
-        '"unreported". EMSC publishes this as the first character of its event-type code — ' +
-        'a suspected explosion is not a confirmed one, and this is the only field that says so. ' +
-        'Absent for USGS, which publishes no certainty axis, and absent for an EMSC code outside ' +
-        'the published nomenclature.',
+      'EMSC classification certainty: known (asserted), suspected, unknown, or unreported. Suspected is not confirmed. Absent for USGS and unrecognized EMSC codes.',
     ),
   event_url: z.string().optional().describe('USGS event page URL. Present for USGS events only.'),
   detail_url: z
@@ -121,15 +96,13 @@ const NodalPlaneSchema = z.object({
   dip: z.number().describe('Fault plane dip in degrees from horizontal (0–90).'),
   rake: z
     .number()
-    .describe(
-      'Slip direction in degrees (-180 to 180). Near 90 is reverse faulting, near -90 normal, near 0 or 180 strike-slip.',
-    ),
+    .describe('Slip direction, degrees (-180..180): ~90 reverse, ~-90 normal, ~0/180 strike-slip.'),
 });
 
 /**
  * Curated projection of the analysis products USGS attaches to a single-event
- * response. Every group is optional and omitted when the event carries no such
- * product — absence means "not produced for this event", never zero.
+ * response. Every group is optional and omitted when no projected field is
+ * available. Absence never implies zero impact or proves no product was produced.
  */
 export const EarthquakeDetailSchema = z.object({
   losspager: z
@@ -145,11 +118,14 @@ export const EarthquakeDetailSchema = z.object({
     })
     .optional()
     .describe(
-      'PAGER impact assessment. Estimated fatality and economic-loss brackets live in a separate ' +
-        'content file and are not part of this response — fetch report_url for them.',
+      'PAGER assessment; fatality/economic-loss brackets are in report_url, not this projection. Absent without projected fields.',
     ),
   shakemap: z
     .object({
+      code_version: z
+        .string()
+        .optional()
+        .describe('ShakeMap producer code version reported by USGS.'),
       max_mmi: z
         .number()
         .optional()
@@ -159,10 +135,7 @@ export const EarthquakeDetailSchema = z.object({
       max_pga: z
         .number()
         .optional()
-        .describe(
-          'Maximum modeled peak ground acceleration, in g — a fraction of standard gravity, ' +
-            'as USGS ShakeMap publishes it (0.4 is four tenths of g).',
-        ),
+        .describe('Maximum modeled peak ground acceleration, in g (fraction of standard gravity).'),
       max_pgv: z.number().optional().describe('Maximum modeled peak ground velocity, in cm/s.'),
       intensity_map_url: z
         .string()
@@ -170,13 +143,10 @@ export const EarthquakeDetailSchema = z.object({
         .describe('URL of the rendered ShakeMap intensity map image.'),
     })
     .optional()
-    .describe('ShakeMap modeled ground-motion summary. Absent when no ShakeMap was produced.'),
+    .describe('ShakeMap modeled ground-motion summary. Absent without projected fields.'),
   dyfi: z
     .object({
-      responses: z
-        .number()
-        .optional()
-        .describe('Number of "Did You Feel It?" reports the public submitted.'),
+      responses: z.number().optional().describe('Public DYFI (Did You Feel It?) report count.'),
       max_cdi: z
         .number()
         .optional()
@@ -184,26 +154,20 @@ export const EarthquakeDetailSchema = z.object({
       map_url: z.string().optional().describe('URL of the rendered DYFI intensity map image.'),
     })
     .optional()
-    .describe('Felt-report summary. Absent when no DYFI product exists for the event.'),
+    .describe('Felt-report summary. Absent without projected fields.'),
   moment_tensor: z
     .object({
-      scalar_moment_nm: z
-        .number()
-        .optional()
-        .describe('Scalar seismic moment in newton-metres — the physical size of the rupture.'),
-      derived_depth_km: z
-        .number()
-        .optional()
-        .describe('Centroid depth in kilometers derived from the moment-tensor inversion.'),
+      scalar_moment_nm: z.number().optional().describe('Scalar seismic moment, newton-metres.'),
+      derived_depth_km: z.number().optional().describe('Moment-tensor centroid depth, km.'),
       nodal_plane_1: NodalPlaneSchema.optional().describe(
-        'First nodal plane of the focal mechanism. Either plane can be the true fault.',
+        'First nodal plane; either plane may be the fault.',
       ),
       nodal_plane_2: NodalPlaneSchema.optional().describe(
-        'Second nodal plane — the auxiliary solution, indistinguishable from the first on seismic data alone.',
+        'Auxiliary nodal plane; seismic data alone cannot distinguish the true fault.',
       ),
     })
     .optional()
-    .describe('Focal-mechanism solution. Absent for events with no moment-tensor inversion.'),
+    .describe('Focal mechanism; absent without projected fields.'),
   ground_failure: z
     .object({
       landslide_alert: z
@@ -216,14 +180,14 @@ export const EarthquakeDetailSchema = z.object({
         .describe('Liquefaction hazard alert level — "green", "yellow", "orange", or "red".'),
     })
     .optional()
-    .describe('Secondary-hazard alert levels. Absent when no ground-failure model was run.'),
+    .describe('Secondary-hazard alert levels. Absent without projected fields.'),
   origin: z
     .object({
       azimuthal_gap_deg: z
         .number()
         .optional()
         .describe(
-          'Largest azimuthal gap between stations, in degrees. Gaps above ~180 make the location poorly constrained.',
+          'Largest station azimuthal gap, degrees; >~180 means poorly constrained location.',
         ),
       num_stations_used: z
         .number()
@@ -237,10 +201,12 @@ export const EarthquakeDetailSchema = z.object({
       review_status: z
         .string()
         .optional()
-        .describe('Review state of the origin solution as the contributing network published it.'),
+        .describe('Origin review state published by its network.'),
     })
     .optional()
-    .describe('Location-quality metrics for the preferred origin.'),
+    .describe(
+      'Location-quality metrics for the preferred origin; absent without projected fields.',
+    ),
   finite_fault: z
     .object({
       rupture_length_km: z
@@ -254,7 +220,7 @@ export const EarthquakeDetailSchema = z.object({
       model_url: z.string().optional().describe('URL of the finite-fault rupture model file.'),
     })
     .optional()
-    .describe('Finite-fault rupture model. Produced only for large events.'),
+    .describe('Finite-fault rupture model for large events; absent without projected fields.'),
 });
 
 /** Inferred from EarthquakeDetailSchema — the product projection for a single event. */
@@ -273,7 +239,7 @@ export function formatEventDetail(detail: EarthquakeDetailOutput | undefined): s
   const lines: string[] = ['', '### Analysis products'];
   if (detail == null || Object.keys(detail).length === 0) {
     lines.push(
-      '_No analysis products on this event — USGS publishes them for larger or reviewed events._',
+      '_No projected analysis fields are available for this event; this does not imply zero impact._',
     );
     return lines;
   }
@@ -292,6 +258,7 @@ export function formatEventDetail(detail: EarthquakeDetailOutput | undefined): s
       `**ShakeMap:** Max MMI: ${detailValue(shakemap.max_mmi)} | ` +
         `Max PGA: ${detailValue(shakemap.max_pga, ' g')} | ` +
         `Max PGV: ${detailValue(shakemap.max_pgv, ' cm/s')}` +
+        (shakemap.code_version ? ` | Code version: ${shakemap.code_version}` : '') +
         (shakemap.intensity_map_url ? ` | Intensity map: ${shakemap.intensity_map_url}` : ''),
     );
   }

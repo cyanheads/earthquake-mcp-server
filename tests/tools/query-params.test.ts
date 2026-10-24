@@ -10,10 +10,42 @@ import {
   earthquakeFilterFields,
   FDSN_TIMESTAMP_PATTERN,
   ignoredUsgsFilters,
+  invertedRange,
   normalizeFdsnTimestamp,
 } from '@/mcp-server/tools/query-params.js';
 
 const DAY_MS = 86_400_000;
+
+describe('invertedRange', () => {
+  it('keeps magnitude and product vocabularies open and normalizes optional blank filters', () => {
+    expect(earthquakeFilterFields.magnitude_type.parse(' future-mag ')).toBe('future-mag');
+    expect(earthquakeFilterFields.product_type.parse(' future-product ')).toBe('future-product');
+    expect(earthquakeFilterFields.review_status.parse('  ')).toBe('');
+    expect(earthquakeFilterFields.review_status.parse(' reviewed ')).toBe('reviewed');
+    expect(earthquakeFilterFields.review_status.safeParse('deleted').success).toBe(false);
+  });
+  it('compares instants past millisecond precision without narrowing accepted grammar', () => {
+    expect(
+      invertedRange({
+        start_time: '2025-01-01T00:00:00.0009Z',
+        end_time: '2025-01-01T00:00:00.0008Z',
+      }),
+    ).toContain('start_time');
+    expect(
+      invertedRange({
+        start_time: '2025-01-01T01:00:00.00090+01:00',
+        end_time: '2025-01-01T00:00:00.0009Z',
+      }),
+    ).toBeUndefined();
+    expect(
+      invertedRange({ start_time: '2025-1-1 00:00', end_time: '2025-01-01T00:00:00Z' }),
+    ).toBeUndefined();
+  });
+  it('leaves invalid calendar bounds on the upstream rejection path', () => {
+    for (const start_time of ['2025-02-30', '2025-13-45'])
+      expect(invertedRange({ start_time, end_time: '2025-01-01' })).toBeUndefined();
+  });
+});
 
 describe('defaultStartTime', () => {
   it('anchors offsetless FDSN midnight in UTC for date-only and explicit forms', () => {

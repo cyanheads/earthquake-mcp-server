@@ -69,7 +69,7 @@ describe('shared filter surface — bounds are identical across both tools (issu
     expect(shapeOf(earthquakeSearchEvents)).toEqual(shapeOf(earthquakeCountEvents));
     // Guard the guard: a typo in SHARED_FIELDS would make the comparison vacuous.
     expect(SHARED_FIELDS).toContain('radius_km');
-    expect(Object.keys(shapeOf(earthquakeSearchEvents))).toHaveLength(17);
+    expect(Object.keys(shapeOf(earthquakeSearchEvents))).toHaveLength(20);
   });
 
   it('publishes a readable pattern for the date fields so a caller can self-correct', () => {

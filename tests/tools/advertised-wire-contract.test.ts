@@ -13,14 +13,178 @@
  */
 
 import { z } from '@cyanheads/mcp-ts-core';
+import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
-import { runToolContract } from '@cyanheads/mcp-ts-core/testing';
-import { describe, expect, it } from 'vitest';
+import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
+import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { earthquakeEventResource } from '@/mcp-server/resources/definitions/earthquake-event.resource.js';
 import { earthquakeFeedResource } from '@/mcp-server/resources/definitions/earthquake-feed.resource.js';
 import { earthquakeCountEvents } from '@/mcp-server/tools/definitions/earthquake-count-events.tool.js';
 import { earthquakeGetEvent } from '@/mcp-server/tools/definitions/earthquake-get-event.tool.js';
 import { earthquakeGetFeed } from '@/mcp-server/tools/definitions/earthquake-get-feed.tool.js';
 import { earthquakeSearchEvents } from '@/mcp-server/tools/definitions/earthquake-search-events.tool.js';
+import { initEmscService } from '@/services/emsc/emsc-service.js';
+import { initUsgsService } from '@/services/usgs/usgs-service.js';
+
+describe('event and FDSN regressions — real service wire path', () => {
+  beforeEach(() => {
+    initUsgsService({} as AppConfig, {} as StorageService, 'https://earthquake.usgs.gov', 5000);
+    initEmscService({} as AppConfig, {} as StorageService, 'https://www.seismicportal.eu', 5000);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.each(['', ' \r\n '])(
+    'rejects blank event %j on both surfaces without fetch',
+    async (event_id) => {
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await runToolContract(earthquakeGetEvent, { event_id });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        error: { code: JsonRpcErrorCode.InvalidParams },
+      });
+      expect(JSON.stringify(result.content)).toContain('nonblank');
+      expect(() => earthquakeEventResource.params!.parse({ event_id })).toThrow('nonblank');
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [409, 'event_deleted'],
+    [404, 'not_found'],
+  ] as const)(
+    'maps upstream %s to %s with clean recovery on tool and resource',
+    async (status, reason) => {
+      const fetchMock = vi
+        .fn()
+        .mockImplementation(() =>
+          Promise.resolve(new Response('Request: http://private/query', { status })),
+        );
+      vi.stubGlobal('fetch', fetchMock);
+      const result = await runToolContract(earthquakeGetEvent, { event_id: 'ci41350791' });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        error: { code: JsonRpcErrorCode.NotFound, data: { reason } },
+      });
+      expect(JSON.stringify(result.content)).toContain('Recovery:');
+      expect(JSON.stringify(result.content)).toContain(reason);
+      expect(JSON.stringify(result)).not.toContain('private');
+      expect(JSON.stringify(result)).not.toContain('responseBody');
+      const err = await Promise.resolve(
+        earthquakeEventResource.handler(
+          { event_id: 'ci41350791' },
+          createMockContext({ errors: earthquakeEventResource.errors }),
+        ),
+      ).catch((e: unknown) => e);
+      expect(err).toMatchObject({
+        code: JsonRpcErrorCode.NotFound,
+        data: {
+          reason,
+          recovery: {
+            hint: earthquakeEventResource.errors?.find((entry) => entry.reason === reason)
+              ?.recovery,
+          },
+        },
+      });
+      if (status === 409) {
+        expect(result.structuredContent).toMatchObject({ error: { data: { retryable: false } } });
+        expect(err).toMatchObject({ data: { retryable: false } });
+      }
+      expect(JSON.stringify(err)).not.toContain('private');
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    },
+  );
+
+  it('carries corrected PGV and producer version through tool and resource outputs', async () => {
+    const feature = {
+      type: 'Feature',
+      id: 'official20110311054624120_30',
+      geometry: { type: 'Point', coordinates: [142, 38, 29] },
+      properties: {
+        mag: 9.1,
+        ids: ',usc0001xgp,',
+        products: {
+          shakemap: [
+            {
+              properties: {
+                maxpgv: '4.43',
+                maxpga: '1.669',
+                'shakemap-code-version': '4.0.2+335.gcbad862',
+              },
+            },
+          ],
+        },
+      },
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(() => Promise.resolve(Response.json(feature))),
+    );
+    const result = await runToolContract(earthquakeGetEvent, { event_id: 'USC0001XGP' });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      detail: {
+        shakemap: {
+          max_pgv: 83.93141691026881,
+          max_pga: 1.669,
+          code_version: '4.0.2+335.gcbad862',
+        },
+      },
+    });
+    expect(JSON.stringify(result.content)).toContain('83.93141691026881 cm/s');
+    expect(JSON.stringify(result.content)).toContain('4.0.2+335.gcbad862');
+    const resource = await earthquakeEventResource.handler(
+      { event_id: 'usc0001xgp' },
+      createMockContext({ errors: earthquakeEventResource.errors }),
+    );
+    expect(resource).toEqual(result.structuredContent);
+    expect(earthquakeEventResource.output!.parse(resource).detail?.shakemap?.code_version).toBe(
+      '4.0.2+335.gcbad862',
+    );
+  });
+
+  it.each([earthquakeSearchEvents, earthquakeCountEvents])(
+    'extracts EMSC JSON detail through $name on both error surfaces',
+    async (tool) => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockImplementation(() =>
+          Promise.resolve(
+            Response.json(
+              {
+                detail:
+                  'Error 400: Request was not properly specified: start or starttime used a bad format\n\nRequest:\nhttp://private/query\nService version: 2.2',
+              },
+              { status: 400 },
+            ),
+          ),
+        ),
+      );
+      const result = await runToolContract(tool, { source: 'emsc', start_time: '2026-13-45' });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        error: {
+          message:
+            'EMSC rejected the query: Request was not properly specified: start or starttime used a bad format',
+          data: {
+            reason: 'upstream_rejected',
+            status: 400,
+            recovery: { hint: expect.any(String) },
+          },
+        },
+      });
+      expect(JSON.stringify(result.content)).toContain(
+        'EMSC rejected the query: Request was not properly specified',
+      );
+      expect(JSON.stringify(result.content)).toContain('Recovery:');
+      expect(JSON.stringify(result)).not.toContain('private');
+      expect(JSON.stringify(result)).not.toContain('responseBody');
+    },
+  );
+});
 
 /** Every tool, plus one input each that satisfies its required fields. */
 const tools = [

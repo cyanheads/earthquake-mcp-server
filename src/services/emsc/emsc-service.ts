@@ -164,8 +164,9 @@ export class EmscService {
 
   /**
    * Query EMSC FDSN event API. `params.offset` pages through the match set
-   * (1-based, forwarded to the upstream `offset` parameter). When results are
-   * truncated at the requested limit, a follow-up count query populates
+   * (1-based, forwarded upstream). Nonempty short pages establish their total
+   * before byte shaping; an empty first page establishes zero.
+   * When the page fills the requested limit, a follow-up count query populates
    * totalCount with the real match total for the whole filter set. If that
    * follow-up fails, the page still returns and `countUnavailable` marks the
    * total as unknown rather than not attempted.
@@ -227,11 +228,11 @@ export class EmscService {
       },
     );
 
-    // EMSC's search response carries no match total — the real total comes from
-    // the FDSN count endpoint. Fetch it only when results were truncated at the
-    // limit; a count failure degrades to an absent totalCount rather than
-    // failing the search.
+    // Infer short-page totals before byte shaping. Empty later pages cannot establish
+    // the total; full pages use the count endpoint without making count failure fatal.
     const requestedLimit = params.limit ?? 100;
+    if (result.count < requestedLimit && (result.count > 0 || (params.offset ?? 1) === 1))
+      return { ...result, totalCount: (params.offset ?? 1) - 1 + result.count };
     if (result.count > 0 && result.count === requestedLimit) {
       // The total is a property of the filter set, not of the page — offset,
       // limit, and orderBy are stripped so every page reports the same total.
@@ -321,6 +322,7 @@ export class EmscService {
     if (params.endTime != null) q.set('endtime', params.endTime);
     if (params.minMagnitude != null) q.set('minmagnitude', String(params.minMagnitude));
     if (params.maxMagnitude != null) q.set('maxmagnitude', String(params.maxMagnitude));
+    if (params.magnitudeType != null) q.set('magnitudetype', params.magnitudeType);
     if (params.latitude != null) q.set('latitude', String(params.latitude));
     if (params.longitude != null) q.set('longitude', String(params.longitude));
     if (params.radiusKm != null) {

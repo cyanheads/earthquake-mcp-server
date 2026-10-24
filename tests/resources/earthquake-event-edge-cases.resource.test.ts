@@ -35,6 +35,24 @@ const contractRecovery = (reason: string) =>
   earthquakeEventResource.errors?.find((e) => e.reason === reason)?.recovery;
 
 describe('earthquakeEventResource — params schema', () => {
+  it.each(['%20%20', '%09%0A', '%invalid'])(
+    'rejects encoded blank or malformed event_id %j',
+    (event_id) => {
+      expect(() => earthquakeEventResource.params!.parse({ event_id })).toThrow();
+    },
+  );
+  it('decodes a URI event ID once', () => {
+    expect(earthquakeEventResource.params!.parse({ event_id: '%75sc0001xgp' }).event_id).toBe(
+      'usc0001xgp',
+    );
+    expect(earthquakeEventResource.params!.parse({ event_id: 'us%2520' }).event_id).toBe('us%20');
+  });
+  it.each(['', ' \r\n '])('rejects blank event_id %j', (event_id) => {
+    expect(() => earthquakeEventResource.params!.parse({ event_id })).toThrow();
+  });
+  it('trims the event ID', () => {
+    expect(earthquakeEventResource.params!.parse({ event_id: ' us1 ' }).event_id).toBe('us1');
+  });
   it('requires event_id', () => {
     expect(() => earthquakeEventResource.params!.parse({})).toThrow();
   });

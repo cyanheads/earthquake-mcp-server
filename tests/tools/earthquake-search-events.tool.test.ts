@@ -813,7 +813,7 @@ describe('earthquakeSearchEvents — EMSC described as a global catalog (issue #
   it('keeps the caveats that are genuinely EMSC-specific', () => {
     const text = sourceDescription();
     expect(text).toContain('PAGER');
-    expect(text).toContain('per-event detail');
+    expect(text).toContain('USGS IDs only');
     expect(text).toContain('densest');
   });
 
@@ -967,7 +967,7 @@ describe('earthquakeSearchEvents — failed total-count leg is disclosed (issue 
 
   it('does not promise a total the tool cannot always deliver', () => {
     const description = earthquakeSearchEvents.description;
-    expect(description).toContain('totalCount the full match count');
+    expect(description).toContain('totalCount is the full match total when known');
     // The paging sentence named totalCount as unconditional before #36.
     expect(description).toContain('countUnavailable');
     expect(description).toMatch(/total is unknown/);

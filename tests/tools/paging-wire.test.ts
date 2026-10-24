@@ -103,11 +103,14 @@ beforeAll(async () => {
     if (mode === 'timeout' || mode === 'cancel') return;
     res.setHeader('Content-Type', 'application/json');
     if (url.pathname.endsWith('/count')) {
-      res.end(JSON.stringify({ count: 140 }));
+      res.end(JSON.stringify({ count: mode === 'empty' ? 0 : 140 }));
       return;
     }
     const emsc = url.pathname.startsWith('/emsc');
-    const all = Array.from({ length: 140 }, (_, index) => feature(index, emsc));
+    const all = Array.from(
+      { length: mode === 'empty' ? 0 : mode === 'short' ? 33 : 140 },
+      (_, index) => feature(index, emsc),
+    );
     const feed = url.pathname.includes('/summary/');
     if (feed && edited) {
       all.unshift(feature(999));
@@ -178,6 +181,178 @@ afterAll(async () => {
 });
 
 describe('paging wire', () => {
+  it('preserves equal, single, negative and offset-equivalent range bounds', async () => {
+    for (const name of ['earthquake_search_events', 'earthquake_count_events']) {
+      for (const args of [
+        { min_magnitude: -1, max_magnitude: 0, min_depth_km: -100, max_depth_km: 0 },
+        { min_magnitude: 0, max_magnitude: 0, min_depth_km: 0, max_depth_km: 0 },
+        { min_magnitude: 5 },
+        { max_depth_km: -1 },
+        { start_time: '2025-1-1', end_time: '2025-01-01T00:00:00.000Z' },
+        { start_time: '2025-01-01T01:00:00+01:00', end_time: '2025-01-01T00:00:00Z' },
+      ]) {
+        const reply = await tool(name, args);
+        expect(reply.result.isError).not.toBe(true);
+        expect(reply.result.structuredContent!.count).toBeGreaterThan(0);
+      }
+    }
+  });
+  it('rejects inverted ranges on both surfaces before any upstream request', async () => {
+    for (const source of ['usgs', 'emsc']) {
+      for (const name of ['earthquake_search_events', 'earthquake_count_events']) {
+        for (const args of [
+          { min_magnitude: 6, max_magnitude: 5 },
+          { min_depth_km: 0, max_depth_km: -1 },
+          { start_time: '2025-02-01', end_time: '2025-01-01' },
+          { start_time: '2025-01-01T00:00:00.5', end_time: '2025-01-01T00:00:00.4Z' },
+          { start_time: '2025-01-01T00:00:00-01:00', end_time: '2025-01-01T00:30:00Z' },
+        ]) {
+          const before = calls;
+          const reply = await tool(name, { source, ...args });
+          expect(reply.result.isError).toBe(true);
+          expect(reply.result.structuredContent).toMatchObject({
+            error: {
+              code: -32007,
+              data: { reason: 'invalid_range', recovery: { hint: expect.any(String) } },
+            },
+          });
+          for (const [key, value] of Object.entries(args)) {
+            expect(JSON.stringify(reply.result.structuredContent)).toContain(String(value));
+            expect(JSON.stringify(reply.result.content)).toContain(key);
+            expect(JSON.stringify(reply.result.content)).toContain(String(value));
+          }
+          expect(JSON.stringify(reply.result.content)).toContain('Recovery:');
+          expect(calls).toBe(before);
+        }
+      }
+    }
+  });
+  it.each(['usgs', 'emsc'])(
+    '%s short pages establish totals before byte shaping without a count call',
+    async (source) => {
+      const before = calls;
+      const reply = await tool('earthquake_search_events', { source, limit: 100, offset: 120 });
+      expect(reply.result.isError).not.toBe(true);
+      expect(reply.result.structuredContent).toMatchObject({ totalCount: 140 });
+      expect(JSON.stringify(reply.result.content)).toContain('140');
+      expect(calls - before).toBe(1);
+      expect(size(reply)).toBeLessThanOrEqual(24000);
+      const past = await tool('earthquake_search_events', { source, offset: 999 });
+      expect(past.result.structuredContent).toMatchObject({ count: 0 });
+      expect(past.result.structuredContent).not.toHaveProperty('totalCount');
+      mode = 'short';
+      try {
+        const beforeShort = calls;
+        const short = await tool('earthquake_search_events', { source, limit: 100 });
+        expect(short.result.structuredContent).toMatchObject({ totalCount: 33, truncated: true });
+        expect(short.result.structuredContent!.count).toBeLessThan(33);
+        expect(short.result.structuredContent!.nextOffset).toBe(
+          short.result.structuredContent!.count + 1,
+        );
+        expect(JSON.stringify(short.result.content)).toContain('33');
+        expect(size(short)).toBeLessThanOrEqual(24000);
+        expect(calls - beforeShort).toBe(1);
+      } finally {
+        mode = 'normal';
+      }
+      mode = 'empty';
+      try {
+        const beforeEmpty = calls;
+        const empty = await tool('earthquake_search_events', { source });
+        expect(empty.result.structuredContent).toMatchObject({ count: 0, totalCount: 0 });
+        expect(JSON.stringify(empty.result.content)).toContain('0');
+        expect(calls - beforeEmpty).toBe(1);
+      } finally {
+        mode = 'normal';
+      }
+    },
+  );
+  it.each(['usgs', 'emsc'])(
+    '%s forwards supported product/magnitude/review filters through real query and count adapters',
+    async (source) => {
+      for (const name of ['earthquake_search_events', 'earthquake_count_events']) {
+        requests = [];
+        const reply = await tool(name, {
+          source,
+          magnitude_type: 'mb',
+          product_type: 'moment-tensor',
+          review_status: 'reviewed',
+          start_time: '2025-01-01',
+          end_time: '2026-01-01',
+        });
+        expect(reply.result.isError).not.toBe(true);
+        expect(requests.map((request) => request.pathname.split('/').at(-1))).toEqual(
+          name === 'earthquake_search_events' ? ['query', 'count'] : ['count'],
+        );
+        for (const request of requests) {
+          expect(request.searchParams.get('magnitudetype')).toBe('mb');
+          expect(request.searchParams.get('producttype')).toBe(
+            source === 'usgs' ? 'moment-tensor' : null,
+          );
+          expect(request.searchParams.get('reviewstatus')).toBe(
+            source === 'usgs' ? 'reviewed' : null,
+          );
+        }
+        expect(reply.result.structuredContent).toMatchObject({
+          queryEcho: { magnitude_type: 'mb' },
+        });
+        expect(JSON.stringify(reply.result.content)).toContain('magnitude_type=mb');
+        if (source === 'usgs') {
+          expect(reply.result.structuredContent).toMatchObject({
+            queryEcho: { product_type: 'moment-tensor', review_status: 'reviewed' },
+          });
+          expect(JSON.stringify(reply.result.content)).toContain('product_type=moment-tensor');
+          expect(JSON.stringify(reply.result.content)).toContain('review_status=reviewed');
+        } else {
+          expect(reply.result.structuredContent).toMatchObject({
+            ignoredFilters: ['product_type', 'review_status'],
+          });
+          expect(reply.result.structuredContent!.queryEcho).not.toHaveProperty('product_type');
+          expect(reply.result.structuredContent!.queryEcho).not.toHaveProperty('review_status');
+          expect(JSON.stringify(reply.result.content)).toContain('not supported by EMSC');
+        }
+        requests = [];
+        const blank = await tool(name, {
+          source,
+          magnitude_type: ' ',
+          product_type: '',
+          review_status: '  ',
+        });
+        expect(blank.result.isError).not.toBe(true);
+        expect(requests.map((request) => request.pathname.split('/').at(-1))).toEqual(
+          name === 'earthquake_search_events' ? ['query', 'count'] : ['count'],
+        );
+        for (const request of requests) {
+          for (const key of ['magnitudetype', 'producttype', 'reviewstatus'])
+            expect(request.searchParams.has(key)).toBe(false);
+        }
+        for (const key of ['magnitude_type', 'product_type', 'review_status']) {
+          expect(blank.result.structuredContent!.queryEcho).not.toHaveProperty(key);
+          expect(JSON.stringify(blank.result.content)).not.toContain(`${key}=`);
+        }
+        expect(blank.result.structuredContent).not.toHaveProperty('ignoredFilters');
+        mode = 'empty';
+        try {
+          const zero = await tool(name, { source, magnitude_type: 'future-scale' });
+          expect(zero.result.isError).not.toBe(true);
+          expect(zero.result.structuredContent).toMatchObject({
+            count: 0,
+            queryEcho: { magnitude_type: 'future-scale' },
+          });
+          expect(JSON.stringify(zero.result.content)).toContain('magnitude_type=future-scale');
+          expect(JSON.stringify(zero.result.content)).toContain('0');
+        } finally {
+          mode = 'normal';
+        }
+        const beforeInvalid = calls;
+        const invalid = await tool(name, { source, review_status: 'deleted' });
+        expect(invalid.result.isError).toBe(true);
+        expect(invalid.result.structuredContent).toMatchObject({ error: { code: -32602 } });
+        expect(JSON.stringify(invalid.result.content)).toContain('review_status');
+        expect(calls).toBe(beforeInvalid);
+      }
+    },
+  );
   it('advertises four tools and dispatches the explicit search/count event names', async () => {
     const inventory = await rpc('tools/list');
     expect(inventory.result.tools?.map(({ name }) => name).sort()).toEqual([

@@ -97,6 +97,7 @@ export interface UsgsShakeMapProperties {
   maxmmi?: string;
   maxpga?: string;
   maxpgv?: string;
+  'shakemap-code-version'?: string;
 }
 
 /** `dyfi` properties read by the detail projection. */
@@ -184,6 +185,7 @@ export interface EarthquakeEventDetail {
     review_status?: string;
   };
   shakemap?: {
+    code_version?: string;
     intensity_map_url?: string;
     max_mmi?: number;
     max_pga?: number;
@@ -270,6 +272,7 @@ export interface EarthquakeQueryParams {
   latitude?: number;
   limit?: number;
   longitude?: number;
+  magnitudeType?: string;
   maxDepthKm?: number;
   /** FDSN `maxlatitude` — northern edge of a bounding box, in degrees. */
   maxLatitude?: number;
@@ -287,6 +290,8 @@ export interface EarthquakeQueryParams {
   /** 1-based index of the first event to return. Both FDSN upstreams reject 0. */
   offset?: number;
   orderBy?: string;
+  productType?: string;
   radiusKm?: number;
+  reviewStatus?: 'automatic' | 'reviewed';
   startTime?: string;
 }

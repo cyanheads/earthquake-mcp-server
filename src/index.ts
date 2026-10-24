@@ -30,10 +30,7 @@ await createApp({
    */
   sessionMode: 'stateless',
   instructions:
-    'Use the earthquake_* tools to query seismic data from USGS ComCat and the EMSC SeismicPortal; no API key required. ' +
-    'earthquake_get_feed gives USGS real-time magnitude tiers for current activity; earthquake_search_events handles historical or filtered queries, sized first with earthquake_count_events. Search accepts limit up to 20,000 and returns byte-bounded pages with nextOffset. ' +
-    'Both emit network-specific event IDs (e.g. us6000sznj) for earthquake_get_event, which returns full USGS detail (EMSC has no per-event endpoint). ' +
-    'USGS carries richer metadata (PAGER, DYFI, ShakeMap); source=emsc is an independent global catalog from the European-Mediterranean Seismological Centre, useful for cross-checking an event of any region against a separate network, and does not apply USGS-only filters (the response names them in ignoredFilters).',
+    'Query keyless USGS ComCat and independent global EMSC SeismicPortal data. earthquake_get_feed covers USGS current activity; earthquake_search_events covers historical/filtered queries, sized with earthquake_count_events. Search accepts limit through 20,000 and returns byte-bounded pages; continue with nextOffset, including beyond 20,000 matches. earthquake_get_event accepts USGS IDs from feed/search results for analysis products. USGS includes PAGER, DYFI and ShakeMap; EMSC omits these and discloses unsupported filters in ignoredFilters.',
   tools: [earthquakeGetFeed, earthquakeSearchEvents, earthquakeGetEvent, earthquakeCountEvents],
   resources: [earthquakeFeedResource, earthquakeFeedPageResource, earthquakeEventResource],
   prompts: [],

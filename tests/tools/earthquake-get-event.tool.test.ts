@@ -234,8 +234,10 @@ describe('earthquakeGetEvent', () => {
     expect(text).toContain('Not computed');
     // no USGS page line for sparse event
     expect(text).not.toContain('USGS page:');
-    // absent products are stated, never rendered as zeros
-    expect(text).toContain('No analysis products on this event');
+    // Missing projected data does not establish whether USGS produced a product.
+    expect(text.split('\n')).toContain(
+      '_No projected analysis fields are available for this event; this does not imply zero impact._',
+    );
   });
 });
 

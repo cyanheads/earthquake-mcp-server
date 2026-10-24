@@ -576,15 +576,19 @@ describe('formatEventDetail (issue #25)', () => {
     }
   });
 
-  it('says a bare event has no products rather than rendering zeros', () => {
+  it('reports absent projected fields without implying zero impact', () => {
     const text = formatEventDetail(undefined).join('\n');
-    expect(text).toContain('No analysis products on this event');
+    expect(text).toBe(
+      '\n### Analysis products\n_No projected analysis fields are available for this event; this does not imply zero impact._',
+    );
     expect(text).not.toContain('**PAGER:**');
     expect(text).not.toContain('**ShakeMap:**');
   });
 
   it('treats an empty projection the same as an absent one', () => {
-    expect(formatEventDetail({}).join('\n')).toContain('No analysis products on this event');
+    expect(formatEventDetail({}).join('\n')).toBe(
+      '\n### Analysis products\n_No projected analysis fields are available for this event; this does not imply zero impact._',
+    );
   });
 
   it('renders only the groups the event carries', () => {

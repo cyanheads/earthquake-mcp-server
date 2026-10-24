@@ -189,6 +189,24 @@ export const earthquakeFilterFields = {
         'catalog, which accepts any string and returns zero matches for an unrecognized one. ' +
         'Only available from USGS.',
     ),
+  magnitude_type: z
+    .string()
+    .trim()
+    .optional()
+    .describe('Magnitude type, e.g. "mb" or "mww"; both sources. Blank means omitted.'),
+  product_type: z
+    .string()
+    .trim()
+    .optional()
+    .describe('Required product type, e.g. "moment-tensor"; USGS only. Blank means omitted.'),
+  review_status: z
+    .string()
+    .trim()
+    .pipe(z.enum(['', 'automatic', 'reviewed']))
+    .optional()
+    .describe(
+      'USGS review status: automatic or reviewed. Blank means omitted; unsupported by EMSC.',
+    ),
 };
 
 const earthquakeFilterSchema = z.object(earthquakeFilterFields);
@@ -203,7 +221,14 @@ export type EarthquakeFilterInput = z.infer<typeof earthquakeFilterSchema>;
  * merely go unapplied. The bounding box is deliberately absent: both providers
  * implement the FDSN rectangle parameters identically.
  */
-const USGS_ONLY_FILTERS = ['alert_level', 'event_type', 'min_felt', 'min_significance'] as const;
+const USGS_ONLY_FILTERS = [
+  'alert_level',
+  'event_type',
+  'min_felt',
+  'min_significance',
+  'product_type',
+  'review_status',
+] as const;
 
 /**
  * Name the USGS-only filters the caller supplied that will not reach the upstream
@@ -214,7 +239,40 @@ export function ignoredUsgsFilters(
   source: 'usgs' | 'emsc',
 ): string[] {
   if (source !== 'emsc') return [];
-  return USGS_ONLY_FILTERS.filter((name) => input[name] != null);
+  return USGS_ONLY_FILTERS.filter((name) => input[name] != null && input[name] !== '');
+}
+
+/** Return the strictly inverted explicit pair, leaving calendar-invalid times to the provider. */
+export function invertedRange(input: EarthquakeFilterInput): string | undefined {
+  for (const [min, max] of [
+    ['min_magnitude', 'max_magnitude'],
+    ['min_depth_km', 'max_depth_km'],
+  ] as const) {
+    if (input[min] != null && input[max] != null && input[min] > input[max])
+      return `${min} (${input[min]}) is above ${max} (${input[max]}).`;
+  }
+  if (input.start_time == null || input.end_time == null) return;
+  const instant = (value: string) => {
+    const normalized = normalizeFdsnTimestamp(value);
+    const date = normalized.slice(0, 10);
+    const calendar = new Date(`${date}T00:00:00Z`);
+    if (Number.isNaN(calendar.getTime()) || calendar.toISOString().slice(0, 10) !== date) return;
+    const parts = FDSN_TIMESTAMP_PATTERN.exec(normalized);
+    const timeMs = Date.parse(parts?.[6] ? normalized : `${normalized}Z`);
+    if (Number.isNaN(timeMs)) return;
+    return { timeMs, fraction: parts?.[5]?.slice(1) ?? '' };
+  };
+  const start = instant(input.start_time);
+  const end = instant(input.end_time);
+  if (start == null || end == null) return;
+  const precision = Math.max(start.fraction.length, end.fraction.length);
+  if (
+    start.timeMs > end.timeMs ||
+    (start.timeMs === end.timeMs &&
+      start.fraction.padEnd(precision, '0') > end.fraction.padEnd(precision, '0'))
+  )
+    return `start_time (${input.start_time}) is after end_time (${input.end_time}).`;
+  return undefined;
 }
 
 /** Documented default time window applied when start_time is omitted. */
@@ -269,6 +327,9 @@ export function buildQueryParams(input: EarthquakeFilterInput): EarthquakeQueryP
     ...(input.min_felt != null ? { minFelt: input.min_felt } : {}),
     ...(input.min_significance != null ? { minSignificance: input.min_significance } : {}),
     ...(input.event_type != null ? { eventType: input.event_type } : {}),
+    ...(input.magnitude_type ? { magnitudeType: input.magnitude_type } : {}),
+    ...(input.product_type ? { productType: input.product_type } : {}),
+    ...(input.review_status ? { reviewStatus: input.review_status } : {}),
   };
 }
 
@@ -301,5 +362,8 @@ export function filterQueryEcho(params: EarthquakeQueryParams, source: 'usgs' | 
       ? { min_significance: params.minSignificance }
       : {}),
     ...(isUsgs && params.eventType != null ? { event_type: params.eventType } : {}),
+    ...(params.magnitudeType != null ? { magnitude_type: params.magnitudeType } : {}),
+    ...(isUsgs && params.productType != null ? { product_type: params.productType } : {}),
+    ...(isUsgs && params.reviewStatus != null ? { review_status: params.reviewStatus } : {}),
   };
 }

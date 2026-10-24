@@ -32,6 +32,12 @@ const reviewedEvent: EarthquakeEventOutput = {
 };
 
 describe('earthquakeGetEvent — input schema', () => {
+  it.each(['', ' \r\n '])('rejects blank event_id %j', (event_id) => {
+    expect(() => earthquakeGetEvent.input.parse({ event_id })).toThrow();
+  });
+  it('trims the event ID', () => {
+    expect(earthquakeGetEvent.input.parse({ event_id: ' us1 ' }).event_id).toBe('us1');
+  });
   it('requires event_id', () => {
     expect(() => earthquakeGetEvent.input.parse({})).toThrow();
   });

@@ -6,6 +6,7 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -59,6 +60,152 @@ function geojsonResponse(features: UsgsFeature[]): Response {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
+
+describe('UsgsService.getEvent — identity and producer controls', () => {
+  it.each(['official20110311054624120_30', 'usc0001xgp', 'USC0001XGP'])(
+    'accepts the historical canonical ID or upstream alias %s',
+    async (id) => {
+      const feature = makeFeature('official20110311054624120_30', 9.1);
+      feature.properties.ids = ',official20110311054624120_30,usc0001xgp,';
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(feature)));
+      const result = await makeService().getEvent(id, createMockContext());
+      expect(result.event.id).toBe('official20110311054624120_30');
+    },
+  );
+
+  it.each(['4.0.2+709.gaf337e0', '4.5.0', '3.5', undefined])(
+    'preserves linear PGV and PGA for producer %s',
+    async (version) => {
+      const feature = makeFeature('us1', 7);
+      feature.properties.products = {
+        shakemap: [
+          {
+            properties: {
+              maxpgv: '4.43',
+              maxpga: '1.669',
+              ...(version ? { 'shakemap-code-version': version } : {}),
+            },
+          },
+        ],
+      };
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(feature)));
+      const result = await makeService().getEvent('us1', createMockContext());
+      expect(result.detail?.shakemap?.max_pgv).toBe(4.43);
+      expect(result.detail?.shakemap?.max_pga).toBe(1.669);
+    },
+  );
+});
+
+describe('UsgsService.getEvent — lookup regressions', () => {
+  it.each([200, 204])('maps an empty %s response to not_found', async (status) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status })));
+    await expect(makeService().getEvent('us1', createMockContext())).rejects.toMatchObject({
+      code: JsonRpcErrorCode.NotFound,
+    });
+  });
+  it.each(['', '  \r\n  '])('rejects blank ID %j without fetching', async (id) => {
+    const fetchMock = vi.fn().mockResolvedValue(geojsonResponse([makeFeature('unrelated', 5)]));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(makeService().getEvent(id, createMockContext())).rejects.toMatchObject({
+      code: JsonRpcErrorCode.ValidationError,
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('trims the ID before lookup and identity comparison', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(makeFeature('us1', 5)));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = await makeService().getEvent('  us1 \n', createMockContext());
+    expect(result.event.id).toBe('us1');
+    expect(new URL(String(fetchMock.mock.calls[0]?.[0])).searchParams.get('eventid')).toBe('us1');
+  });
+
+  it.each([
+    ['collection', { type: 'FeatureCollection', features: [makeFeature('us1', 5)] }],
+    ['empty collection', { type: 'FeatureCollection', features: [] }],
+    ['unrelated feature', makeFeature('us2', 5)],
+    ['partial alias', { ...makeFeature('us2', 5), properties: { ids: ',us10,other,' } }],
+  ])('rejects a %s as not_found', async (_label, payload) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(payload)));
+    await expect(makeService().getEvent('us1', createMockContext())).rejects.toMatchObject({
+      code: JsonRpcErrorCode.NotFound,
+    });
+  });
+
+  it.each(['Error 409: deleted\nRequest: http://private/query', 'unrelated body'])(
+    'maps event HTTP 409 independently of body %j',
+    async (body) => {
+      const fetchMock = vi.fn().mockResolvedValue(new Response(body, { status: 409 }));
+      vi.stubGlobal('fetch', fetchMock);
+      const err = await makeService()
+        .getEvent('ci41350791', createMockContext())
+        .catch((e: unknown) => e);
+      expect(err).toMatchObject({
+        code: JsonRpcErrorCode.NotFound,
+        data: {
+          reason: 'event_deleted',
+          retryable: false,
+          eventId: 'ci41350791',
+        },
+      });
+      expect(JSON.stringify(err)).not.toContain('body');
+      expect(JSON.stringify(err)).not.toContain('private');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('keeps query HTTP 409 outside the event_deleted mapping', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('deleted', { status: 409 })));
+    const err = await makeService()
+      .searchEvents({ limit: 1 }, createMockContext())
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: JsonRpcErrorCode.Conflict, data: { status: 409 } });
+  });
+
+  it.each([
+    ['4.0.2+335.gcbad862', '4.43', 83.93141691026881],
+    ['4.0.2+335.gcbad862.dirty', '4.639', 103.4408549906185],
+  ])('normalizes defective producer %s', async (version, maxpgv, expected) => {
+    const feature = makeFeature('us1', 7);
+    feature.properties.products = {
+      shakemap: [
+        {
+          properties: {
+            maxpgv,
+            maxpga: '1.669',
+            'shakemap-code-version': version,
+          },
+        },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(feature)));
+    const result = await makeService().getEvent('us1', createMockContext());
+    expect(result.detail?.shakemap?.max_pgv).toBeCloseTo(expected, 8);
+    expect(result.detail?.shakemap?.max_pga).toBe(1.669);
+    expect(result.detail?.shakemap).toHaveProperty('code_version', version);
+  });
+
+  it.each([undefined, 'NaN', 'Infinity', '1000'])(
+    'omits nonfinite or absent defective PGV %s',
+    async (maxpgv) => {
+      const feature = makeFeature('us1', 7);
+      feature.properties.products = {
+        shakemap: [
+          {
+            properties: {
+              ...(maxpgv ? { maxpgv } : {}),
+              'shakemap-code-version': '4.0.2+335.gcbad862',
+            },
+          },
+        ],
+      };
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(feature)));
+      const result = await makeService().getEvent('us1', createMockContext());
+      expect(result.detail?.shakemap).toEqual({ code_version: '4.0.2+335.gcbad862' });
+    },
+  );
 });
 
 describe('UsgsService.searchEvents — null magnitude normalization (issue #13)', () => {
@@ -156,7 +303,7 @@ describe('UsgsService.searchEvents — totalCount count sub-call (issue #11)', (
 
     const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
 
-    expect(result.totalCount).toBeUndefined();
+    expect(result.totalCount).toBe(1);
     expect(countSpy).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
@@ -427,7 +574,7 @@ function bareFeature(): UsgsFeature {
 
 describe('UsgsService.getEvent — product projection (issue #25)', () => {
   it('projects every product group from a product-rich event', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([productRichFeature()])));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(productRichFeature())));
 
     const service = makeService();
     const { event, detail } = await service.getEvent('us6000m0xl', createMockContext() as Context);
@@ -473,7 +620,7 @@ describe('UsgsService.getEvent — product projection (issue #25)', () => {
   });
 
   it('omits absent product groups on a bare automatic event rather than nulling them', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([bareFeature()])));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(bareFeature())));
 
     const service = makeService();
     const { detail } = await service.getEvent('hv75008152', createMockContext() as Context);
@@ -494,7 +641,7 @@ describe('UsgsService.getEvent — product projection (issue #25)', () => {
 
   it('leaves detail absent entirely when the event carries no products', async () => {
     const feature = makeFeature('nc12345678', 1.1);
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([feature])));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(feature)));
 
     const service = makeService();
     const result = await service.getEvent('nc12345678', createMockContext() as Context);
@@ -517,7 +664,7 @@ describe('UsgsService.getEvent — product projection (issue #25)', () => {
         },
       ],
     };
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([feature])));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(feature)));
 
     const service = makeService();
     const { detail } = await service.getEvent('us1', createMockContext() as Context);
@@ -531,7 +678,7 @@ describe('UsgsService.getEvent — product projection (issue #25)', () => {
     feature.properties.products = {
       shakemap: [{ properties: { maxmmi: 'n/a', maxpga: '1.5' } }],
     };
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([feature])));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(feature)));
 
     const service = makeService();
     const { detail } = await service.getEvent('us1', createMockContext() as Context);

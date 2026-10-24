@@ -11,6 +11,7 @@ import {
   earthquakeFilterFields,
   filterQueryEcho,
   ignoredUsgsFilters,
+  invertedRange,
 } from '@/mcp-server/tools/query-params.js';
 import { getEmscService } from '@/services/emsc/emsc-service.js';
 import type { EarthquakeQueryParams } from '@/services/usgs/types.js';
@@ -19,22 +20,7 @@ import { getUsgsService, type UsgsService } from '@/services/usgs/usgs-service.j
 export const earthquakeCountEvents = tool('earthquake_count_events', {
   title: 'Count Earthquakes',
   description:
-    'Count earthquakes matching filters without fetching full records. ' +
-    'Use for statistical queries ("how many M5+ earthquakes in 2025?") or to gauge result size ' +
-    'before calling earthquake_search_events. ' +
-    'Omitting start_time counts only the last 30 days, so pass an explicit range for any ' +
-    'period-specific question; queryEcho reports the window and filters the count actually covers. ' +
-    'When exceeds_limit is true, the count exceeds 20,000 and a full search would be truncated — ' +
-    'narrow filters before fetching. ' +
-    'USGS returns the max_allowed cap (20,000); EMSC count endpoint does not return this field ' +
-    '(max_allowed will be null). ' +
-    'Counts can be scoped to a rectangular study area with min_latitude, max_latitude, ' +
-    'min_longitude, and max_longitude — each independently optional. Combining the box with the ' +
-    'lat/lon/radius circle intersects the two, counting only events inside both. ' +
-    'Both catalogs include non-tectonic records, so a radius over a mining region counts quarry ' +
-    'blasts alongside earthquakes — pass event_type="earthquake" on USGS to exclude them. ' +
-    'USGS-specific filters (alert_level, event_type, min_felt, min_significance) are not sent when ' +
-    'source=emsc — the response names them in ignoredFilters.',
+    'Count matches without event records, or size an earthquake_search_events query. Omitting start_time uses 30 days; pass explicit bounds for historical periods. queryEcho reports applied filters/window; ignoredFilters names unsupported EMSC inputs. Circle and independently optional box edges intersect. Both catalogs include non-tectonic events; event_type="earthquake" excludes them on USGS. exceeds_limit marks the 20,000-event single-request threshold, not a retrieval ceiling: search supports offset paging beyond it. max_allowed is 20,000 for USGS, null for EMSC.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
 
   input: z.object({
@@ -68,16 +54,13 @@ export const earthquakeCountEvents = tool('earthquake_count_events', {
       .number()
       .nullable()
       .describe(
-        'Maximum events the API would return for a full fetch. 20000 for USGS. ' +
-          'Null for EMSC — the EMSC count endpoint does not return this field.',
+        'Upstream single-request threshold: 20000 for USGS; null because EMSC count omits it. Offset paging can retrieve larger sets.',
       ),
     source: z.enum(['usgs', 'emsc']).describe('Data source used.'),
     exceeds_limit: z
       .boolean()
       .describe(
-        'True when count exceeds 20000 — a full earthquake_search_events would be truncated. ' +
-          'For EMSC, evaluated against the known 20000 limit since max_allowed is not returned. ' +
-          'Narrow filters to retrieve all matching events.',
+        'Count exceeds the single-request threshold (20000 for EMSC despite null max_allowed). Use search offset paging or narrower filters.',
       ),
   }),
 
@@ -90,19 +73,15 @@ export const earthquakeCountEvents = tool('earthquake_count_events', {
         start_time: z
           .string()
           .optional()
-          .describe(
-            'Effective query start time sent upstream — server-resolved to a 30-day window when omitted from input.',
-          ),
+          .describe('Applied start time; defaults to 30 days before end/now.'),
         end_time: z
           .string()
           .optional()
-          .describe(
-            'Effective query end time. Absent when omitted from input — the upstream defaults to the current time.',
-          ),
-        min_magnitude: z.number().optional().describe('Minimum magnitude filter sent upstream.'),
-        max_magnitude: z.number().optional().describe('Maximum magnitude filter sent upstream.'),
-        latitude: z.number().optional().describe('Radius-search latitude sent upstream.'),
-        longitude: z.number().optional().describe('Radius-search longitude sent upstream.'),
+          .describe('Applied end time; absent means upstream current-time default.'),
+        min_magnitude: z.number().optional().describe('Applied minimum magnitude.'),
+        max_magnitude: z.number().optional().describe('Applied maximum magnitude.'),
+        latitude: z.number().optional().describe('Circle latitude, degrees.'),
+        longitude: z.number().optional().describe('Circle longitude, degrees.'),
         radius_km: z
           .number()
           .optional()
@@ -123,26 +102,27 @@ export const earthquakeCountEvents = tool('earthquake_count_events', {
           .number()
           .optional()
           .describe('Eastern bounding-box edge sent upstream, in degrees.'),
-        min_depth_km: z.number().optional().describe('Minimum depth filter sent upstream.'),
-        max_depth_km: z.number().optional().describe('Maximum depth filter sent upstream.'),
+        min_depth_km: z.number().optional().describe('Applied minimum depth, km.'),
+        max_depth_km: z.number().optional().describe('Applied maximum depth, km.'),
         alert_level: z
           .string()
           .optional()
-          .describe('PAGER alert filter sent upstream. Absent for EMSC — not supported there.'),
+          .describe('Applied minimum PAGER alert; absent for EMSC.'),
         min_felt: z
           .number()
           .optional()
-          .describe(
-            'DYFI felt-report filter sent upstream. Absent for EMSC — not supported there.',
-          ),
+          .describe('Applied minimum DYFI response count; absent for EMSC.'),
         min_significance: z
           .number()
           .optional()
-          .describe('Significance filter sent upstream. Absent for EMSC — not supported there.'),
-        event_type: z
-          .string()
+          .describe('Applied minimum significance; absent for EMSC.'),
+        event_type: z.string().optional().describe('Applied event type; absent for EMSC.'),
+        magnitude_type: z.string().optional().describe('Applied magnitude type.'),
+        product_type: z.string().optional().describe('Applied required product; USGS only.'),
+        review_status: z
+          .enum(['automatic', 'reviewed'])
           .optional()
-          .describe('Event-type filter sent upstream. Absent for EMSC — not supported there.'),
+          .describe('Applied review status; USGS only.'),
         source: z.enum(['usgs', 'emsc']).describe('Data source queried.'),
       })
       .optional()
@@ -176,6 +156,12 @@ export const earthquakeCountEvents = tool('earthquake_count_events', {
   },
 
   errors: [
+    {
+      reason: 'invalid_range',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'Minimum magnitude or depth exceeds its maximum, or start_time is after end_time.',
+      recovery: 'Swap or correct the named bounds; equal bounds and single bounds are accepted.',
+    },
     {
       reason: 'invalid_radius',
       code: JsonRpcErrorCode.ValidationError,
@@ -227,6 +213,9 @@ export const earthquakeCountEvents = tool('earthquake_count_events', {
   ],
 
   async handler(input, ctx) {
+    const rangeError = invertedRange(input);
+    if (rangeError)
+      throw ctx.fail('invalid_range', rangeError, { ...ctx.recoveryFor('invalid_range') });
     const latProvided = input.latitude != null;
     const lonProvided = input.longitude != null;
     const radiusProvided = input.radius_km != null;
@@ -368,7 +357,7 @@ export const earthquakeCountEvents = tool('earthquake_count_events', {
       `**Source:** ${result.source.toUpperCase()}`,
       `**Count:** ${result.count}`,
       `**Max allowed:** ${result.max_allowed ?? 'Not reported by EMSC'}`,
-      `**Exceeds limit:** ${result.exceeds_limit ? '⚠️ Yes — full search would be truncated. Narrow filters.' : 'No'}`,
+      `**Exceeds limit:** ${result.exceeds_limit ? 'Yes — above the single-request threshold. Use search offset paging or narrower filters.' : 'No'}`,
     ];
     return [{ type: 'text', text: lines.join('\n') }];
   },

@@ -131,7 +131,8 @@ describe('earthquakeCountEvents', () => {
     const blocks = earthquakeCountEvents.format!(output);
     const text = (blocks[0] as { text: string }).text;
     expect(text).toContain('Yes');
-    expect(text).toContain('truncated');
+    expect(text).toContain('single-request threshold');
+    expect(text).toContain('offset paging');
   });
 
   it('formats EMSC result with null max_allowed', () => {

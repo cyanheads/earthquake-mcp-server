@@ -13,6 +13,7 @@ import {
   earthquakeFilterFields,
   filterQueryEcho,
   ignoredUsgsFilters,
+  invertedRange,
 } from '@/mcp-server/tools/query-params.js';
 import {
   type EarthquakeEventOutput,
@@ -50,22 +51,7 @@ const searchTrailer = {
 export const earthquakeSearchEvents = tool('earthquake_search_events', {
   title: 'Search Earthquakes',
   description:
-    'Search earthquakes by time range, magnitude, depth, location radius, PAGER alert level, or felt reports. ' +
-    'Supports USGS (global, richer metadata: PAGER, DYFI, ShakeMap) and EMSC, an independent global ' +
-    'catalog operated by the European-Mediterranean Seismological Centre. ' +
-    'For location-based queries, provide latitude, longitude, and radius_km together. ' +
-    'A rectangular study area is expressed with min_latitude, max_latitude, min_longitude, and ' +
-    'max_longitude — each independently optional, so a single edge is a valid constraint. Combining ' +
-    'the box with the lat/lon/radius circle intersects the two, returning only events inside both. ' +
-    'Both catalogs include non-tectonic records (quarry blasts, explosions) — every event carries ' +
-    'its event_type, and event_type="earthquake" filters the rest out on USGS. ' +
-    'USGS-specific filters (alert_level, event_type, min_felt, min_significance) are not sent when ' +
-    'source=emsc — the response names them in ignoredFilters. ' +
-    'Use earthquake_count_events first to gauge result size before requesting large result sets. ' +
-    'A call accepts limit up to 20,000 but fetches at most 100 candidates and returns a 24,000-byte page; retrieve remaining results by paging with ' +
-    'offset, which is passed straight through to the upstream FDSN API. When a result is capped, ' +
-    'nextOffset carries the offset for the following page and totalCount the full match count — ' +
-    'or countUnavailable reports that the count lookup failed and the total is unknown.',
+    'Search USGS or independent global EMSC seismic catalogs by time, magnitude, depth, area and source-specific filters. Both include non-tectonic events; event_type="earthquake" excludes them on USGS. Circle and independently optional box edges intersect. Unsupported EMSC filters appear in ignoredFilters. Size queries with earthquake_count_events. Accepts limit through 20,000, fetches at most 100 candidates, and returns a 24,000-byte page. Continue with offset=nextOffset and unchanged filters/order. totalCount is the full match total when known; countUnavailable marks a failed count lookup, so the total is unknown. Paging can retrieve matches beyond 20,000.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
 
   input: z.object({
@@ -80,12 +66,7 @@ export const earthquakeSearchEvents = tool('earthquake_search_events', {
       .enum(['usgs', 'emsc'])
       .default('usgs')
       .describe(
-        'Data source. Both catalogs are global. ' +
-          '"usgs" covers global events with PAGER, DYFI, and ShakeMap metadata. ' +
-          '"emsc" is an independent global catalog operated by the European-Mediterranean ' +
-          'Seismological Centre — use it to cross-check any event, anywhere, against a separate ' +
-          'network. It publishes no PAGER, DYFI, or ShakeMap metadata and no per-event detail ' +
-          'endpoint; its station coverage is densest around Europe and the Mediterranean.',
+        'USGS includes PAGER, DYFI and ShakeMap; EMSC (European-Mediterranean Seismological Centre) is an independent global catalog, with densest station coverage around Europe/Mediterranean and no such impact products. Event-detail tool accepts USGS IDs only.',
       ),
     limit: z
       .number()
@@ -131,35 +112,25 @@ export const earthquakeSearchEvents = tool('earthquake_search_events', {
       .number()
       .optional()
       .describe(
-        'Total events matching the query before the limit was applied. ' +
-          'Fetched via a follow-up count query when results are truncated at the limit. Absent ' +
-          'when results were not capped, and when that follow-up query failed — countUnavailable ' +
-          'separates the two.',
+        'Full match total, inferred from a nonempty short upstream page (or empty first page), otherwise counted for full pages. Absent for empty later pages or failed counts; countUnavailable marks failures.',
       ),
     countUnavailable: z
       .boolean()
       .optional()
       .describe(
-        'True when the follow-up total-count query failed, so the total is unknown for this ' +
-          'call rather than never requested. The returned events are complete and unaffected; ' +
-          'only totalCount is missing. Retry earthquake_count_events with the same filters to recover ' +
-          'the total. Absent whenever the count succeeded or was never needed.',
+        'True if the count lookup failed; events are unaffected, totalCount unknown. Retry earthquake_count_events with identical filters. Absent if count succeeded or was unnecessary.',
       ),
     truncated: z
       .boolean()
       .optional()
       .describe(
-        'True when results were capped by the requested limit, candidate limit, or response byte budget. ' +
-          'totalCount carries the full match count when available, and nextOffset the input ' +
-          'for the following page. With countUnavailable set the total is unknown, so this ' +
-          'flag means the page was filled, not that more events are confirmed to remain.',
+        'Page capped by limit, candidates or bytes. Continue with nextOffset. Without totalCount, more events may remain but are not confirmed.',
       ),
     nextOffset: z
       .number()
       .optional()
       .describe(
-        'Value to pass as the offset input to retrieve the next page, with every other input ' +
-          'unchanged. Present when more events remain or may remain with an unknown total; absent means this was the last page.',
+        'Next 1-based offset; keep other inputs unchanged. Present if more events remain or may remain with unknown total; absent on last page.',
       ),
     notice: z
       .string()
@@ -181,19 +152,15 @@ export const earthquakeSearchEvents = tool('earthquake_search_events', {
         start_time: z
           .string()
           .optional()
-          .describe(
-            'Effective query start time sent upstream — server-resolved to a 30-day window when omitted from input.',
-          ),
+          .describe('Applied start time; defaults to 30 days before end/now.'),
         end_time: z
           .string()
           .optional()
-          .describe(
-            'Effective query end time. Absent when omitted from input — the upstream defaults to the current time.',
-          ),
-        min_magnitude: z.number().optional().describe('Minimum magnitude filter sent upstream.'),
-        max_magnitude: z.number().optional().describe('Maximum magnitude filter sent upstream.'),
-        latitude: z.number().optional().describe('Radius-search latitude sent upstream.'),
-        longitude: z.number().optional().describe('Radius-search longitude sent upstream.'),
+          .describe('Applied end time; absent means upstream current-time default.'),
+        min_magnitude: z.number().optional().describe('Applied minimum magnitude.'),
+        max_magnitude: z.number().optional().describe('Applied maximum magnitude.'),
+        latitude: z.number().optional().describe('Circle latitude, degrees.'),
+        longitude: z.number().optional().describe('Circle longitude, degrees.'),
         radius_km: z
           .number()
           .optional()
@@ -214,26 +181,27 @@ export const earthquakeSearchEvents = tool('earthquake_search_events', {
           .number()
           .optional()
           .describe('Eastern bounding-box edge sent upstream, in degrees.'),
-        min_depth_km: z.number().optional().describe('Minimum depth filter sent upstream.'),
-        max_depth_km: z.number().optional().describe('Maximum depth filter sent upstream.'),
+        min_depth_km: z.number().optional().describe('Applied minimum depth, km.'),
+        max_depth_km: z.number().optional().describe('Applied maximum depth, km.'),
         alert_level: z
           .string()
           .optional()
-          .describe('PAGER alert filter sent upstream. Absent for EMSC — not supported there.'),
+          .describe('Applied minimum PAGER alert; absent for EMSC.'),
         min_felt: z
           .number()
           .optional()
-          .describe(
-            'DYFI felt-report filter sent upstream. Absent for EMSC — not supported there.',
-          ),
+          .describe('Applied minimum DYFI response count; absent for EMSC.'),
         min_significance: z
           .number()
           .optional()
-          .describe('Significance filter sent upstream. Absent for EMSC — not supported there.'),
-        event_type: z
-          .string()
+          .describe('Applied minimum significance; absent for EMSC.'),
+        event_type: z.string().optional().describe('Applied event type; absent for EMSC.'),
+        magnitude_type: z.string().optional().describe('Applied magnitude type.'),
+        product_type: z.string().optional().describe('Applied required product; USGS only.'),
+        review_status: z
+          .enum(['automatic', 'reviewed'])
           .optional()
-          .describe('Event-type filter sent upstream. Absent for EMSC — not supported there.'),
+          .describe('Applied review status; USGS only.'),
         source: z.enum(['usgs', 'emsc']).describe('Data source queried.'),
         limit: z.number().describe('Effective result limit sent upstream.'),
         offset: z
@@ -252,6 +220,12 @@ export const earthquakeSearchEvents = tool('earthquake_search_events', {
   enrichmentTrailer: searchTrailer,
 
   errors: [
+    {
+      reason: 'invalid_range',
+      code: JsonRpcErrorCode.ValidationError,
+      when: 'Minimum magnitude or depth exceeds its maximum, or start_time is after end_time.',
+      recovery: 'Swap or correct the named bounds; equal bounds and single bounds are accepted.',
+    },
     {
       reason: 'result_too_large',
       code: JsonRpcErrorCode.ValidationError,
@@ -310,6 +284,9 @@ export const earthquakeSearchEvents = tool('earthquake_search_events', {
   ],
 
   async handler(input, ctx) {
+    const rangeError = invertedRange(input);
+    if (rangeError)
+      throw ctx.fail('invalid_range', rangeError, { ...ctx.recoveryFor('invalid_range') });
     // Validate radius params — all three must be provided together
     const latProvided = input.latitude != null;
     const lonProvided = input.longitude != null;

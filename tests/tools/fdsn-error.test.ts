@@ -53,6 +53,37 @@ fdsnws-event: v 1.2.1
 `;
 
 describe('extractFdsnReason', () => {
+  it('unwraps the EMSC detail object before extracting the reason', () => {
+    expect(extractFdsnReason(JSON.stringify({ detail: EMSC_BAD_STARTTIME }))).toBe(
+      'Request was not properly specified: start or starttime used a bad format',
+    );
+  });
+
+  it.each([
+    '{"detail":',
+    '{"detail":5}',
+    '{"error":"http://private/query"}',
+    '["private"]',
+    '"private"',
+    '{"detail":{"error":"private"}}',
+  ])('does not expose unsupported or malformed JSON %s', (body) => {
+    expect(extractFdsnReason(body)).toBeUndefined();
+  });
+
+  it('applies HTML and elision handling to decoded detail', () => {
+    expect(extractFdsnReason(JSON.stringify({ detail: '<html>private</html>' }))).toBeUndefined();
+    expect(
+      extractFdsnReason(
+        JSON.stringify({
+          detail:
+            'Error 400: Bad Request\n\nUseful reason\nPartial…[500 bytes elided]…http://private',
+        }),
+      ),
+    ).toBe('Useful reason');
+    expect(
+      extractFdsnReason('{"detail":"Error 400: useful…[500 bytes elided]…private"}'),
+    ).toBeUndefined();
+  });
   it('pulls the USGS sentence out from under the generic status phrase', () => {
     expect(extractFdsnReason(USGS_BAD_STARTTIME)).toBe(
       'Bad starttime value "not-a-date". Valid values are ISO-8601 timestamps.',

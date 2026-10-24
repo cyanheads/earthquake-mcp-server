@@ -22,15 +22,17 @@ export const earthquakeGetEvent = tool('earthquake_get_event', {
     'ShakeMap peak intensity and ground motion, DYFI felt-report totals, the moment-tensor focal ' +
     'mechanism, landslide and liquefaction alerts, origin quality (azimuthal gap, station count, ' +
     'location uncertainty), and finite-fault rupture dimensions. ' +
-    'Products are omitted when USGS produced none — a small automatic event typically has no ' +
+    'Product groups are omitted when no projected field is available — a small automatic event typically has no ' +
     'detail at all, while a large reviewed one has most of it. ' +
     'Event IDs appear in the "id" field of earthquake_get_feed and earthquake_search_events results. ' +
-    'This tool is USGS-only — EMSC events have no per-event detail endpoint.',
+    'This tool accepts USGS event IDs only.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
 
   input: z.object({
     event_id: z
       .string()
+      .trim()
+      .min(1, 'Provide a nonblank USGS event ID from a feed or search result.')
       .describe(
         'USGS event ID, e.g. "hv74966427" or "us6000sznj". ' +
           'Found in the "id" field of earthquake_get_feed and earthquake_search_events results.',
@@ -40,12 +42,19 @@ export const earthquakeGetEvent = tool('earthquake_get_event', {
   output: z.object({
     event: EarthquakeEventSchema.describe('Full earthquake event detail.'),
     detail: EarthquakeDetailSchema.optional().describe(
-      'Analysis products USGS attached to this event. Absent when the event carries none — ' +
-        'that means no product was produced, not that impact was zero.',
+      'Projected USGS analysis products. Absent when no projected field is available; absence does not mean impact was zero.',
     ),
   }),
 
   errors: [
+    {
+      reason: 'event_deleted',
+      code: JsonRpcErrorCode.NotFound,
+      when: 'USGS reports that the requested event was deleted.',
+      retryable: false,
+      recovery:
+        'Search earthquake_search_events around the same time and location for a possible replacement event.',
+    },
     {
       reason: 'not_found',
       code: JsonRpcErrorCode.NotFound,
@@ -81,6 +90,9 @@ export const earthquakeGetEvent = tool('earthquake_get_event', {
     try {
       result = await getUsgsService().getEvent(input.event_id, ctx);
     } catch (err) {
+      if (err instanceof McpError && err.data?.reason === 'event_deleted') {
+        throw ctx.fail('event_deleted', err.message, { ...ctx.recoveryFor('event_deleted') });
+      }
       if (err instanceof McpError && err.code === JsonRpcErrorCode.NotFound) {
         throw ctx.fail(
           'not_found',

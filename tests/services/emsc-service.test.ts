@@ -189,7 +189,7 @@ describe('EmscService.searchEvents — totalCount count sub-call (issue #11)', (
 
     const result = await service.searchEvents({ limit: 10 }, createMockContext() as Context);
 
-    expect(result.totalCount).toBeUndefined();
+    expect(result.totalCount).toBe(1);
     expect(countSpy).not.toHaveBeenCalled();
     vi.unstubAllGlobals();
   });
@@ -309,7 +309,7 @@ describe('EmscService.searchEvents — 204 No Content is an empty match set', ()
   });
 
   it('returns zero events when paging past the last match', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('', { status: 204 })));
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
 
     const service = makeService();
     const result = await service.searchEvents(
