@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.4.1](changelog/0.4.x/0.4.1.md) — 2026-10-24
+
+Correct event lookups, query ranges, and paging totals.
+
 ## [0.4.0](changelog/0.4.x/0.4.0.md) — 2026-10-18 · ⚠️ Breaking
 
 Bound earthquake result pages and retain feed continuations with explicit event tool names and consistent query dates.
