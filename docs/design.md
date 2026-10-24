@@ -9,7 +9,7 @@
 | `earthquake_get_feed` | Fetch a USGS real-time pre-computed feed by magnitude tier and time window. Fast, cached, low-latency. | `magnitude_tier` (all/1.0/2.5/4.5/significant), `time_window` (hour/day/week/month) | `readOnlyHint: true`, `openWorldHint: true` |
 | `earthquake_search_events` | Query earthquakes by time range, magnitude, depth, location radius, PAGER alert level, or felt reports. Supports both USGS and EMSC sources. | `start_time`, `end_time`, `min_magnitude`, `latitude`+`longitude`+`radius_km`, `source`, `limit`, `order_by` | `readOnlyHint: true`, `openWorldHint: true` |
 | `earthquake_get_event` | Fetch full detail for a specific earthquake by USGS event ID, including felt reports, ShakeMap intensity, PAGER alert, and product links. | `event_id` | `readOnlyHint: true`, `openWorldHint: true` |
-| `earthquake_count_events` | Count earthquakes matching filters without fetching full records. Useful for "how many M5+ earthquakes happened in Japan this year?" queries. | same filters as `earthquake_search_events` minus `limit`/`order_by` | `readOnlyHint: true`, `openWorldHint: true` |
+| `earthquake_count_events` | Count earthquakes matching filters without fetching full records. Useful for "how many M5+ earthquakes happened in Japan this year?" queries. | same filters as `earthquake_search_events` minus `limit`/`offset`/`order_by` | `readOnlyHint: true`, `openWorldHint: true` |
 
 ### Resources
 
@@ -38,7 +38,7 @@ Target users: journalists checking recent activity, researchers analyzing seismi
 - Read-only. No write operations.
 - No API keys required. Both USGS and EMSC APIs are public and auth-free.
 - USGS source: `https://earthquake.usgs.gov/fdsnws/event/1/` (FDSN query) and `https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/` (pre-computed feeds)
-- EMSC source: `https://www.seismicportal.eu/fdsnws/event/1/` (same FDSN spec, European-centric data)
+- EMSC source: `https://www.seismicportal.eu/fdsnws/event/1/` (independent global FDSN catalog)
 - USGS feeds are the recommended path for current-state queries (better performance and availability). The FDSN query API supports up to 20,000 results per request.
 - EMSC only supports `maxradius` in degrees, not `maxradiuskm`. Server converts km → degrees (1° ≈ 111.2 km) when routing to EMSC.
 - USGS event IDs are network-specific strings (e.g. `hv74966427`, `us6000sznj`); `earthquake_get_event` is USGS-only since detail endpoints are USGS-hosted.
@@ -117,17 +117,17 @@ One query and, when the candidate page fills, an optional count lookup on the se
 | 1 | `GET /fdsnws/event/1/query?format=geojson&{filters}` (USGS) or `?format=json&{filters}` (EMSC) | Filtered event query |
 | 2 | `GET /fdsnws/event/1/count?{filters}` | Full match count when the candidate page fills |
 
-USGS uses `format=geojson`; EMSC uses `format=json` (`format=geojson` returns HTTP 400 on EMSC). Both USGS and EMSC support the same FDSN parameter set with one exception: USGS supports `maxradiuskm` directly; EMSC only accepts `maxradius` in degrees. Service layer handles format selection and conversion transparently. EMSC also lacks USGS-specific extensions (`alertlevel`, `sig`, `minfelt`, `reviewstatus`).
+USGS uses `format=geojson`; EMSC uses `format=json` (`format=geojson` returns HTTP 400 on EMSC). Both accept the shared time, magnitude, depth, and area filters. USGS supports `maxradiuskm` directly; EMSC accepts `maxradius` in degrees. The service layer selects the format and converts the radius. USGS-only filters (`minalertlevel`, `minsig`, `minfelt`, `eventtype`, `producttype`, `reviewstatus`) are omitted for EMSC and disclosed in `ignoredFilters`.
 
 ### `earthquake_get_event`
 
-One upstream call to USGS only (EMSC has no per-ID detail endpoint):
+One upstream call to USGS only; EMSC per-ID lookup is not exposed by the current tool:
 
 | # | Call | Purpose |
 |:--|:-----|:--------|
 | 1 | `GET /fdsnws/event/1/query?eventid={id}&format=geojson` | Full event detail with products |
 
-The `eventid` query returns a single Feature with `products` populated. USGS recommends using the `detail` URL from feed responses when available — that URL is the same endpoint with the same eventid param.
+The `eventid` query returns a single Feature with `products` populated. Pass the event's `id` to `earthquake_get_event`; the tool constructs the USGS lookup URL.
 
 ### `earthquake_count_events`
 
@@ -135,7 +135,7 @@ Single call per source:
 
 | # | Call | Purpose |
 |:--|:-----|:--------|
-| 1 | `GET /fdsnws/event/1/count?format=geojson&{filters}` | Returns `{count, maxAllowed}` |
+| 1 | `GET /fdsnws/event/1/count?format=geojson&{filters}` (USGS) or `?format=json&{filters}` (EMSC) | Returns `{count, maxAllowed}` (USGS) or `{count}` (EMSC) |
 
 USGS count endpoint returns `{"count": N, "maxAllowed": 20000}`. When count > maxAllowed, the response also includes `"error": "..."` — the service layer should detect this and set `exceeds_limit: true`, not treat the `error` field as a failure. EMSC count endpoint is the same FDSN spec but returns only `{"count": N}` — no `maxAllowed` field. Use this when the human asks "how many" without needing individual events.
 
@@ -195,11 +195,15 @@ errors: [
 
 ### `earthquake_search_events`
 
-**Purpose:** Search earthquakes by time range, magnitude, depth, location radius, or impact level. Supports both USGS (global, richer metadata) and EMSC (European-Mediterranean focus, independent catalog). For location-based queries, provide `latitude`, `longitude`, and `radius_km` together.
+**Purpose:** Search earthquakes by time range, magnitude, depth, location radius, or impact level. Both USGS and EMSC are global catalogs; USGS provides additional impact products. For location-based queries, provide `latitude`, `longitude`, and `radius_km` together.
 
 Search and count normalize date-only bounds to midnight at the start of the named day on both providers (`2026-10-10` → `2026-10-10T00:00:00`). Year/year-month expansion and date padding happen first. Explicit time and timezone suffixes remain unchanged. The 30-day default interprets offsetless FDSN times as UTC and honors explicit offsets; query echoes contain the exact forwarded bounds.
 
-**Input schema:**
+Both tools reject strictly inverted magnitude, depth, and explicit time pairs before fetching, with `invalid_range`, both values, and recovery on both client surfaces. Time ordering compares normalized UTC instants. Equal/single bounds and calendar-invalid upstream errors retain their existing behavior.
+
+Both tools accept `magnitude_type` (open string, sent as `magnitudetype`) on either source. `product_type` (open string, `producttype`) and `review_status` (`automatic`/`reviewed`, `reviewstatus`) are USGS-only. Blank values mean omitted. EMSC queries/counts omit unsupported values, name them in `ignoredFilters`, and echo only applied filters.
+
+**Selected input fields:** The complete shared filter schema is in [`query-params.ts`](../src/mcp-server/tools/query-params.ts).
 ```ts
 {
   start_time: z.string().optional()
@@ -227,7 +231,7 @@ Search and count normalize date-only bounds to midnight at the start of the name
   min_significance: z.number().int().optional()
     .describe('Minimum USGS significance score (0–2000+). Combines magnitude, felt reports, and PAGER estimates. Significant events typically score 600+. Only available from USGS.'),
   source: z.enum(['usgs', 'emsc']).default('usgs')
-    .describe('Data source. Both catalogs are global. "usgs" covers global events with PAGER, DYFI, and ShakeMap metadata. "emsc" is an independent global catalog operated by the European-Mediterranean Seismological Centre — use it to cross-check any event against a separate network. It publishes no PAGER, DYFI, or ShakeMap metadata and no per-event detail endpoint.'),
+    .describe('Global catalog: USGS includes PAGER, DYFI and ShakeMap; EMSC is independent and publishes none of those products. The event-detail tool accepts USGS IDs only.'),
   limit: z.number().int().min(1).max(20000).optional()
     .describe('Maximum events to return. Default 100; at most 100 candidates are fetched and the serialized result is byte-bounded.'),
   order_by: z.enum(['time', 'time-asc', 'magnitude', 'magnitude-asc']).default('time')
@@ -244,13 +248,16 @@ Search and count normalize date-only bounds to midnight at the start of the name
 }
 ```
 
-**Enrichment (success-path meta, reaches both `structuredContent` and `content[]`):** `totalCount` (full match total, fetched via a follow-up FDSN count sub-call when results are truncated at the limit), `countUnavailable` (that sub-call failed, so the total is unknown rather than never requested), `truncated`, `notice` (recovery guidance for empty or capped result sets), and `queryEcho` (effective upstream parameters including the server-resolved start_time default; USGS-only filters omitted for source=emsc).
+**Enrichment (both client surfaces):** `totalCount` is inferred as `offset - 1 + upstream rows` for nonempty short pages before byte shaping; an empty first page establishes zero, while an empty later page establishes no total. Full upstream pages retain the count sub-call and `countUnavailable` on failure. `truncated`, `nextOffset`, and `notice` guide continuation; `queryEcho` contains effective defaults and applied filters only.
 
 Search accepts limits through 20,000 but fetches at most 100 candidates per call. Complete serialized tool results fit 24,000 bytes; `nextOffset` is the input offset (default 1) plus emitted events, never fetched candidates. Unreturned candidates are fetched again on the next call. The query echo reports the actual candidate limit. Search does not freeze the upstream catalog. Feed fetching and each search's query/count chain share a 50-second deadline across attempts and backoff. An optional count timeout preserves the page with `countUnavailable`; caller cancellation propagates.
 
 **Error contract:**
 ```ts
 errors: [
+  { reason: 'invalid_range', code: ValidationError,
+    when: 'Minimum magnitude or depth exceeds its maximum, or start_time is after end_time',
+    recovery: 'Swap or correct the named bounds; equal and single bounds are accepted.' },
   { reason: 'invalid_radius', code: ValidationError,
     when: 'latitude or longitude provided without radius_km, or vice versa',
     recovery: 'Provide latitude, longitude, and radius_km together for a location-based search.' },
@@ -281,7 +288,7 @@ errors: [
 **Input schema:**
 ```ts
 {
-  event_id: z.string()
+  event_id: z.string().trim().min(1)
     .describe('USGS event ID (e.g. "hv74966427" or "us6000sznj"). Found in the "id" field of feed and search results.'),
 }
 ```
@@ -290,13 +297,18 @@ errors: [
 ```ts
 {
   event: EarthquakeEventSchema,        // the normalized event a search result carries
-  detail: EarthquakeDetailSchema.optional(), // projection of the USGS analysis products; absent when the event has none
+  detail: EarthquakeDetailSchema.optional(), // USGS analysis-product projection; absent when no projected field is available
 }
 ```
+
+Canonical IDs and aliases match case-insensitively. Event resource URI parameters decode once before validation. ShakeMap exposes optional `code_version`; PGV is converted from logarithmic values only for producer `4.0.2+335.gcbad862` and its `.dirty` variant, with unrepresentable converted values omitted.
 
 **Error contract:**
 ```ts
 errors: [
+  { reason: 'event_deleted', code: NotFound, retryable: false,
+    when: 'USGS reports that the requested event was deleted',
+    recovery: 'Search earthquake_search_events around the same time and location for a possible replacement event.' },
   { reason: 'not_found', code: NotFound,
     when: 'No event matches the provided event_id',
     recovery: 'Verify the event ID from a feed or search result. IDs are network-specific strings like "us6000sznj" or "hv74966427".' },
@@ -315,15 +327,15 @@ errors: [
 
 **Purpose:** Count earthquakes matching filters without fetching full records. Use for statistical queries ("how many M5+ earthquakes in 2025?") or to gauge result size before calling `earthquake_search_events`.
 
-**Input schema:** Same as `earthquake_search_events` minus `limit` and `order_by`.
+**Input schema:** Same filters as `earthquake_search_events`, without `limit`, `offset`, or `order_by`.
 
 **Output schema:**
 ```ts
 {
   count: z.number().describe('Number of events matching the query.'),
-  max_allowed: z.number().nullable().describe('Maximum events the API would return for a full fetch. 20000 for USGS. Null for EMSC — the EMSC count endpoint does not return this field.'),
+  max_allowed: z.number().nullable().describe('Single-request threshold: 20000 for USGS; null because EMSC count omits it. Offset paging can retrieve larger sets.'),
   source: z.enum(['usgs', 'emsc']).describe('Data source used.'),
-  exceeds_limit: z.boolean().describe('True when count exceeds 20000 — a full search would be truncated. For EMSC, evaluated against the known 20000 limit since max_allowed is not returned. Narrow filters to retrieve all matching events.'),
+  exceeds_limit: z.boolean().describe('Count exceeds the single-request threshold (20000 for EMSC). Use search offset paging or narrower filters.'),
 }
 ```
 
@@ -331,7 +343,7 @@ errors: [
 
 ## Shared Schema: `EarthquakeEventSchema`
 
-Fields returned by feeds and search results. These are normalized output fields — the service layer maps raw API field names to this schema. Raw API fields that differ: USGS uses `mag`→`magnitude`, `magType`→`magnitude_type`, `sig`→`significance`; USGS `time`/`updated` are epoch-millisecond integers and must be converted to ISO 8601; latitude/longitude are extracted from `geometry.coordinates[0,1]`; depth comes from `geometry.coordinates[2]` (positive km for USGS) or `properties.depth` (positive km for EMSC). EMSC uses `flynn_region`→`place`, `magtype`→`magnitude_type`, `unid`→`id`.
+Selected fields returned by feeds and search results; the complete schema is in [`schemas.ts`](../src/mcp-server/tools/schemas.ts). The service layer normalizes USGS `mag`→`magnitude`, `magType`→`magnitude_type`, and `sig`→`significance`; USGS `time`/`updated` are epoch-millisecond integers converted to ISO 8601. Longitude and latitude come from `geometry.coordinates[0]` and `[1]`, respectively. Depth comes from `geometry.coordinates[2]` (USGS) or `properties.depth` (EMSC), in kilometers. EMSC maps `flynn_region`→`place`, `magtype`→`magnitude_type`, and `unid`→`id`.
 
 ```ts
 {
@@ -349,11 +361,11 @@ Fields returned by feeds and search results. These are normalized output fields 
   cdi: z.number().nullable().describe('Maximum reported intensity (Community Decimal Intensity, 0–12 scale). USGS only.'),
   mmi: z.number().nullable().describe('Maximum ShakeMap instrumental intensity (Modified Mercalli, 0–12 scale). USGS only.'),
   alert: z.enum(['green', 'yellow', 'orange', 'red']).nullable().describe('PAGER estimated impact alert level. Null if not computed. USGS only.'),
-  tsunami: z.number().describe('1 if a tsunami warning was issued; 0 otherwise. USGS only; omitted or null for EMSC events.'),
+  tsunami: z.number().nullable().describe('USGS tsunami flag; null for EMSC. Check tsunami.gov for warning status.'),
   significance: z.number().nullable().describe('USGS significance score (0–2000+). Combines magnitude, felt reports, PAGER. Mapped from API field "sig". USGS only.'),
-  status: z.enum(['automatic', 'reviewed', 'deleted']).describe('Review status. Automatic detections may be revised.'),
+  status: z.enum(['automatic', 'reviewed', 'deleted']).nullable().describe('Review status; null for EMSC. Automatic detections may be revised.'),
   event_url: z.string().optional().describe('USGS event page URL for full human-readable detail. Present for USGS events only.'),
-  detail_url: z.string().optional().describe('URL to fetch the full GeoJSON detail record for this event. Present in USGS list responses; use with earthquake_get_event.'),
+  detail_url: z.string().optional().describe('URL of the full USGS GeoJSON detail record. Pass the event id, rather than this URL, to earthquake_get_event.'),
 }
 ```
 
@@ -368,36 +380,36 @@ USGS real-time feeds are pre-computed, CDN-served, and have better availability 
 The USGS count endpoint returns `{count, maxAllowed}` with no event data — it's a cheap probe. Agents asking statistical questions ("how many M4+ earthquakes in California last year?") shouldn't pay for 20,000-record responses. Count also surfaces the `exceeds_limit` condition cleanly, letting the agent decide whether to narrow before fetching.
 
 **Why EMSC as an alternative source instead of a separate tool?**
-EMSC uses the identical FDSN spec with nearly the same parameters. A `source` enum on `earthquake_search_events` is cleaner than a parallel `earthquake_search_events_emsc` tool. The main behavioral difference (degree-radius conversion) is handled in the service layer. EMSC's independent catalog is most useful for European events and for cross-verification — an agent can query both sources and compare.
+Both catalogs use FDSN query parameters. A `source` enum lets callers switch catalogs through the same tool; each adapter handles provider differences, including degree-radius conversion and unsupported filters. EMSC provides an independent global solution for cross-verification.
 
 **EMSC has no `maxradiuskm`.**
 USGS supports `maxradiuskm`; EMSC only supports `maxradius` in degrees. The `radius_km` input is always specified in km (more intuitive), and the service layer converts: `degrees = km / 111.2`. This conversion is approximate (Earth isn't a perfect sphere) but well within the precision that matters for seismic queries.
 
-**EMSC-only extensions not exposed.**
-USGS-specific filters (`alert_level`, `event_type`, `min_felt`, `min_significance`) are not forwarded when `source=emsc`. `ignoredFilters` names each supplied filter that did not constrain the result, and `queryEcho` omits it.
+**USGS-only filters omitted for EMSC.**
+USGS-specific filters (`alert_level`, `event_type`, `min_felt`, `min_significance`, `product_type`, `review_status`) are not forwarded when `source=emsc`. `ignoredFilters` names each supplied filter that did not constrain the result, and `queryEcho` omits it. `magnitude_type` applies to both sources.
 
 **Significance score vs. alert level vs. felt reports.**
 These three metadata fields measure impact from different angles: significance is a USGS composite score, alert level is PAGER's economic/casualty estimate, felt reports count public responses. All three are exposed as optional search filters because they serve different query patterns. Journalists want alert level; researchers might filter on significance; local impact queries use felt reports.
 
 **`earthquake_get_event` is USGS-only.**
-EMSC has no per-event detail endpoint, and EMSC responses include no `detail` or `url` fields. The tool accepts only USGS event IDs (e.g. `us6000sznj`, `hv74966427`). EMSC events have their own `unid` format (e.g. `20260105_0000320`) that has no detail lookup path.
+The current tool accepts only USGS event IDs (e.g. `us6000sznj`, `hv74966427`) for the USGS analysis-product projection. EMSC supports per-ID queries upstream, but that lookup is not implemented here.
 
 **Resources are supplementary.**
 Feed and event resources are added for clients that support injectable context (e.g., Claude Desktop resource panel), but the tool surface is self-sufficient. A tool-only agent can do everything.
 
 **No tsunami-detail tool.**
-The `tsunami` flag in event data is a binary USGS indicator that a warning was issued. It links to the tsunami warning center externally. This server surfaces the flag; detailed tsunami product data (wave heights, travel times, warnings) is outside scope.
+The server returns the USGS `tsunami` flag, with null for EMSC. Warning status must be checked at [tsunami.gov](https://www.tsunami.gov/); wave heights, travel times, and warning products are outside this server's surface.
 
 ---
 
 ## Known Limitations
 
-- **20,000-event cap.** USGS and EMSC both enforce a 20,000-event maximum per query. Broad historical queries (e.g., all M1+ earthquakes globally for a year, ~500K+ events) will be truncated. `earthquake_count_events` with `exceeds_limit` surfaces when this applies.
-- **EMSC lacks USGS enrichment.** No PAGER alert, no DYFI felt reports, no ShakeMap MMI from EMSC queries. European data tends to have better coverage for small European events; USGS has better global coverage and richer metadata.
+- **Single-request threshold.** USGS and EMSC limit each upstream page to 20,000 events. Search fetches at most 100 candidates and returns byte-bounded pages with `nextOffset`, including beyond 20,000 matches. `exceeds_limit` describes the request threshold, not a retrieval ceiling.
+- **EMSC lacks USGS enrichment.** No PAGER alert, DYFI felt reports, or ShakeMap MMI from EMSC queries. Both catalogs are global and can report different solutions for the same event.
 - **Automatic detections may be revised.** Events with `status: automatic` are preliminary — magnitude, location, and even existence may change. Reviewed events are more reliable.
 - **Depth can be fixed artificially.** When depth is poorly constrained, USGS may report a fixed depth (typically 10 km or 33 km). These are conventional values, not measured.
 - **EMSC coordinate conversion is approximate.** Degree-to-km conversion uses 1° = 111.2 km (mean Earth circumference). This is accurate to within ~0.5% globally.
-- **Feed data is not real-time.** USGS feeds are typically updated every 1–5 minutes, not truly live. For the most current data on an active sequence, the query API (`earthquake_search_events` with a recent `start_time`) is more current than cached feeds.
+- **Feeds are snapshots.** [USGS updates its summary feeds every minute](https://earthquake.usgs.gov/earthquakes/feed/v1.0/geojson.php). Continuations retain the first-read generation; start a new feed request to read a newer generation.
 
 ---
 
@@ -412,7 +424,7 @@ The `tsunami` flag in event data is a binary USGS indicator that a warning was i
 - Limit: 1–20,000 events per query
 - Default order: `time` (newest first)
 - Circle search requires all three of `latitude`, `longitude`, `maxradiuskm` (or `maxradius` in degrees)
-- `eventid` query returns single Feature with `products` block (DYFI, ShakeMap, losspager, moment-tensor, focal-mechanism); returns HTTP 404 plain-text when event ID does not exist — parse `Error 404: Not Found` text
+- `eventid` query returns a single Feature with a `products` block (DYFI, ShakeMap, losspager, moment-tensor, focal-mechanism). Classify HTTP 404 as `not_found` and HTTP 409 as `event_deleted` from status, without parsing body text.
 - Empty results: returns GeoJSON FeatureCollection with `count: 0` and `features: []` at HTTP 200 (not 404) by default; pass `nodata=404` to get HTTP 404 on empty results instead — do NOT set this, let the service layer detect `features.length === 0`
 - Error format: plain text `Error {code}: {reason}\n\n{detail}` for all client errors (4xx). Parse by HTTP status, not response body.
 
@@ -431,7 +443,7 @@ The `tsunami` flag in event data is a binary USGS indicator that a warning was i
 - Format: `json` (not `geojson` — EMSC returns HTTP 400 "unknown format requested" for `format=geojson`)
 - Supports same FDSN parameters as USGS with exceptions:
   - No `maxradiuskm` — use `maxradius` in degrees only
-  - No `alertlevel`, `minfelt`, `minsig`, `reviewstatus` extensions
+  - No `alertlevel`/`minalertlevel`, `minfelt`, `minsig`, `eventtype`, `producttype`, or `reviewstatus` parameters
   - No `detail` per-event URL with products block
 - Response shape differs from USGS: properties use `lat`/`lon`/`depth` (lat/lon also duplicated in `geometry.coordinates`), `flynn_region` instead of `place`, `magtype` (lowercase) instead of `magType`, `unid` as primary ID, no `url`/`detail`/`felt`/`cdi`/`mmi`/`alert`/`tsunami`/`sig` fields
 - Count endpoint returns `{"count": N}` only — no `maxAllowed` field
@@ -461,5 +473,5 @@ The `tsunami` flag in event data is a binary USGS indicator that a warning was i
 | 2026-05-23 | `radius_km` input for both sources, converted to degrees for EMSC | "km" is universally more intuitive than degrees for location queries. The server absorbs the conversion complexity (1° ≈ 111.2 km). Agents shouldn't know or care about the EMSC coordinate system limitation. |
 | 2026-05-23 | No resources for search results | Feeds and individual events have stable URIs; search results do not (they're parameterized queries). Resources cover addressable entities only. |
 | 2026-05-23 | No prompts | Pure data-access server. No recurring multi-step interaction patterns that a prompt template would structure. |
-| 2026-05-23 | `earthquake_get_event` USGS-only | EMSC has no per-event detail endpoint and EMSC responses include no `url` or `detail` fields. EMSC `unid` values (e.g. `20260105_0000320`) have no per-event lookup path. USGS event IDs are the only path to product-level detail. |
+| 2026-05-23 | `earthquake_get_event` USGS-only | The implemented lookup projects USGS analysis products. EMSC per-ID lookup is a separate capability not currently exposed by this tool. |
 | 2026-05-23 | Expose `significance`, `cdi`, `mmi`, `felt` in event schema | These fields appear directly in USGS list responses (not just event detail). They're what distinguishes the USGS feed from a generic seismograph — the "did anyone feel this?" and "how bad could it get?" signals that serve journalists and public safety use cases. |
