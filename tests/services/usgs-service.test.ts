@@ -639,6 +639,20 @@ describe('UsgsService.getEvent — product projection (issue #25)', () => {
     vi.unstubAllGlobals();
   });
 
+  it('passes the origin depth type through verbatim and leaves it absent when unpublished', async () => {
+    const fixed = makeFeature('us6000u4j2', 6.9);
+    fixed.properties.products = {
+      origin: [{ properties: { 'vertical-error': '1.856', 'depth-type': 'operator assigned' } }],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(fixed)));
+    const { detail } = await makeService().getEvent('us6000u4j2', createMockContext() as Context);
+    expect(detail?.origin).toEqual({ depth_error_km: 1.856, depth_type: 'operator assigned' });
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(bareFeature())));
+    const bare = await makeService().getEvent('hv75008152', createMockContext() as Context);
+    expect(bare.detail?.origin).not.toHaveProperty('depth_type');
+  });
+
   it('leaves detail absent entirely when the event carries no products', async () => {
     const feature = makeFeature('nc12345678', 1.1);
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(feature)));
@@ -864,5 +878,51 @@ describe('UsgsService — no filter is dropped by a truthy check (issues #29, #3
     expect(url.searchParams.has(param)).toBe(true);
     expect(url.searchParams.get(param)).toBe('');
     vi.unstubAllGlobals();
+  });
+});
+
+describe('UsgsService — associated network IDs (issue #53)', () => {
+  /** Normalize one feature carrying `ids` through the list path. */
+  async function normalized(id: string, ids: string | undefined) {
+    const feature = makeFeature(id, 5);
+    if (ids !== undefined) feature.properties.ids = ids;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([feature])));
+    const { events } = await makeService().searchEvents({ limit: 10 }, createMockContext());
+    return events[0];
+  }
+
+  // `ids` values are verbatim from live USGS records.
+  it.each([
+    [
+      'ci38457511',
+      ',ci38457511,us70004bn0,at00pu7alg,pt19187000,iscgem616203758,',
+      ['us70004bn0', 'at00pu7alg', 'pt19187000', 'iscgem616203758'],
+    ],
+    // The canonical ID is not always first; the others keep upstream order around it.
+    [
+      'us6000qw60',
+      ',at00t06p1k,us6000qw60,pt25210002,usauto6000qw60,',
+      ['at00t06p1k', 'pt25210002', 'usauto6000qw60'],
+    ],
+    // A record whose canonical ID is missing from `ids` keeps every listed entry.
+    ['official20110311054624120_30', ',usc0001xgp,', ['usc0001xgp']],
+  ])('lists the IDs %s carries besides its own', async (id, ids, expected) => {
+    expect((await normalized(id, ids))?.associated_ids).toStrictEqual(expected);
+  });
+
+  it.each([
+    ['only its own ID', ',us6000m0yg,'],
+    ['an empty wrapper', ',,'],
+    ['no ids field', undefined],
+  ])('omits associated_ids for %s', async (_label, ids) => {
+    expect(await normalized('us6000m0yg', ids)).not.toHaveProperty('associated_ids');
+  });
+
+  it('carries associated_ids through the real-time feed', async () => {
+    const feature = makeFeature('nc75458907', 5);
+    feature.properties.ids = ',nc75458907,us7000ttnj,';
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([feature])));
+    const { events } = await makeService().getFeed('all', 'day', createMockContext());
+    expect(events[0]?.associated_ids).toStrictEqual(['us7000ttnj']);
   });
 });

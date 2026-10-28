@@ -1,0 +1,235 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<q:quakeml xmlns:q="http://quakeml.org/xmlns/quakeml/1.2" xmlns="http://quakeml.org/xmlns/bed/1.2" xmlns:catalog="http://anss.org/xmlns/catalog/0.1">
+ <eventParameters publicID="quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?eventid=41567984">
+  <creationInfo>
+   <agencyID>CI</agencyID>
+   <agencyURI>quakeml:doi.org/10.7909/C3WD3xH1</agencyURI>
+   <creationTime>2026-10-28T02:43:32.51</creationTime>
+  </creationInfo>
+  <event publicID="quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?eventid=41567984" catalog:datasource="ci" catalog:dataid="ci41567984" catalog:eventsource="ci" catalog:eventid="41567984">
+   <preferredOriginID>quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?originid=108906736</preferredOriginID>
+   <preferredMagnitudeID>quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?magnitudeid=115895816</preferredMagnitudeID>
+   <creationInfo>
+    <agencyID>CI</agencyID>
+    <agencyURI>quakeml:doi.org/10.7909/C3WD3xH1</agencyURI>
+    <creationTime>2026-10-28T02:43:31.00</creationTime>
+    <version>2</version>
+   </creationInfo>
+   <description>
+    <type>earthquake name</type>
+    <text>12 km SE of Ocotillo Wells, CA</text>
+   </description>
+   <type>earthquake</type>
+   <origin publicID="quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?originid=108906736" earthModelID="quakeml:ci.anss.org/velmodel/CI/03E" catalog:datasource="ci" catalog:dataid="ci41567984" catalog:eventsource="ci" catalog:eventid="41567984">
+    <time>
+     <value>2026-10-28T02:41:30.76</value>
+    </time>
+    <timeFixed>0</timeFixed>
+    <latitude>
+     <value>33.0681648254395</value>
+    </latitude>
+    <longitude>
+     <value>-116.046165466309</value>
+    </longitude>
+    <epicenterFixed>0</epicenterFixed>
+    <depth>
+     <value>6079.99992370605</value>
+     <uncertainty>1149.99998</uncertainty>
+    </depth>
+    <depthType>from location</depthType>
+    <type>hypocenter</type>
+    <evaluationMode>automatic</evaluationMode>
+    <evaluationStatus>preliminary</evaluationStatus>
+    <quality>
+     <associatedPhaseCount>181</associatedPhaseCount>
+     <usedPhaseCount>136</usedPhaseCount>
+     <associatedStationCount>125</associatedStationCount>
+     <usedStationCount>100</usedStationCount>
+     <standardError>0.239999995</standardError>
+     <azimuthalGap>24</azimuthalGap>
+     <secondaryAzimuthalGap>382</secondaryAzimuthalGap>
+     <minimumDistance>1.197e-01</minimumDistance>
+     <medianDistance>8.506e-01</medianDistance>
+     <maximumDistance>2.478e+00</maximumDistance>
+    </quality>
+    <creationInfo>
+     <agencyID>CI</agencyID>
+     <creationTime>2026-10-28T02:42:41.00</creationTime>
+    </creationInfo>
+    <originUncertainty>
+     <confidenceEllipsoid>
+      <semiMajorAxisLength>2759.999952</semiMajorAxisLength>
+      <semiMinorAxisLength>383.9999904</semiMinorAxisLength>
+      <semiIntermediateAxisLength>408.0000048</semiIntermediateAxisLength>
+      <majorAxisPlunge>84</majorAxisPlunge>
+      <majorAxisAzimuth>112</majorAxisAzimuth>
+      <majorAxisRotation>65</majorAxisRotation>
+     </confidenceEllipsoid>
+     <preferredDescription>confidence ellipsoid</preferredDescription>
+     <confidenceLevel>95</confidenceLevel>
+     <horizontalUncertainty>170</horizontalUncertainty>
+    </originUncertainty>
+    <methodID>smi:ci.anss.org/origin/BINDER</methodID>
+    <arrival publicID="quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?assocaro=337111640">
+     <pickID>quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?assocaro=337111640</pickID>
+     <phase>S</phase>
+     <azimuth>313</azimuth>
+     <distance>6.308e-01</distance>
+     <timeResidual>0.230000004</timeResidual>
+     <timeCorrection>-0.330000013</timeCorrection>
+     <timeWeight>0.08</timeWeight>
+     <takeoffAngle>
+      <value>79</value>
+     </takeoffAngle>
+     <creationInfo>
+      <agencyID>CI</agencyID>
+      <creationTime>2026-10-28T02:42:41.00</creationTime>
+     </creationInfo>
+    </arrival>
+    <arrival publicID="quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?assocaro=337111648">
+     <pickID>quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?assocaro=337111648</pickID>
+     <phase>P</phase>
+     <azimuth>313</azimuth>
+     <distance>6.308e-01</distance>
+     <timeResidual>0.0500000007</timeResidual>
+     <timeCorrection>-0.0799999982</timeCorrection>
+     <timeWeight>0.20</timeWeight>
+     <takeoffAngle>
+      <value>79</value>
+     </takeoffAngle>
+     <creationInfo>
+      <agencyID>CI</agencyID>
+      <creationTime>2026-10-28T02:42:41.00</creationTime>
+     </creationInfo>
+    </arrival>
+    <arrival publicID="quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?assocaro=337111656">
+     <pickID>quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?assocaro=337111656</pickID>
+     <phase>S</phase>
+     <azimuth>304</azimuth>
+     <distance>5.163e-01</distance>
+     <timeResidual>0.340000004</timeResidual>
+     <timeCorrection>-0.200000003</timeCorrection>
+     <timeWeight>0.08</timeWeight>
+     <takeoffAngle>
+      <value>79</value>
+     </takeoffAngle>
+     <creationInfo>
+      <agencyID>CI</agencyID>
+      <creationTime>2026-10-28T02:42:41.00</creationTime>
+     </creationInfo>
+    </arrival>
+    <arrival publicID="quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?assocaro=337111664">
+     <pickID>quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?assocaro=337111664</pickID>
+     <phase>P</phase>
+     <azimuth>304</azimuth>
+     <distance>5.163e-01</distance>
+     <timeResidual>0.00999999978</timeResidual>
+     <timeCorrection>-0.0299999993</timeCorrection>
+     <timeWeight>0.20</timeWeight>
+     <takeoffAngle>
+      <value>79</value>
+     </takeoffAngle>
+     <creationInfo>
+      <agencyID>CI</agencyID>
+      <creationTime>2026-10-28T02:42:41.00</creationTime>
+     </creationInfo>
+    </arrival>
+   </origin>
+   <magnitude publicID="quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?magnitudeid=115895816">
+    <mag>
+     <value>2.53504630325492</value>
+     <uncertainty>0.221049979329109</uncertainty>
+    </mag>
+    <type>Ml</type>
+    <originID>quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?originid=108906736</originID>
+    <stationCount>26</stationCount>
+    <azimuthalGap>53.5509948730469</azimuthalGap>
+    <evaluationMode>automatic</evaluationMode>
+    <evaluationStatus>preliminary</evaluationStatus>
+    <creationInfo>
+     <agencyID>CI</agencyID>
+     <creationTime>2026-10-28T02:43:31.00</creationTime>
+    </creationInfo>
+    <methodID>smi:ci.anss.org/magnitude/trimag-SF</methodID>
+   </magnitude>
+   <magnitude publicID="quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?magnitudeid=115895824">
+    <mag>
+     <value>2.76671566023971</value>
+     <uncertainty>0.289339303970337</uncertainty>
+    </mag>
+    <type>Me</type>
+    <originID>quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?originid=108906736</originID>
+    <stationCount>22</stationCount>
+    <azimuthalGap>47.8348236083984</azimuthalGap>
+    <evaluationMode>automatic</evaluationMode>
+    <evaluationStatus>preliminary</evaluationStatus>
+    <creationInfo>
+     <agencyID>CI</agencyID>
+     <creationTime>2026-10-28T02:43:31.00</creationTime>
+    </creationInfo>
+    <methodID>smi:ci.anss.org/magnitude/trimag-SF</methodID>
+   </magnitude>
+   <pick publicID="quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?assocaro=337111640">
+    <time>
+     <value>2026-10-28T02:41:51.03</value>
+     <uncertainty>0.06</uncertainty>
+    </time>
+    <waveformID networkCode="AZ" stationCode="FRD" channelCode="HHE" locationCode="" />
+    <polarity>undecidable</polarity>
+    <evaluationMode>automatic</evaluationMode>
+    <evaluationStatus>preliminary</evaluationStatus>
+    <creationInfo>
+     <agencyID>CI</agencyID>
+     <creationTime>2026-10-28T02:42:41.00</creationTime>
+    </creationInfo>
+    <phaseHint>S</phaseHint>
+   </pick>
+   <pick publicID="quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?assocaro=337111648">
+    <time>
+     <value>2026-10-28T02:41:42.62</value>
+     <uncertainty>0.03</uncertainty>
+    </time>
+    <waveformID networkCode="AZ" stationCode="FRD" channelCode="HHZ" locationCode="" />
+    <polarity>negative</polarity>
+    <evaluationMode>automatic</evaluationMode>
+    <evaluationStatus>preliminary</evaluationStatus>
+    <creationInfo>
+     <agencyID>CI</agencyID>
+     <creationTime>2026-10-28T02:42:41.00</creationTime>
+    </creationInfo>
+    <phaseHint>P</phaseHint>
+   </pick>
+   <pick publicID="quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?assocaro=337111656">
+    <time>
+     <value>2026-10-28T02:41:47.79</value>
+     <uncertainty>0.06</uncertainty>
+    </time>
+    <waveformID networkCode="AZ" stationCode="LVA2" channelCode="HHE" locationCode="" />
+    <polarity>undecidable</polarity>
+    <evaluationMode>automatic</evaluationMode>
+    <evaluationStatus>preliminary</evaluationStatus>
+    <creationInfo>
+     <agencyID>CI</agencyID>
+     <creationTime>2026-10-28T02:42:41.00</creationTime>
+    </creationInfo>
+    <phaseHint>S</phaseHint>
+   </pick>
+   <pick publicID="quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?assocaro=337111664">
+    <time>
+     <value>2026-10-28T02:41:40.60</value>
+     <uncertainty>0.03</uncertainty>
+    </time>
+    <waveformID networkCode="AZ" stationCode="LVA2" channelCode="HHZ" locationCode="" />
+    <polarity>negative</polarity>
+    <evaluationMode>automatic</evaluationMode>
+    <evaluationStatus>preliminary</evaluationStatus>
+    <creationInfo>
+     <agencyID>CI</agencyID>
+     <creationTime>2026-10-28T02:42:41.00</creationTime>
+    </creationInfo>
+    <phaseHint>P</phaseHint>
+   </pick>
+  </event>
+ </eventParameters>
+</q:quakeml>

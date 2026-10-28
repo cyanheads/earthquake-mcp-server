@@ -4,6 +4,7 @@
  */
 
 import { z } from '@cyanheads/mcp-ts-core';
+import { EVENT_INCLUDE_GROUPS } from '@/services/usgs/types.js';
 
 /** Zod schema for a normalized earthquake event returned by feeds and search results. */
 export const EarthquakeEventSchema = z.object({
@@ -85,6 +86,12 @@ export const EarthquakeEventSchema = z.object({
     .string()
     .optional()
     .describe('URL to fetch the full GeoJSON detail record. Present in USGS list responses.'),
+  associated_ids: z
+    .array(z.string())
+    .optional()
+    .describe(
+      'Other network IDs USGS lists for this event, in upstream order; earthquake_get_event accepts them. Absent when USGS lists none, and for EMSC events.',
+    ),
 });
 
 /** Inferred from EarthquakeEventSchema — the output type for a normalized earthquake event. */
@@ -198,6 +205,12 @@ export const EarthquakeDetailSchema = z.object({
         .optional()
         .describe('Horizontal location uncertainty in kilometers.'),
       depth_error_km: z.number().optional().describe('Depth uncertainty in kilometers.'),
+      depth_type: z
+        .string()
+        .optional()
+        .describe(
+          'How the depth was set, as published, e.g. "from location" or "operator assigned" (fixed, not solved for).',
+        ),
       review_status: z
         .string()
         .optional()
@@ -303,6 +316,7 @@ export function formatEventDetail(detail: EarthquakeDetailOutput | undefined): s
         `Stations used: ${detailValue(origin.num_stations_used)} | ` +
         `Horizontal error: ${detailValue(origin.horizontal_error_km, ' km')} | ` +
         `Depth error: ${detailValue(origin.depth_error_km, ' km')} | ` +
+        (origin.depth_type ? `Depth type: ${origin.depth_type} | ` : '') +
         `Review status: ${detailValue(origin.review_status)}`,
     );
   }
@@ -326,6 +340,7 @@ export function formatEvent(event: EarthquakeEventOutput): string[] {
   lines.push(
     `**ID:** ${event.id} | **Magnitude:** ${event.magnitude !== null ? event.magnitude : 'unknown'} (${event.magnitude_type}) | **Depth:** ${event.depth_km !== null ? `${event.depth_km} km` : 'unknown'}`,
   );
+  if (event.associated_ids) lines.push(`**Associated IDs:** ${event.associated_ids.join(', ')}`);
   lines.push(`**Place:** ${event.place}`);
   // USGS titles carry the classification for non-earthquakes, EMSC titles never do.
   // Rendering anything other than a plain "earthquake" keeps quarry blasts and
@@ -382,6 +397,288 @@ export function formatEvent(event: EarthquakeEventOutput): string[] {
 
   if (event.event_url) lines.push(`**USGS page:** ${event.event_url}`);
   if (event.detail_url) lines.push(`**Detail URL:** ${event.detail_url}`);
+
+  return lines;
+}
+
+/** One contributed origin solution. */
+export const EventOriginSchema = z
+  .object({
+    source: z.string().optional().describe('Network that contributed this origin product.'),
+    event_id: z.string().optional().describe("Contributing network's ID for the event."),
+    is_preferred: z.boolean().describe('True for the origin USGS prefers (listed first).'),
+    time: z.string().optional().describe('ISO 8601 UTC origin time.'),
+    latitude: z.number().optional().describe('Epicenter latitude, decimal degrees.'),
+    longitude: z.number().optional().describe('Epicenter longitude, decimal degrees.'),
+    depth_km: z.number().optional().describe('Hypocenter depth, km.'),
+    depth_type: z
+      .string()
+      .optional()
+      .describe(
+        'How the depth was set, as published, e.g. "from location" or "operator assigned".',
+      ),
+    magnitude: z.number().optional().describe('Magnitude published with this origin.'),
+    magnitude_type: z.string().optional().describe('Magnitude type, e.g. mww, mb, Mi.'),
+    review_status: z.string().optional().describe('Review status as published by the network.'),
+    evaluation_status: z.string().optional().describe('QuakeML evaluation status, e.g. final.'),
+    num_stations_used: z.number().optional().describe('Stations used in the location.'),
+    num_phases_used: z.number().optional().describe('Phases used in the location.'),
+    azimuthal_gap_deg: z.number().optional().describe('Largest azimuthal gap, degrees.'),
+    standard_error_s: z.number().optional().describe('RMS travel-time residual, seconds.'),
+    minimum_distance_deg: z
+      .number()
+      .optional()
+      .describe('Distance to the nearest station, degrees.'),
+    horizontal_error_km: z.number().optional().describe('Horizontal location uncertainty, km.'),
+    depth_error_km: z.number().optional().describe('Depth uncertainty, km.'),
+  })
+  .describe('One origin solution from an origin product.');
+
+/** One event-level magnitude solution. */
+export const EventMagnitudeSchema = z
+  .object({
+    type: z.string().optional().describe('Magnitude type, e.g. Mww, mb, Ml.'),
+    value: z.number().optional().describe('Magnitude value.'),
+    station_count: z.number().optional().describe('Stations contributing to this magnitude.'),
+    evaluation_mode: z
+      .string()
+      .optional()
+      .describe('QuakeML evaluation mode: manual or automatic.'),
+    evaluation_status: z.string().optional().describe('QuakeML evaluation status, e.g. reviewed.'),
+    agency: z.string().optional().describe('Agency that computed the magnitude.'),
+    is_preferred: z.boolean().describe("True for the document's preferred magnitude."),
+  })
+  .describe('One event-level magnitude solution.');
+
+/** One phase arrival on the preferred origin. */
+export const EventArrivalSchema = z
+  .object({
+    network: z.string().optional().describe('SEED network code.'),
+    station: z.string().optional().describe('SEED station code.'),
+    location: z
+      .string()
+      .optional()
+      .describe('SEED location code as published; "" and "--" both mean blank.'),
+    channel: z.string().optional().describe('SEED channel code.'),
+    phase: z.string().optional().describe('Phase name, e.g. P, Pn, S.'),
+    time: z.string().optional().describe('ISO 8601 UTC pick time.'),
+    time_residual_s: z.number().optional().describe('Travel-time residual, seconds.'),
+    distance_deg: z.number().optional().describe('Epicentral distance, degrees.'),
+    azimuth_deg: z.number().optional().describe('Azimuth from epicenter to station, degrees.'),
+    time_weight: z.number().optional().describe('Weight of the arrival time in the location.'),
+  })
+  .describe('One phase arrival joined to its pick.');
+
+const ForecastBinSchema = z
+  .object({
+    magnitude: z.number().describe('Minimum magnitude of this bin.'),
+    probability: z
+      .number()
+      .describe('Probability (0–1) of at least one aftershock at or above it.'),
+    count_median: z.number().optional().describe('Median expected count.'),
+    count_p95_min: z.number().optional().describe('Lower bound of the 95% count range.'),
+    count_p95_max: z.number().optional().describe('Upper bound of the 95% count range.'),
+  })
+  .describe('One magnitude bin.');
+
+/** USGS Operational Aftershock Forecast. */
+export const AftershockForecastSchema = z.object({
+  advisory_window: z.string().describe('Window USGS headlines in its advisory, e.g. "1 Week".'),
+  created: z.string().describe('ISO 8601 UTC time the forecast was issued.'),
+  expires: z.string().describe('ISO 8601 UTC expiry of the forecast.'),
+  next_update: z
+    .string()
+    .optional()
+    .describe('ISO 8601 UTC time of the next scheduled update; absent once updates stop.'),
+  windows: z
+    .array(
+      z
+        .object({
+          label: z.string().describe('Window label, e.g. "1 Day", "1 Week".'),
+          start: z
+            .string()
+            .describe('ISO 8601 UTC window start (the forecast issue time, not now).'),
+          end: z.string().describe('ISO 8601 UTC window end.'),
+          above_mainshock: z
+            .object({
+              magnitude: z.number().describe('Mainshock magnitude.'),
+              probability: z
+                .number()
+                .describe(
+                  'Probability (0–1) of an aftershock at or above the mainshock magnitude.',
+                ),
+            })
+            .optional()
+            .describe(
+              'Chance of an aftershock as large as the mainshock; absent when unpublished.',
+            ),
+          bins: z.array(ForecastBinSchema).describe('Magnitude bins in upstream order.'),
+        })
+        .describe('One forecast window.'),
+    )
+    .describe('Forecast windows in upstream order.'),
+});
+
+/** A requested include group the response does not carry. */
+export const UnavailableIncludeSchema = z
+  .object({
+    group: z.enum(EVENT_INCLUDE_GROUPS).describe('The requested group.'),
+    reason: z
+      .enum(['not_published', 'fetch_failed'])
+      .describe(
+        'not_published: the event has no product for it. fetch_failed: the product exists but could not be fetched or parsed.',
+      ),
+  })
+  .describe('One requested group that was not returned.');
+
+type EventOrigin = z.infer<typeof EventOriginSchema>;
+type EventMagnitude = z.infer<typeof EventMagnitudeSchema>;
+type EventArrival = z.infer<typeof EventArrivalSchema>;
+type AftershockForecastOutput = z.infer<typeof AftershockForecastSchema>;
+type UnavailableInclude = z.infer<typeof UnavailableIncludeSchema>;
+
+/** The include groups of an event lookup, as `format()` receives them. */
+interface EventIncludesOutput {
+  aftershock_forecast?: AftershockForecastOutput | undefined;
+  arrivals?: EventArrival[] | undefined;
+  magnitudes?: EventMagnitude[] | undefined;
+  origins?: EventOrigin[] | undefined;
+  unavailable_includes?: UnavailableInclude[] | undefined;
+}
+
+/** Escape what would end or split a Markdown table cell. */
+function cell(value: string | number | undefined): string {
+  if (value === undefined) return '';
+  return typeof value === 'number' ? String(value) : value.replace(/[\\|]/g, '\\$&');
+}
+
+/** `label: value` segments for the values present, joined into one line. */
+function segments(parts: [string, string | number | undefined, string?][]): string {
+  return parts
+    .filter(([, value]) => value !== undefined)
+    .map(([label, value, unit = '']) => `${label}: ${value}${unit}`)
+    .join(' | ');
+}
+
+function formatOrigin(origin: EventOrigin): string {
+  const name = origin.event_id ?? 'origin';
+  const tags = [
+    origin.source ? `source ${origin.source}` : undefined,
+    origin.is_preferred ? 'preferred' : undefined,
+  ].filter((tag) => tag != null);
+  const head = `- **${name}**${tags.length > 0 ? ` (${tags.join(', ')})` : ''}`;
+  const location =
+    origin.latitude !== undefined || origin.longitude !== undefined
+      ? `${origin.latitude ?? '?'}°, ${origin.longitude ?? '?'}°`
+      : undefined;
+  const body = segments([
+    ['Time', origin.time],
+    ['Location', location],
+    ['Depth', origin.depth_km, ' km'],
+    ['Depth type', origin.depth_type],
+    ['Magnitude', origin.magnitude],
+    ['Magnitude type', origin.magnitude_type],
+    ['Review status', origin.review_status],
+    ['Evaluation status', origin.evaluation_status],
+    ['Stations used', origin.num_stations_used],
+    ['Phases used', origin.num_phases_used],
+    ['Azimuthal gap', origin.azimuthal_gap_deg, '°'],
+    ['Standard error', origin.standard_error_s, ' s'],
+    ['Minimum distance', origin.minimum_distance_deg, '°'],
+    ['Horizontal error', origin.horizontal_error_km, ' km'],
+    ['Depth error', origin.depth_error_km, ' km'],
+  ]);
+  return body ? `${head}: ${body}` : head;
+}
+
+function formatMagnitude(magnitude: EventMagnitude): string {
+  const name = [magnitude.type, magnitude.value].filter((part) => part !== undefined).join(' ');
+  const head = `- **${name || 'magnitude'}**${magnitude.is_preferred ? ' (preferred)' : ''}`;
+  const body = segments([
+    ['Stations', magnitude.station_count],
+    ['Evaluation mode', magnitude.evaluation_mode],
+    ['Evaluation status', magnitude.evaluation_status],
+    ['Agency', magnitude.agency],
+  ]);
+  return body ? `${head}: ${body}` : head;
+}
+
+const UNAVAILABLE_TEXT: Record<UnavailableInclude['reason'], string> = {
+  not_published: 'no product for this group is published for this event',
+  fetch_failed: 'the product exists but could not be fetched or parsed',
+};
+
+/** Render the requested include groups as markdown lines — every entry, nothing summarized. */
+export function formatEventIncludes(result: EventIncludesOutput): string[] {
+  const lines: string[] = [];
+
+  if (result.origins) {
+    lines.push('', `### Origins (${result.origins.length})`, ...result.origins.map(formatOrigin));
+  }
+
+  if (result.magnitudes) {
+    lines.push('', `### Magnitudes (${result.magnitudes.length})`);
+    if (result.magnitudes.length === 0)
+      lines.push('_The phase-data document lists no magnitudes._');
+    lines.push(...result.magnitudes.map(formatMagnitude));
+  }
+
+  if (result.arrivals) {
+    lines.push('', `### Arrivals (${result.arrivals.length}, preferred origin, nearest first)`);
+    if (result.arrivals.length === 0) {
+      lines.push('_The preferred origin lists no arrivals._');
+    } else {
+      lines.push(
+        '| Network | Station | Location | Channel | Phase | Time (UTC) | Residual (s) | Distance (°) | Azimuth (°) | Time weight |',
+        '|---|---|---|---|---|---|---|---|---|---|',
+        ...result.arrivals.map(
+          (a) =>
+            `| ${[a.network, a.station, a.location, a.channel, a.phase, a.time, a.time_residual_s, a.distance_deg, a.azimuth_deg, a.time_weight].map(cell).join(' | ')} |`,
+        ),
+      );
+    }
+  }
+
+  const forecast = result.aftershock_forecast;
+  if (forecast) {
+    lines.push(
+      '',
+      '### Aftershock forecast (USGS OAF)',
+      segments([
+        ['Advisory window', forecast.advisory_window],
+        ['Created', forecast.created],
+        ['Expires', forecast.expires],
+        ['Next update', forecast.next_update],
+      ]),
+    );
+    for (const window of forecast.windows) {
+      const above = window.above_mainshock;
+      lines.push(
+        '',
+        `**${window.label}** (${window.start} → ${window.end})` +
+          (above
+            ? ` | Above mainshock (≥ M${above.magnitude}): probability ${above.probability}`
+            : ''),
+        '',
+        '| Magnitude ≥ | Probability | Median count | 95% count min | 95% count max |',
+        '|---|---|---|---|---|',
+        ...window.bins.map(
+          (bin) =>
+            `| ${[bin.magnitude, bin.probability, bin.count_median, bin.count_p95_min, bin.count_p95_max].map(cell).join(' | ')} |`,
+        ),
+      );
+    }
+  }
+
+  if (result.unavailable_includes) {
+    lines.push(
+      '',
+      '### Unavailable includes',
+      ...result.unavailable_includes.map(
+        ({ group, reason }) => `- ${group}: ${reason} — ${UNAVAILABLE_TEXT[reason]}`,
+      ),
+    );
+  }
 
   return lines;
 }

@@ -1,0 +1,23 @@
+{
+  "geometry": {
+    "type": "Point",
+    "coordinates": [-117.58, 35.79, -10.0]
+  },
+  "type": "Feature",
+  "id": "20190706_0000043",
+  "properties": {
+    "lastupdate": "2019-07-06T03:39:00.0Z",
+    "magtype": "mw",
+    "evtype": "ke",
+    "lon": -117.58,
+    "auth": "EMSC",
+    "lat": 35.79,
+    "depth": 10.0,
+    "unid": "20190706_0000043",
+    "mag": 7.1,
+    "time": "2019-07-06T03:19:57.8Z",
+    "source_id": "775626",
+    "source_catalog": "EMSC-RTS",
+    "flynn_region": "SOUTHERN CALIFORNIA"
+  }
+}

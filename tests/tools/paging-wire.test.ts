@@ -1,5 +1,5 @@
 /**
- * @fileoverview Actual stdio dispatch, serialized budgets, and real fetch failure contracts.
+ * @fileoverview Actual stdio dispatch, page counts and continuation, and real fetch failure contracts.
  * @module tests/tools/paging-wire.test
  */
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
@@ -12,14 +12,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { earthquakeFeedResource } from '@/mcp-server/resources/definitions/earthquake-feed.resource.js';
 import { initUsgsService } from '@/services/usgs/usgs-service.js';
 
-type Event = { id: string };
+type Event = { id: string; title?: string };
 type Output = {
   count: number;
   events: Event[];
   nextCursor?: string;
   nextOffset?: number;
   next_uri?: string;
+  notice?: string;
   totalCount?: number;
+  truncated?: boolean;
   queryEcho?: { limit: number };
 };
 type Reply = {
@@ -83,7 +85,6 @@ function rpc(method: string, params: unknown = {}) {
 }
 const tool = (name: string, args: object) => rpc('tools/call', { name, arguments: args });
 const resource = (uri: string) => rpc('resources/read', { uri });
-const size = (reply: Reply) => Buffer.byteLength(JSON.stringify(reply.result));
 const resourceData = (reply: Reply): Output => JSON.parse(reply.result.contents![0]!.text);
 
 beforeAll(async () => {
@@ -228,15 +229,14 @@ describe('paging wire', () => {
     }
   });
   it.each(['usgs', 'emsc'])(
-    '%s short pages establish totals before byte shaping without a count call',
+    '%s short pages establish totals without a count call',
     async (source) => {
       const before = calls;
       const reply = await tool('earthquake_search_events', { source, limit: 100, offset: 120 });
       expect(reply.result.isError).not.toBe(true);
-      expect(reply.result.structuredContent).toMatchObject({ totalCount: 140 });
+      expect(reply.result.structuredContent).toMatchObject({ count: 21, totalCount: 140 });
       expect(JSON.stringify(reply.result.content)).toContain('140');
       expect(calls - before).toBe(1);
-      expect(size(reply)).toBeLessThanOrEqual(24000);
       const past = await tool('earthquake_search_events', { source, offset: 999 });
       expect(past.result.structuredContent).toMatchObject({ count: 0 });
       expect(past.result.structuredContent).not.toHaveProperty('totalCount');
@@ -244,13 +244,10 @@ describe('paging wire', () => {
       try {
         const beforeShort = calls;
         const short = await tool('earthquake_search_events', { source, limit: 100 });
-        expect(short.result.structuredContent).toMatchObject({ totalCount: 33, truncated: true });
-        expect(short.result.structuredContent!.count).toBeLessThan(33);
-        expect(short.result.structuredContent!.nextOffset).toBe(
-          short.result.structuredContent!.count + 1,
-        );
+        expect(short.result.structuredContent).toMatchObject({ count: 33, totalCount: 33 });
+        expect(short.result.structuredContent).not.toHaveProperty('truncated');
+        expect(short.result.structuredContent).not.toHaveProperty('nextOffset');
         expect(JSON.stringify(short.result.content)).toContain('33');
-        expect(size(short)).toBeLessThanOrEqual(24000);
         expect(calls - beforeShort).toBe(1);
       } finally {
         mode = 'normal';
@@ -371,14 +368,25 @@ describe('paging wire', () => {
     }
   });
 
+  it('returns 15 events by default from search and the feed tool', async () => {
+    for (const [name, args] of [
+      ['earthquake_search_events', {}],
+      ['earthquake_get_feed', { magnitude_tier: 'all', time_window: 'week' }],
+    ] as const) {
+      const reply = await tool(name, args);
+      expect(reply.result.isError).not.toBe(true);
+      expect(reply.result.structuredContent).toMatchObject({ count: 15, truncated: true });
+      expect(reply.result.structuredContent!.events).toHaveLength(15);
+    }
+  });
   it('walks retained feed tool pages while upstream inserts, deletes and retimes events', async () => {
     const first = await tool('earthquake_get_feed', {
       magnitude_tier: 'all',
       time_window: 'week',
-      limit: 1000,
+      limit: 50,
     });
     expect(first.result.isError).not.toBe(true);
-    expect(size(first)).toBeLessThanOrEqual(24000);
+    expect(first.result.structuredContent).toMatchObject({ count: 50, totalCount: 140 });
     const totalCalls = calls;
     edited = true;
     let output = first.result.structuredContent!;
@@ -391,13 +399,13 @@ describe('paging wire', () => {
         time_window: 'week',
         cursor: output.nextCursor,
       });
-      expect(size(next)).toBeLessThanOrEqual(24000);
       output = next.result.structuredContent!;
       seen.push(...output.events.map((e) => e.id));
       pages++;
       expect(JSON.stringify(next.result.content)).toContain(output.events[0]!.id);
     }
     expect(output.nextCursor).toBeUndefined();
+    expect(pages).toBe(3);
     expect(seen).toEqual(Array.from({ length: 140 }, (_, i) => `event${i}`));
     expect(calls).toBe(totalCalls);
     const replay = await tool('earthquake_get_feed', {
@@ -413,9 +421,9 @@ describe('paging wire', () => {
   it('dispatches original and continuation resources with private caching and complete projection', async () => {
     const first = await resource('earthquake://feed/all/day');
     expect(first.error).toBeUndefined();
-    expect(size(first)).toBeLessThanOrEqual(24000);
     expect(first.result.cacheScope).not.toBe('public');
     let output = resourceData(first);
+    expect(output).toMatchObject({ count: 100, totalCount: 140, truncated: true });
     const seen = output.events.map((e) => e.id);
     expect(output.events[0]).not.toHaveProperty('felt');
     const before = calls;
@@ -423,49 +431,66 @@ describe('paging wire', () => {
     while (output.next_uri && pages < 20) {
       const next = await resource(output.next_uri);
       expect(next.error).toBeUndefined();
-      expect(size(next)).toBeLessThanOrEqual(24000);
       output = resourceData(next);
       seen.push(...output.events.map((e) => e.id));
       pages++;
     }
+    expect(pages).toBe(2);
+    expect(output).toMatchObject({ count: 40, truncated: false });
     expect(seen).toEqual(Array.from({ length: 140 }, (_, i) => `event${i}`));
     expect(calls).toBe(before);
     expect(output.next_uri).toBeUndefined();
   });
   it.each(['usgs', 'emsc'])(
-    '%s search re-fetches the first unreturned offset with bounded candidates',
+    '%s search returns exactly limit events per page and continues at offset + count',
     async (source) => {
       requests = [];
       let offset = 1;
       const seen: string[] = [];
+      const counts: number[] = [];
       for (let pages = 0; pages < 20; pages++) {
         const reply = await tool('earthquake_search_events', {
           source,
-          limit: 20000,
+          limit: 50,
           offset,
           start_time: '2026-01-01',
         });
         expect(reply.result.isError).not.toBe(true);
-        expect(size(reply)).toBeLessThanOrEqual(24000);
         const output = reply.result.structuredContent!;
         seen.push(...output.events.map((e) => e.id));
-        expect(output.queryEcho!.limit).toBe(100);
+        counts.push(output.count);
+        expect(output.queryEcho!.limit).toBe(50);
         if (output.nextOffset == null) break;
         expect(output.nextOffset).toBe(offset + output.count);
         offset = output.nextOffset;
       }
+      expect(counts).toEqual([50, 50, 40]);
       expect(seen).toEqual(Array.from({ length: 140 }, (_, i) => `event${i}`));
       expect(
         requests
           .filter((r) => r.pathname.endsWith('/query'))
-          .every((r) => Number(r.searchParams.get('limit')) <= 100),
-      ).toBe(true);
+          .map((r) => r.searchParams.get('limit')),
+      ).toEqual(['50', '50', '50']);
+      requests = [];
+      const clamped = await tool('earthquake_search_events', { source, limit: 20001 });
+      expect(clamped.result.structuredContent).toMatchObject({
+        count: 140,
+        totalCount: 140,
+        queryEcho: { limit: 1000 },
+        notice: 'Requested limit 20001; applied limit 1000, the per-call cap.',
+      });
+      expect(JSON.stringify(clamped.result.content)).toContain(
+        'Requested limit 20001; applied limit 1000, the per-call cap.',
+      );
+      expect(requests.find((r) => r.pathname.endsWith('/query'))?.searchParams.get('limit')).toBe(
+        '1000',
+      );
       const past = await tool('earthquake_search_events', { source, offset: 200, limit: 20000 });
       expect(past.result.structuredContent).toMatchObject({ count: 0 });
       expect(JSON.stringify(past.result.content)).toContain('last one');
     },
   );
-  it('bounds modern HTTP envelopes and emits private resource cache hints', async () => {
+  it('completes modern HTTP envelopes and emits private resource cache hints', async () => {
     const reservation = createServer();
     await new Promise<void>((resolve) => reservation.listen(0, '127.0.0.1', resolve));
     const port = (reservation.address() as AddressInfo).port;
@@ -553,24 +578,22 @@ describe('paging wire', () => {
         expect(reply.error).toBeUndefined();
         expect(reply.result.isError).not.toBe(true);
         expect(reply.result.resultType).toBe('complete');
-        expect(size(reply)).toBeLessThanOrEqual(24000);
         if (method === 'resources/read') {
           expect(reply.result.cacheScope).toBe('private');
           expect(reply.result.ttlMs).toBe(0);
           const next = await modern('resources/read', { uri: resourceData(reply).next_uri! });
           expect(next.error).toBeUndefined();
-          expect(size(next)).toBeLessThanOrEqual(24000);
           expect(next.result.cacheScope).toBe('private');
         }
       }
       for (const marker of ['>', '-']) {
         const reply = await modern('tools/call', {
           name: 'earthquake_search_events',
-          arguments: { limit: 20000, event_type: `earthquake\n${marker} ${'x'.repeat(6000)}` },
+          arguments: { limit: 50, event_type: `earthquake\n${marker} ${'x'.repeat(6000)}` },
         });
         expect(reply.error).toBeUndefined();
         expect(reply.result.isError).not.toBe(true);
-        expect(size(reply)).toBeLessThanOrEqual(24000);
+        expect(reply.result.structuredContent).toMatchObject({ count: 50, nextOffset: 51 });
         expect(JSON.stringify(reply.result.content)).toContain('nextOffset');
       }
     } finally {
@@ -578,19 +601,18 @@ describe('paging wire', () => {
       await new Promise<void>((resolve) => httpChild.once('exit', () => resolve()));
     }
   }, 10000);
-  it('returns bounded truthful failure for an indivisible event', async () => {
+  it('returns oversized events whole instead of failing the page', async () => {
     oversize = true;
     try {
       const reply = await tool('earthquake_get_feed', {
         magnitude_tier: 'significant',
         time_window: 'month',
       });
-      expect(reply.result.isError).toBe(true);
-      expect(reply.result.structuredContent).toMatchObject({
-        error: { data: { reason: 'result_too_large', retryable: false } },
-      });
-      expect(JSON.stringify(reply.result.content)).toContain('event0');
-      expect(size(reply)).toBeLessThanOrEqual(24000);
+      expect(reply.result.isError).not.toBe(true);
+      const output = reply.result.structuredContent!;
+      expect(output).toMatchObject({ count: 15, totalCount: 140 });
+      expect(output.events[0]!.title).toBe('x'.repeat(30000));
+      expect(JSON.stringify(reply.result.content)).toContain('x'.repeat(30000));
     } finally {
       oversize = false;
     }

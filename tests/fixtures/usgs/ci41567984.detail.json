@@ -1,0 +1,234 @@
+{
+  "type": "Feature",
+  "properties": {
+    "mag": 2.53504630325492,
+    "place": "12 km SE of Ocotillo Wells, CA",
+    "time": 1793155290760,
+    "updated": 1793155940480,
+    "tz": null,
+    "url": "https://earthquake.usgs.gov/earthquakes/eventpage/ci41567984",
+    "felt": null,
+    "cdi": null,
+    "mmi": null,
+    "alert": null,
+    "status": "automatic",
+    "tsunami": 0,
+    "sig": 99,
+    "net": "ci",
+    "code": "41567984",
+    "ids": ",ci41567984,",
+    "sources": ",ci,",
+    "types": ",focal-mechanism,nearby-cities,origin,phase-data,scitech-link,",
+    "nst": 100,
+    "dmin": 0.1197,
+    "rms": 0.239999995,
+    "gap": 24,
+    "magType": "ml",
+    "type": "earthquake",
+    "title": "M 2.5 - 12 km SE of Ocotillo Wells, CA",
+    "products": {
+      "focal-mechanism": [
+        {
+          "id": "urn:usgs-product:ci:focal-mechanism:ci41567984_fm1:1793155940480",
+          "type": "focal-mechanism",
+          "code": "ci41567984_fm1",
+          "source": "ci",
+          "updateTime": 1793155940480,
+          "status": "UPDATE",
+          "properties": {
+            "beachball-source": "CI",
+            "depth": "6.07999992370605",
+            "evaluation-status": "preliminary",
+            "eventParametersPublicID": "quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?eventid=41567984",
+            "eventsource": "ci",
+            "eventsourcecode": "41567984",
+            "eventtime": "2026-10-28T02:41:30.760Z",
+            "latitude": "33.0681648254395",
+            "longitude": "-116.046165466309",
+            "nodal-plane-1-dip": "40.0",
+            "nodal-plane-1-rake": "113.0",
+            "nodal-plane-1-strike": "265.0",
+            "nodal-plane-2-dip": "54.0",
+            "nodal-plane-2-rake": "72.0",
+            "nodal-plane-2-strike": "56.0",
+            "num-stations-used": "0",
+            "original-eventsource": "ci",
+            "original-eventsourcecode": "41567984",
+            "pdl-client-version": "Version 3.6.0 2026-08-20",
+            "quakeml-publicid": "quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?mecid=106310",
+            "review-status": "automatic"
+          },
+          "preferredWeight": 157,
+          "contents": {
+            "quakeml.xml": {
+              "contentType": "application/xml",
+              "lastModified": 1793155940000,
+              "length": 3774,
+              "url": "https://earthquake.usgs.gov/product/focal-mechanism/ci41567984_fm1/ci/1793155940480/quakeml.xml"
+            }
+          }
+        }
+      ],
+      "nearby-cities": [
+        {
+          "id": "urn:usgs-product:ci:nearby-cities:ci41567984:1793155413628",
+          "type": "nearby-cities",
+          "code": "ci41567984",
+          "source": "ci",
+          "updateTime": 1793155413628,
+          "status": "UPDATE",
+          "properties": {
+            "eventsource": "ci",
+            "eventsourcecode": "41567984",
+            "pdl-client-version": "Version 3.6.0 2026-08-20"
+          },
+          "preferredWeight": 7,
+          "contents": {}
+        }
+      ],
+      "origin": [
+        {
+          "id": "urn:usgs-product:ci:origin:ci41567984:1793155412510",
+          "type": "origin",
+          "code": "ci41567984",
+          "source": "ci",
+          "updateTime": 1793155412510,
+          "status": "UPDATE",
+          "properties": {
+            "azimuthal-gap": "24",
+            "depth": "6.07999992370605",
+            "depth-type": "from location",
+            "error-ellipse-azimuth": "112",
+            "error-ellipse-intermediate": "408.0000048",
+            "error-ellipse-major": "2759.999952",
+            "error-ellipse-minor": "383.9999904",
+            "error-ellipse-plunge": "84",
+            "error-ellipse-rotation": "65",
+            "evaluation-status": "preliminary",
+            "event-type": "earthquake",
+            "eventParametersPublicID": "quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?eventid=41567984",
+            "eventsource": "ci",
+            "eventsourcecode": "41567984",
+            "eventtime": "2026-10-28T02:41:30.760Z",
+            "horizontal-error": "0.17",
+            "latitude": "33.0681648254395",
+            "longitude": "-116.046165466309",
+            "magnitude": "2.53504630325492",
+            "magnitude-azimuthal-gap": "53.5509948730469",
+            "magnitude-error": "0.221049979329109",
+            "magnitude-num-stations-used": "26",
+            "magnitude-source": "CI",
+            "magnitude-type": "ml",
+            "minimum-distance": "0.1197",
+            "num-phases-used": "136",
+            "num-stations-used": "100",
+            "origin-source": "CI",
+            "pdl-client-version": "Version 3.6.0 2026-08-20",
+            "quakeml-magnitude-publicid": "quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?magnitudeid=115895816",
+            "quakeml-origin-publicid": "quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?originid=108906736",
+            "quakeml-publicid": "quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?eventid=41567984",
+            "review-status": "automatic",
+            "standard-error": "0.239999995",
+            "title": "12 km SE of Ocotillo Wells, CA",
+            "version": "2",
+            "vertical-error": "1.14999998"
+          },
+          "preferredWeight": 157,
+          "contents": {
+            "quakeml.xml": {
+              "contentType": "application/xml",
+              "lastModified": 1793155412000,
+              "length": 3539,
+              "url": "https://earthquake.usgs.gov/product/origin/ci41567984/ci/1793155412510/quakeml.xml"
+            }
+          }
+        }
+      ],
+      "phase-data": [
+        {
+          "id": "urn:usgs-product:ci:phase-data:ci41567984:1793155412510",
+          "type": "phase-data",
+          "code": "ci41567984",
+          "source": "ci",
+          "updateTime": 1793155412510,
+          "status": "UPDATE",
+          "properties": {
+            "azimuthal-gap": "24",
+            "depth": "6.07999992370605",
+            "depth-type": "from location",
+            "error-ellipse-azimuth": "112",
+            "error-ellipse-intermediate": "408.0000048",
+            "error-ellipse-major": "2759.999952",
+            "error-ellipse-minor": "383.9999904",
+            "error-ellipse-plunge": "84",
+            "error-ellipse-rotation": "65",
+            "evaluation-status": "preliminary",
+            "event-type": "earthquake",
+            "eventParametersPublicID": "quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?eventid=41567984",
+            "eventsource": "ci",
+            "eventsourcecode": "41567984",
+            "eventtime": "2026-10-28T02:41:30.760Z",
+            "horizontal-error": "0.17",
+            "latitude": "33.0681648254395",
+            "longitude": "-116.046165466309",
+            "magnitude": "2.53504630325492",
+            "magnitude-azimuthal-gap": "53.5509948730469",
+            "magnitude-error": "0.221049979329109",
+            "magnitude-num-stations-used": "26",
+            "magnitude-source": "CI",
+            "magnitude-type": "ml",
+            "minimum-distance": "0.1197",
+            "num-phases-used": "136",
+            "num-stations-used": "100",
+            "origin-source": "CI",
+            "pdl-client-version": "Version 3.6.0 2026-08-20",
+            "quakeml-magnitude-publicid": "quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?magnitudeid=115895816",
+            "quakeml-origin-publicid": "quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?originid=108906736",
+            "quakeml-publicid": "quakeml:service.scedc.caltech.edu/fdsnws/event/1/query?eventid=41567984",
+            "review-status": "automatic",
+            "standard-error": "0.239999995",
+            "title": "12 km SE of Ocotillo Wells, CA",
+            "version": "2",
+            "vertical-error": "1.14999998"
+          },
+          "preferredWeight": 157,
+          "contents": {
+            "quakeml.xml": {
+              "contentType": "application/xml",
+              "lastModified": 1793155412000,
+              "length": 330037,
+              "url": "https://earthquake.usgs.gov/product/phase-data/ci41567984/ci/1793155412510/quakeml.xml"
+            }
+          }
+        }
+      ],
+      "scitech-link": [
+        {
+          "id": "urn:usgs-product:ci:scitech-link:ci41567984-waveform_ci:1793155416612",
+          "type": "scitech-link",
+          "code": "ci41567984-waveform_ci",
+          "source": "ci",
+          "updateTime": 1793155416612,
+          "status": "UPDATE",
+          "properties": {
+            "addon-code": "Waveform_CI",
+            "addon-type": "LinkURL",
+            "eventsource": "ci",
+            "eventsourcecode": "41567984",
+            "pdl-client-version": "Version 3.5.4 2026-01-22",
+            "text": "Waveforms",
+            "url": "https://scedc.caltech.edu/review_eventfiles/makePublicView.html?evid=41567984",
+            "version": "01"
+          },
+          "preferredWeight": 7,
+          "contents": {}
+        }
+      ]
+    }
+  },
+  "geometry": {
+    "type": "Point",
+    "coordinates": [-116.046165466309, 33.0681648254395, 6.07999992370605]
+  },
+  "id": "ci41567984"
+}

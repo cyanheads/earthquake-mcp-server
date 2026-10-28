@@ -5,7 +5,6 @@
 
 import { resource, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError, validationError } from '@cyanheads/mcp-ts-core/errors';
-import { boundedPage } from '@/mcp-server/page-budget.js';
 import { feedSnapshots } from '@/services/feed-snapshots.js';
 import { getUsgsService } from '@/services/usgs/usgs-service.js';
 
@@ -34,11 +33,7 @@ export const earthquakeFeedResource = resource('earthquake://feed/{magnitude_tie
   name: 'earthquake-feed',
   title: 'USGS Earthquake Feed',
   description:
-    'Direct access to a USGS real-time earthquake feed as injectable context. ' +
-    'magnitude_tier: all | 1.0 | 2.5 | 4.5 | significant. ' +
-    'time_window: hour | day | week | month. ' +
-    'Returns a bounded page with totalCount and next_uri when more events remain. Read next_uri verbatim to continue the retained generation. ' +
-    'Snapshots last up to 15 minutes, subject to capacity eviction and process restart. The earthquake_get_feed tool exposes the same generation.',
+    'Direct access to a USGS real-time earthquake feed as injectable context. magnitude_tier: all | 1.0 | 2.5 | 4.5 | significant. time_window: hour | day | week | month. Returns 100 events per page with totalCount, and next_uri when more events remain. Read next_uri verbatim to continue the retained generation. Snapshots last up to 15 minutes, subject to capacity eviction and process restart. The earthquake_get_feed tool exposes the same generation.',
   mimeType: 'application/json',
   cacheHint: { ttlMs: 0, cacheScope: 'private' },
 
@@ -119,13 +114,6 @@ export const earthquakeFeedResource = resource('earthquake://feed/{magnitude_tie
       recovery: 'Request a smaller time window or magnitude tier.',
       thrownBy: 'service',
     },
-    {
-      reason: 'result_too_large',
-      code: JsonRpcErrorCode.ValidationError,
-      when: 'An event or page metadata exceeds the response budget.',
-      recovery: 'Narrow the feed or read the event directly upstream.',
-      thrownBy: 'service',
-    },
   ],
 
   async handler(params, ctx) {
@@ -185,29 +173,22 @@ export const earthquakeFeedResource = resource('earthquake://feed/{magnitude_tie
       longitude: e.longitude,
       depth_km: e.depth_km,
     }));
-    const domain = (count: number) => ({
-      count,
+    const next = index + events.length;
+    const truncated = next < result.events.length;
+    return {
+      count: events.length,
       generated_at: result.generatedAt,
-      events: events.slice(0, count),
+      events,
       feed_url: result.feedUrl,
       totalCount: result.events.length,
-      truncated: index + count < result.events.length,
-      ...(index + count < result.events.length
+      truncated,
+      ...(truncated
         ? {
-            nextCursor: cursor(index + count),
-            next_uri: `earthquake://feed/${tier}/${window}/page/${cursor(index + count)}`,
+            nextCursor: cursor(next),
+            next_uri: `earthquake://feed/${tier}/${window}/page/${cursor(next)}`,
           }
         : {}),
-    });
-    const uri =
-      ctx.uri?.href ??
-      `earthquake://feed/${tier}/${window}${params.cursor ? `/page/${params.cursor}` : ''}`;
-    const count = boundedPage(events, limit, (n) => ({
-      contents: [{ uri, mimeType: 'application/json', text: JSON.stringify(domain(n), null, 2) }],
-      ttlMs: 0,
-      cacheScope: 'private',
-    }));
-    return domain(count);
+    };
   },
 
   list: () => ({

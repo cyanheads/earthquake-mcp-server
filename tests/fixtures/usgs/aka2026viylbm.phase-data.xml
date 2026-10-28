@@ -1,0 +1,214 @@
+<?xml version='1.0' encoding='utf-8'?>
+<q:quakeml xmlns="http://quakeml.org/xmlns/bed/1.2" xmlns:q="http://quakeml.org/xmlns/quakeml/1.2" xmlns:catalog="http://anss.org/xmlns/catalog/0.1" xmlns:anss="http://anss.org/xmlns/event/0.1">
+  <eventParameters publicID="smi:earthquake.alaska.edu/EventParameters">
+    <event publicID="smi:earthquake.alaska.edu/aka2026viylbm" catalog:datasource="AK" catalog:eventsource="AK" catalog:eventid="a2026viylbm">
+      <preferredOriginID>smi:earthquake.alaska.edu/Origin/20261028105844.050665.1022535</preferredOriginID>
+      <preferredMagnitudeID>smi:earthquake.alaska.edu/Origin/20261028105844.050665.1022535/netMag/ML</preferredMagnitudeID>
+      <description>
+        <text>Kenai Peninsula, Alaska</text>
+        <type>region name</type>
+      </description>
+      <creationInfo>
+        <agencyID>AK</agencyID>
+        <creationTime>2026-10-28T10:57:01.901149Z</creationTime>
+      </creationInfo>
+      <origin publicID="smi:earthquake.alaska.edu/Origin/20261028105844.050665.1022535" catalog:datasource="AK" catalog:eventsource="AK" catalog:eventid="a2026viylbm">
+        <time>
+          <value>2026-10-28T10:56:17.538148Z</value>
+          <uncertainty>0.09654365479946136</uncertainty>
+        </time>
+        <latitude>
+          <value>60.243</value>
+          <uncertainty>0.8</uncertainty>
+        </latitude>
+        <longitude>
+          <value>-150.857</value>
+          <uncertainty>0.6</uncertainty>
+        </longitude>
+        <depth>
+          <value>70500.0</value>
+          <uncertainty>2202.0</uncertainty>
+        </depth>
+        <depthType>from location</depthType>
+        <methodID>smi:earthquake.alaska.edu/LOCSAT</methodID>
+        <earthModelID>smi:earthquake.alaska.edu/ak135</earthModelID>
+        <quality>
+          <associatedPhaseCount>235</associatedPhaseCount>
+          <usedPhaseCount>231</usedPhaseCount>
+          <associatedStationCount>149</associatedStationCount>
+          <usedStationCount>145</usedStationCount>
+          <depthPhaseCount>0</depthPhaseCount>
+          <standardError>0.9</standardError>
+          <azimuthalGap>79.0</azimuthalGap>
+          <minimumDistance>0.5</minimumDistance>
+          <maximumDistance>8.6</maximumDistance>
+          <medianDistance>2.7</medianDistance>
+        </quality>
+        <evaluationMode>automatic</evaluationMode>
+        <evaluationStatus>confirmed</evaluationStatus>
+        <comment id="smi:earthquake.alaska.edu/scevalMethod">
+          <text>minPhaseConfirm</text>
+          <creationInfo>
+            <creationTime>2026-10-28T10:58:48.630567Z</creationTime>
+          </creationInfo>
+        </comment>
+        <creationInfo>
+          <agencyID>AK</agencyID>
+          <creationTime>2026-10-28T10:58:44.050548Z</creationTime>
+        </creationInfo>
+        <originUncertainty>
+          <horizontalUncertainty>1800.0</horizontalUncertainty>
+          <minHorizontalUncertainty>1100.0</minHorizontalUncertainty>
+          <maxHorizontalUncertainty>1800.0</maxHorizontalUncertainty>
+          <azimuthMaxHorizontalUncertainty>153.4</azimuthMaxHorizontalUncertainty>
+        </originUncertainty>
+        <arrival publicID="smi:earthquake.alaska.edu/Pick/20261028105658.073583.146506_Origin/20261028105844.050665.1022535">
+          <pickID>smi:earthquake.alaska.edu/Pick/20261028105658.073583.146506</pickID>
+          <phase>P</phase>
+          <azimuth>32.48622512817383</azimuth>
+          <distance>1.011297583580017</distance>
+          <timeResidual>0.6056966781616211</timeResidual>
+          <timeWeight>0.0</timeWeight>
+        </arrival>
+        <arrival publicID="smi:earthquake.alaska.edu/Pick/20261028105649.022238.146504_Origin/20261028105844.050665.1022535">
+          <pickID>smi:earthquake.alaska.edu/Pick/20261028105649.022238.146504</pickID>
+          <phase>P</phase>
+          <azimuth>100.64041900634766</azimuth>
+          <distance>0.7156708836555481</distance>
+          <timeResidual>0.4968509674072266</timeResidual>
+          <timeWeight>1.0</timeWeight>
+        </arrival>
+        <arrival publicID="smi:earthquake.alaska.edu/Pick/20261028105648.872682.146500_Origin/20261028105844.050665.1022535">
+          <pickID>smi:earthquake.alaska.edu/Pick/20261028105648.872682.146500</pickID>
+          <phase>P</phase>
+          <azimuth>173.37918090820312</azimuth>
+          <distance>0.5066889524459839</distance>
+          <timeResidual>0.4839248657226562</timeResidual>
+          <timeWeight>0.0</timeWeight>
+        </arrival>
+        <arrival publicID="smi:earthquake.alaska.edu/Pick/20261028105718.196165.146518_Origin/20261028105844.050665.1022535">
+          <pickID>smi:earthquake.alaska.edu/Pick/20261028105718.196165.146518</pickID>
+          <phase>P</phase>
+          <azimuth>43.07633590698242</azimuth>
+          <distance>2.1772971153259277</distance>
+          <timeResidual>4.730546951293945</timeResidual>
+          <timeWeight>0.0</timeWeight>
+        </arrival>
+        <arrival publicID="smi:earthquake.alaska.edu/Pick/20261028105718.193905.146516_Origin/20261028105844.050665.1022535">
+          <pickID>smi:earthquake.alaska.edu/Pick/20261028105718.193905.146516</pickID>
+          <phase>P</phase>
+          <azimuth>1.0038137435913086</azimuth>
+          <distance>2.2910430431365967</distance>
+          <timeResidual>0.9998760223388672</timeResidual>
+          <timeWeight>1.0</timeWeight>
+        </arrival>
+        <arrival publicID="smi:earthquake.alaska.edu/Pick/20261028105711.731623.146513_Origin/20261028105844.050665.1022535">
+          <pickID>smi:earthquake.alaska.edu/Pick/20261028105711.731623.146513</pickID>
+          <phase>P</phase>
+          <azimuth>60.42704772949219</azimuth>
+          <distance>2.7193548679351807</distance>
+          <timeResidual>0.42377471923828125</timeResidual>
+          <timeWeight>1.0</timeWeight>
+        </arrival>
+      </origin>
+      <magnitude publicID="smi:earthquake.alaska.edu/Origin/20261028105844.050665.1022535/netMag/ML">
+        <mag>
+          <value>3.0</value>
+          <uncertainty>0.1</uncertainty>
+        </mag>
+        <type>ML</type>
+        <originID>smi:earthquake.alaska.edu/Origin/20261028105844.050665.1022535</originID>
+        <methodID>smi:earthquake.alaska.edu/trimmed_mean(25)</methodID>
+        <stationCount>101</stationCount>
+        <creationInfo>
+          <agencyID>AK</agencyID>
+          <creationTime>2026-10-28T10:58:48.649484Z</creationTime>
+        </creationInfo>
+      </magnitude>
+      <pick publicID="smi:earthquake.alaska.edu/Pick/20261028105711.731623.146513">
+        <time>
+          <value>2026-10-28T10:56:59.248300Z</value>
+        </time>
+        <waveformID networkCode="AK" stationCode="KLU" channelCode="BHZ"></waveformID>
+        <filterID>smi:earthquake.alaska.edu/ITAPER(10)&gt;&gt;BW(4,0.7,2)</filterID>
+        <methodID>smi:earthquake.alaska.edu/AIC</methodID>
+        <phaseHint>P</phaseHint>
+        <evaluationMode>automatic</evaluationMode>
+        <creationInfo>
+          <agencyID>AK</agencyID>
+          <creationTime>2026-10-28T10:57:11.731653Z</creationTime>
+        </creationInfo>
+      </pick>
+      <pick publicID="smi:earthquake.alaska.edu/Pick/20261028105718.193905.146516">
+        <time>
+          <value>2026-10-28T10:56:54.020000Z</value>
+        </time>
+        <waveformID networkCode="AK" stationCode="L22K" channelCode="BHZ"></waveformID>
+        <filterID>smi:earthquake.alaska.edu/ITAPER(10)&gt;&gt;BW(4,0.7,2)</filterID>
+        <methodID>smi:earthquake.alaska.edu/AIC</methodID>
+        <phaseHint>P</phaseHint>
+        <evaluationMode>automatic</evaluationMode>
+        <creationInfo>
+          <agencyID>AK</agencyID>
+          <creationTime>2026-10-28T10:57:18.193939Z</creationTime>
+        </creationInfo>
+      </pick>
+      <pick publicID="smi:earthquake.alaska.edu/Pick/20261028105649.022238.146504">
+        <time>
+          <value>2026-10-28T10:56:33.108300Z</value>
+        </time>
+        <waveformID networkCode="AK" stationCode="SWD" channelCode="BHZ"></waveformID>
+        <filterID>smi:earthquake.alaska.edu/ITAPER(10)&gt;&gt;BW(4,0.7,2)</filterID>
+        <methodID>smi:earthquake.alaska.edu/AIC</methodID>
+        <phaseHint>P</phaseHint>
+        <evaluationMode>automatic</evaluationMode>
+        <creationInfo>
+          <agencyID>AK</agencyID>
+          <creationTime>2026-10-28T10:56:49.022263Z</creationTime>
+        </creationInfo>
+      </pick>
+      <pick publicID="smi:earthquake.alaska.edu/Pick/20261028105658.073583.146506">
+        <time>
+          <value>2026-10-28T10:56:36.740000Z</value>
+        </time>
+        <waveformID networkCode="AK" stationCode="RC01" channelCode="BHZ"></waveformID>
+        <filterID>smi:earthquake.alaska.edu/ITAPER(10)&gt;&gt;BW(4,0.7,2)</filterID>
+        <methodID>smi:earthquake.alaska.edu/AIC</methodID>
+        <phaseHint>P</phaseHint>
+        <evaluationMode>automatic</evaluationMode>
+        <creationInfo>
+          <agencyID>AK</agencyID>
+          <creationTime>2026-10-28T10:56:58.073610Z</creationTime>
+        </creationInfo>
+      </pick>
+      <pick publicID="smi:earthquake.alaska.edu/Pick/20261028105648.872682.146500">
+        <time>
+          <value>2026-10-28T10:56:30.908300Z</value>
+        </time>
+        <waveformID networkCode="AK" stationCode="BRSE" channelCode="BHZ"></waveformID>
+        <filterID>smi:earthquake.alaska.edu/ITAPER(10)&gt;&gt;BW(4,0.7,2)</filterID>
+        <methodID>smi:earthquake.alaska.edu/AIC</methodID>
+        <phaseHint>P</phaseHint>
+        <evaluationMode>automatic</evaluationMode>
+        <creationInfo>
+          <agencyID>AK</agencyID>
+          <creationTime>2026-10-28T10:56:48.872707Z</creationTime>
+        </creationInfo>
+      </pick>
+      <pick publicID="smi:earthquake.alaska.edu/Pick/20261028105718.196165.146518">
+        <time>
+          <value>2026-10-28T10:56:56.220000Z</value>
+        </time>
+        <waveformID networkCode="AK" stationCode="M23K" channelCode="BHZ"></waveformID>
+        <filterID>smi:earthquake.alaska.edu/ITAPER(10)&gt;&gt;BW(4,0.7,2)</filterID>
+        <methodID>smi:earthquake.alaska.edu/AIC</methodID>
+        <phaseHint>P</phaseHint>
+        <evaluationMode>automatic</evaluationMode>
+        <creationInfo>
+          <agencyID>AK</agencyID>
+          <creationTime>2026-10-28T10:57:18.196180Z</creationTime>
+        </creationInfo>
+      </pick>
+    </event>
+  </eventParameters>
+</q:quakeml>

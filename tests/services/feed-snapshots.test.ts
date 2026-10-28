@@ -148,11 +148,27 @@ describe('FeedSnapshots', () => {
     Buffer.from(JSON.stringify({ offset: 2, limit: 2 })).toString('base64url'),
     'x'.repeat(513),
     Buffer.from(JSON.stringify(['id', -1, 2])).toString('base64url'),
+    Buffer.from(JSON.stringify(['id', 0, 1001])).toString('base64url'),
   ])('rejects malformed cursor without fetching: %s', async (cursor) => {
     const fetch = vi.fn();
     await expect(
       new FeedSnapshots().read({ ...selection, cursor }, ctx(), fetch),
     ).rejects.toMatchObject({ data: { reason: 'invalid_cursor', retryable: false } });
     expect(fetch).not.toHaveBeenCalled();
+  });
+  it('accepts a cursor page size at the 1,000 cap as well-formed', async () => {
+    const cursor = Buffer.from(JSON.stringify(['id', 0, 1000])).toString('base64url');
+    await expect(
+      new FeedSnapshots().read({ ...selection, cursor }, ctx(), vi.fn()),
+    ).rejects.toMatchObject({ data: { reason: 'cursor_expired' } });
+  });
+  it('pages 100 events when the selection names no limit, and carries that size in its cursor', async () => {
+    const read = await new FeedSnapshots().read(
+      { magnitude_tier: 'all', time_window: 'day' },
+      ctx(),
+      async () => feed(),
+    );
+    expect(read.limit).toBe(100);
+    expect(JSON.parse(Buffer.from(read.cursor(100), 'base64url').toString())[2]).toBe(100);
   });
 });

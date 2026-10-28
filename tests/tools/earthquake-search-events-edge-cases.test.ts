@@ -84,8 +84,8 @@ describe('earthquakeSearchEvents — input schema boundaries', () => {
     expect(() => earthquakeSearchEvents.input.parse({ limit: 0 })).toThrow();
   });
 
-  it('rejects limit above 20000', () => {
-    expect(() => earthquakeSearchEvents.input.parse({ limit: 20001 })).toThrow();
+  it('accepts limit above the 1,000 cap for the handler to clamp', () => {
+    expect(earthquakeSearchEvents.input.parse({ limit: 20001 }).limit).toBe(20001);
   });
 
   it('rejects limit as non-integer', () => {

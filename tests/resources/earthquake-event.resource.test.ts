@@ -3,12 +3,15 @@
  * @module tests/resources/earthquake-event.resource.test
  */
 
+import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { earthquakeEventResource } from '@/mcp-server/resources/definitions/earthquake-event.resource.js';
 import type { EarthquakeDetailOutput, EarthquakeEventOutput } from '@/mcp-server/tools/schemas.js';
 import * as usgsModule from '@/services/usgs/usgs-service.js';
+import { stubUsgsEvent } from '../helpers/usgs-fetch-stub.js';
 
 const sampleEvent: EarthquakeEventOutput = {
   id: 'ci38457511',
@@ -136,5 +139,35 @@ describe('earthquakeEventResource', () => {
     const params = earthquakeEventResource.params!.parse({ event_id: 'us6000sznj' });
 
     await expect(earthquakeEventResource.handler(params, ctx)).rejects.toThrow('Network failure');
+  });
+});
+
+describe('earthquakeEventResource — include groups stay off the resource (issue #41)', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
+  it('reads only the event, with no product request, even when products are published', async () => {
+    vi.restoreAllMocks();
+    usgsModule.initUsgsService(
+      {} as AppConfig,
+      {} as StorageService,
+      'https://earthquake.usgs.gov',
+      5000,
+    );
+    const { urls } = stubUsgsEvent('ci38457511', {
+      'phase-data': 'ci38457511.phase-data.xml',
+      oaf: 'us6000u18k.forecast.json',
+    });
+    const params = earthquakeEventResource.params!.parse({ event_id: 'ci38457511' });
+    const result = await earthquakeEventResource.handler(
+      params,
+      createMockContext({ errors: earthquakeEventResource.errors }),
+    );
+
+    expect(urls).toHaveLength(1);
+    expect(Object.keys(result as object)).toEqual(['event', 'detail']);
+    expect(earthquakeEventResource.output!.parse(result)).toEqual(result);
   });
 });

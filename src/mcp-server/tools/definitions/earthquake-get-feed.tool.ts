@@ -5,7 +5,7 @@
 
 import { tool, z } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { boundedPage, toolEnvelope } from '@/mcp-server/page-budget.js';
+import { clampLimit, limitSchema } from '@/mcp-server/tools/limit-clamp.js';
 import {
   type EarthquakeEventOutput,
   EarthquakeEventSchema,
@@ -14,10 +14,8 @@ import {
 import { feedSnapshots } from '@/services/feed-snapshots.js';
 import { getUsgsService } from '@/services/usgs/usgs-service.js';
 
-/** Events returned per call when the caller does not set limit. */
-const DEFAULT_PAGE_SIZE = 100;
-/** Upper bound on events per call, matching the limit input's maximum. */
-const MAX_PAGE_SIZE = 1000;
+/** Events returned on a first page when the caller does not set limit. */
+const DEFAULT_PAGE_SIZE = 15;
 
 function formatFeed(result: {
   feed_url: string;
@@ -38,18 +36,7 @@ function formatFeed(result: {
 export const earthquakeGetFeed = tool('earthquake_get_feed', {
   title: 'Get USGS Earthquake Feed',
   description:
-    'Fetch a USGS pre-computed real-time earthquake feed by magnitude tier and time window. ' +
-    'These feeds are CDN-cached by USGS and faster and more available than the query API — ' +
-    'use them for "what\'s happening now" queries. ' +
-    '"all" includes microseisms (M<1); "significant" is a USGS curation based on magnitude, ' +
-    'felt reports, and PAGER impact estimates. ' +
-    '"hour" returns 0–10 events typically; "month" can exceed 10,000 for the "all" tier, ' +
-    'so results are returned a page at a time: count is the page size, totalCount the whole feed, ' +
-    'and nextCursor the input for the following page. ' +
-    'The cursor is opaque and must be passed back verbatim — unlike earthquake_search_events, these feeds ' +
-    'retain the first-read generation for up to 15 minutes, subject to capacity eviction and restart. ' +
-    'Pages fit a 24,000-byte result budget and can be smaller than limit. An expired cursor requires a fresh first read. ' +
-    'For historical or filtered queries, use earthquake_search_events instead.',
+    'Fetch a USGS pre-computed real-time earthquake feed by magnitude tier and time window. These feeds are CDN-cached by USGS and faster and more available than the query API — use them for "what\'s happening now" queries. "all" includes microseisms (M<1); "significant" is a USGS curation based on magnitude, felt reports, and PAGER impact estimates. "hour" returns 0–10 events typically; "month" can exceed 10,000 for the "all" tier, so results are returned a page at a time: count is the page size, totalCount the whole feed, and nextCursor the input for the following page. Each page returns limit events (default 15, at most 1,000), fewer only on the last page. The cursor is opaque and must be passed back verbatim — unlike earthquake_search_events, these feeds retain the first-read generation for up to 15 minutes, subject to capacity eviction and restart. An expired cursor requires a fresh first read. For historical or filtered queries, use earthquake_search_events instead.',
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
 
   input: z.object({
@@ -57,37 +44,23 @@ export const earthquakeGetFeed = tool('earthquake_get_feed', {
       .enum(['all', '1.0', '2.5', '4.5', 'significant'])
       .default('2.5')
       .describe(
-        'Minimum magnitude threshold for the feed. ' +
-          '"all" includes microseisms (M<1). ' +
-          '"1.0" is M1.0+. "2.5" is M2.5+. "4.5" is M4.5+. ' +
-          '"significant" is a USGS curated selection based on magnitude, felt reports, and PAGER impact estimates — not purely magnitude-based.',
+        'Minimum magnitude threshold for the feed. "all" includes microseisms (M<1). "1.0" is M1.0+. "2.5" is M2.5+. "4.5" is M4.5+. "significant" is a USGS curated selection based on magnitude, felt reports, and PAGER impact estimates — not purely magnitude-based.',
       ),
     time_window: z
       .enum(['hour', 'day', 'week', 'month'])
       .default('day')
       .describe(
-        'Time window for the feed. ' +
-          '"hour" typically returns 0–10 events; "month" can exceed 10,000 for the "all" tier. ' +
-          'Prefer "hour" or "day" for real-time status checks.',
+        'Time window for the feed. "hour" typically returns 0–10 events; "month" can exceed 10,000 for the "all" tier. Prefer "hour" or "day" for real-time status checks.',
       ),
-    limit: z
-      .number()
-      .int()
-      .min(1)
-      .max(MAX_PAGE_SIZE)
-      .optional()
-      .describe(
-        `Maximum events to return in this call. Default ${DEFAULT_PAGE_SIZE}, max ${MAX_PAGE_SIZE}. ` +
-          'Applies to the first page; later pages carry the page size inside the cursor, so set it ' +
-          'on the first call rather than changing it mid-sequence.',
-      ),
+    limit: limitSchema(
+      (capRule) =>
+        `Events to return per page. Default ${DEFAULT_PAGE_SIZE}; ${capRule}. Applies to the first page; later pages carry the page size inside the cursor and ignore limit, so set it on the first call.`,
+    ),
     cursor: z
       .string()
       .optional()
       .describe(
-        "Opaque token for the next page, taken verbatim from a previous call's nextCursor. " +
-          'Omit for the first page. Do not construct, parse, or edit it — it encodes a position ' +
-          'in the feed snapshot and is rejected if malformed.',
+        "Opaque token for the next page, taken verbatim from a previous call's nextCursor. Omit for the first page. Do not construct, parse, or edit it — it encodes a position in the feed snapshot and is rejected if malformed.",
       ),
   }),
 
@@ -113,24 +86,19 @@ export const earthquakeGetFeed = tool('earthquake_get_feed', {
       .boolean()
       .optional()
       .describe(
-        'True when the feed holds more events than this page returned. ' +
-          'nextCursor carries the input for the following page.',
+        'True when the feed holds more events than this page returned. nextCursor carries the input for the following page.',
       ),
     nextCursor: z
       .string()
       .optional()
       .describe(
-        'Opaque token to pass back as the cursor input for the next page. ' +
-          'Present only when more events remain; absent means this was the last page.',
+        'Opaque token to pass back as the cursor input for the next page. Present only when more events remain; absent means this was the last page.',
       ),
     notice: z
       .string()
       .optional()
       .describe(
-        'Recovery guidance when the feed contains no events, or how to continue when a page was ' +
-          'capped — narrowing the magnitude tier, widening the time window, paging with the ' +
-          'cursor, or using earthquake_search_events for filtered queries. ' +
-          'Absent when a single page covers the whole feed.',
+        'Guidance when a first-page limit was clamped to 1,000 (requested and applied values), when the feed or cursor position holds no events (a wider window, lower tier, or earthquake_search_events), or when more pages remain (paging with the cursor). Absent when none applies.',
       ),
   },
 
@@ -157,13 +125,6 @@ export const earthquakeGetFeed = tool('earthquake_get_feed', {
       thrownBy: 'service',
     },
     {
-      reason: 'result_too_large',
-      code: JsonRpcErrorCode.ValidationError,
-      when: 'One event or page metadata cannot fit the response budget.',
-      recovery: 'Narrow the feed or read the event directly upstream.',
-      thrownBy: 'service',
-    },
-    {
       reason: 'feed_unavailable',
       code: JsonRpcErrorCode.ServiceUnavailable,
       when: 'USGS feed endpoint returns a 5xx, HTML, or is unreachable.',
@@ -176,8 +137,7 @@ export const earthquakeGetFeed = tool('earthquake_get_feed', {
       when: 'USGS feed endpoint did not answer before the request deadline.',
       retryable: true,
       recovery:
-        'Retry the call, or request a smaller time_window — the "month" and "all" feeds are ' +
-        'the largest documents and the slowest to transfer.',
+        'Retry the call, or request a smaller time_window — the "month" and "all" feeds are the largest documents and the slowest to transfer.',
     },
   ],
 
@@ -189,9 +149,14 @@ export const earthquakeGetFeed = tool('earthquake_get_feed', {
       paged: input.cursor != null,
     });
 
+    // A cursor carries its own page size, so limit applies, and can clamp, on a first page only.
+    const clamp =
+      input.cursor == null
+        ? clampLimit(input.limit ?? DEFAULT_PAGE_SIZE, 'earthquake_get_feed', ctx)
+        : undefined;
     let snapshot: Awaited<ReturnType<typeof feedSnapshots.read>>;
     try {
-      snapshot = await feedSnapshots.read(input, ctx, () =>
+      snapshot = await feedSnapshots.read({ ...input, limit: clamp?.applied }, ctx, () =>
         getUsgsService().getFeed(input.magnitude_tier, input.time_window, ctx),
       );
     } catch (err) {
@@ -225,42 +190,26 @@ export const earthquakeGetFeed = tool('earthquake_get_feed', {
 
     const { feed, index, limit, cursor } = snapshot;
     const events = feed.events.slice(index, index + limit);
-    const domain = (count: number) => ({
-      count,
-      generated_at: feed.generatedAt,
-      events: events.slice(0, count),
-      feed_url: feed.feedUrl,
+    const count = events.length;
+    const totalCount = feed.events.length;
+    const truncated = index + count < totalCount;
+    const pageNotice =
+      totalCount === 0
+        ? `No events in the ${input.magnitude_tier}/${input.time_window} feed. Try a wider time_window, lower magnitude_tier, or earthquake_search_events.`
+        : count === 0
+          ? 'No events at this cursor — the previous page was the last one. Start over without a cursor.'
+          : truncated
+            ? `Showing ${count} of ${totalCount} events. Call again with nextCursor as cursor and the same magnitude_tier and time_window.`
+            : undefined;
+
+    ctx.enrich({
+      totalCount,
+      ...(truncated ? { truncated: true, nextCursor: cursor(index + count) } : {}),
     });
-    const metadata = (count: number) => {
-      const totalCount = feed.events.length;
-      const truncated = index + count < totalCount;
-      return {
-        totalCount,
-        ...(truncated ? { truncated: true, nextCursor: cursor(index + count) } : {}),
-        ...(totalCount === 0
-          ? {
-              notice: `No events in the ${input.magnitude_tier}/${input.time_window} feed. Try a wider time_window, lower magnitude_tier, or earthquake_search_events.`,
-            }
-          : count === 0
-            ? {
-                notice:
-                  'No events at this cursor — the previous page was the last one. Start over without a cursor.',
-              }
-            : truncated
-              ? {
-                  notice: `Showing ${count} of ${totalCount} events. Call again with nextCursor as cursor and the same magnitude_tier and time_window.`,
-                }
-              : {}),
-      };
-    };
-    const count = boundedPage(events, limit, (n) =>
-      toolEnvelope(domain(n), formatFeed(domain(n)), metadata(n)),
-    );
-    const meta = metadata(count);
-    const { notice, ...rest } = meta;
-    ctx.enrich(rest);
-    if (notice != null) ctx.enrich.notice(notice);
-    return domain(count);
+    // notice is last-wins, so the clamp and paging sentences go out as one string.
+    const notice = [clamp?.notice, pageNotice].filter(Boolean).join(' ');
+    if (notice) ctx.enrich.notice(notice);
+    return { count, generated_at: feed.generatedAt, events, feed_url: feed.feedUrl };
   },
 
   format: formatFeed,

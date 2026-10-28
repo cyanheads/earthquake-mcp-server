@@ -265,6 +265,80 @@ describe.each(tools)('$name — advertised inputSchema', ({ tool, valid }) => {
   });
 });
 
+describe('limit inputs — advertised and enforced bounds per EARTHQUAKE_CLAMP_LIMITS', () => {
+  const load = async () => {
+    vi.resetModules();
+    const [feed, search] = await Promise.all([
+      import('@/mcp-server/tools/definitions/earthquake-get-feed.tool.js'),
+      import('@/mcp-server/tools/definitions/earthquake-search-events.tool.js'),
+    ]);
+    return [feed.earthquakeGetFeed, search.earthquakeSearchEvents] as const;
+  };
+  const limitProperty = (tool: { input: z.ZodType }) =>
+    (emit(tool.input).properties as Record<string, Record<string, unknown>>).limit;
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('advertises no maximum and accepts an over-cap limit by default', async () => {
+    vi.stubEnv('EARTHQUAKE_CLAMP_LIMITS', undefined);
+    for (const tool of await load()) {
+      expect(limitProperty(tool)).not.toHaveProperty('maximum');
+      expect(limitProperty(tool)).toMatchObject({ minimum: 1 });
+      expect(tool.input.safeParse({ limit: 20001 }).success).toBe(true);
+    }
+  });
+
+  it('advertises maximum 1000 and rejects 1001 as invalid_arguments when clamping is off', async () => {
+    vi.stubEnv('EARTHQUAKE_CLAMP_LIMITS', 'false');
+    for (const tool of await load()) {
+      expect(limitProperty(tool)).toMatchObject({ minimum: 1, maximum: 1000 });
+      expect(tool.input.safeParse({ limit: 1000 }).success).toBe(true);
+      const result = await runToolContract(tool as typeof earthquakeSearchEvents, { limit: 1001 });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        error: { code: JsonRpcErrorCode.InvalidParams, data: { reason: 'invalid_arguments' } },
+      });
+      expect(JSON.stringify(result.content)).toContain('limit');
+    }
+  });
+
+  it('answers a fractional limit with an actionable hint while clamping is on', async () => {
+    vi.stubEnv('EARTHQUAKE_CLAMP_LIMITS', undefined);
+    for (const tool of await load()) {
+      const result = await runToolContract(tool as typeof earthquakeSearchEvents, { limit: 2.5 });
+      expect(result.structuredContent).toMatchObject({
+        error: { code: JsonRpcErrorCode.InvalidParams, data: { reason: 'invalid_arguments' } },
+      });
+      expect(JSON.stringify(result.structuredContent)).toContain(
+        'Send limit as a whole number, not a fractional one.',
+      );
+      expect(JSON.stringify(result.content)).toContain('whole number');
+    }
+  });
+
+  const limitDescription = (tool: { input: z.ZodType }) => limitProperty(tool)?.description;
+
+  it('describes the clamp only while clamping is on', async () => {
+    vi.stubEnv('EARTHQUAKE_CLAMP_LIMITS', undefined);
+    for (const tool of await load()) {
+      expect(limitDescription(tool)).toContain(
+        'Default 15; a larger value returns at most 1,000 and says so.',
+      );
+    }
+    vi.stubEnv('EARTHQUAKE_CLAMP_LIMITS', 'false');
+    for (const tool of await load()) {
+      expect(limitDescription(tool)).toContain('Default 15; at most 1,000.');
+      expect(limitDescription(tool)).not.toContain('says so');
+    }
+  });
+
+  it('advertises the configured DEFAULT_LIMIT on search; the feed default is fixed', async () => {
+    vi.stubEnv('DEFAULT_LIMIT', '40');
+    const [feed, search] = await load();
+    expect(limitDescription(search)).toContain('Default 40;');
+    expect(limitDescription(feed)).toContain('Default 15;');
+  });
+});
+
 describe('earthquake-feed resource — cache hint', () => {
   it('keeps tenant-bound continuation tokens out of shared caches', () => {
     expect(earthquakeFeedResource.cacheHint).toEqual({ ttlMs: 0, cacheScope: 'private' });

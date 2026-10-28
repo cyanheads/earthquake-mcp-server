@@ -3,9 +3,9 @@
 **Server:** earthquake-mcp-server
 **Package:** `@cyanheads/earthquake-mcp-server`
 **Version:** 0.4.1
-**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.15`
+**Framework:** [@cyanheads/mcp-ts-core](https://www.npmjs.com/package/@cyanheads/mcp-ts-core) `^0.13.18`
 **Engines:** Bun ≥1.4.0, Node ≥24.0.0
-**MCP SDK:** `@modelcontextprotocol/server` ^2.3.1
+**MCP SDK:** `@modelcontextprotocol/server` ^2.4.0
 **Zod:** ^4.6.7
 
 > **Read the framework docs first:** `node_modules/@cyanheads/mcp-ts-core/CLAUDE.md` contains the full API reference — builders, Context, error codes, exports, patterns. This file covers server-specific conventions only.
@@ -48,14 +48,18 @@ Tailor suggestions to what's actually missing or stale — don't recite the full
 Use the existing definitions as the server-specific examples:
 
 - [earthquake-search-events.tool.ts](src/mcp-server/tools/definitions/earthquake-search-events.tool.ts) builds the shared FDSN query, calls the selected service, and enriches both client surfaces with the effective query, pagination, and ignored filters.
-- [earthquake-get-event.tool.ts](src/mcp-server/tools/definitions/earthquake-get-event.tool.ts) returns the normalized event and optional analysis products; its formatter renders both.
-- [earthquake-event.resource.ts](src/mcp-server/resources/definitions/earthquake-event.resource.ts) exposes the same event projection through a resource URI.
+- [earthquake-get-event.tool.ts](src/mcp-server/tools/definitions/earthquake-get-event.tool.ts) routes an EMSC unid (`^\d{8}_\d{7}$`) to EMSC and every other ID to USGS, and returns the normalized event, optional analysis products, and the opt-in `include` groups ([event-includes.ts](src/services/usgs/event-includes.ts)); its formatter renders all of them.
+- [earthquake-event.resource.ts](src/mcp-server/resources/definitions/earthquake-event.resource.ts) exposes the same event projection through a resource URI, without `include`.
 
 Service clients use `fetchWithTimeout` and `withRetry` with `ctx.signal`. When mapping upstream failures onto a declared reason, retain an explicit `retryable: false` and provide matching recovery text. Never forward captured upstream bodies wholesale.
 
 ### Server config
 
-[src/config/server-config.ts](src/config/server-config.ts) lazily parses `USGS_BASE_URL`, `EMSC_BASE_URL`, `DEFAULT_LIMIT`, and `REQUEST_TIMEOUT_MS` through `parseEnvConfig`. Empty strings and whole-value `${…}` placeholders are treated as unset by the framework. Nonblank invalid values fail with the environment variable name.
+[src/config/server-config.ts](src/config/server-config.ts) lazily parses `USGS_BASE_URL`, `EMSC_BASE_URL`, `DEFAULT_LIMIT` (1–1,000, default 15), `REQUEST_TIMEOUT_MS`, and `EARTHQUAKE_CLAMP_LIMITS` (`z.stringbool()`, default true) through `parseEnvConfig`. Empty strings and whole-value `${…}` placeholders are treated as unset by the framework. Nonblank invalid values fail with the environment variable name.
+
+Search and feed `limit` share one cap, `MAX_LIMIT` (1,000), through [src/mcp-server/tools/limit-clamp.ts](src/mcp-server/tools/limit-clamp.ts): `limitSchema(describe)` advertises no maximum and `clampLimit()` reduces a larger value to the cap with a notice, a log line, and an `earthquake.limit.clamps` count. `EARTHQUAKE_CLAMP_LIMITS=false` makes the schema advertise and enforce `maximum: 1000` instead. The bounds are `z.lazy` and the description is a getter that passes the active mode's cap clause to `describe`, so both read the setting after `createApp()` loads `.env`; never read `getServerConfig()` at module load.
+
+Event lookups, feeds, and searches each run under one 50-second deadline across every request and retry, inside the MCP SDK clients' 60-second default timeout; an event's product downloads share the lookup's deadline.
 
 ### Session mode
 
@@ -138,9 +142,10 @@ src/
   services/
     usgs/
       usgs-service.ts                    # USGS feeds, queries, counts, event detail
+      event-includes.ts                  # Event include groups (origins, QuakeML, aftershock forecast)
       types.ts                           # Shared seismic domain types
     emsc/
-      emsc-service.ts                    # EMSC queries and counts
+      emsc-service.ts                    # EMSC queries, counts, and by-ID lookup
   mcp-server/
     tools/definitions/
       [tool-name].tool.ts               # Tool definitions
@@ -163,9 +168,18 @@ src/
 
 ## Skills
 
-Skills are modular instructions in `framework-skills/` at the project root. Read them directly when a task matches — e.g., `framework-skills/add-tool/SKILL.md` when adding a tool. `bun run list-skills` prints the full registry. Keep development skills out of root `skills/`, which plugin hosts automatically load for installing agents.
+Two skill trees live at the project root, written for different readers:
 
-**Agent skill directory:** Copy skills into the directory your agent discovers (Claude Code: `.claude/skills/`, others: equivalent). Skills then load as context without referencing `framework-skills/` paths. After framework updates, run the `maintenance` skill — Phase B re-syncs the agent directory.
+| Tree | For | Written by |
+|:-----|:----|:-----------|
+| `framework-skills/` | The agent developing this server — framework skills (`metadata.audience: external`) plus any development-time skills of the server's own | `init` and the `maintenance` sync (framework skills); you (your own) |
+| `skills/` | The agents that install the server and call its tools — tool chains, identifier sources, gates | You, deliberately, with the `add-skill` skill. Absent by default; usually none is needed |
+
+Development skills are modular instructions. Read them directly when a task matches — e.g., `framework-skills/add-tool/SKILL.md` when adding a tool. `bun run list-skills` prints the full registry. Their directory is deliberately not `skills/`: Claude Code and Codex auto-load a plugin's root `skills/`, so a server that ships `.claude-plugin/` or `.codex-plugin/` would hand them to every agent that installs it.
+
+A published skill in root `skills/` reaches plugin installs and the `.mcpb` bundle as-is, ships in the npm package and the Docker image, and reaches MCP clients when the server opts in with `createApp({ skills: 'skills' })`. `lint:packaging` validates the tree.
+
+**Agent skill directory:** Copy `framework-skills/` into the directory your agent discovers (Claude Code: `.claude/skills/`, others: equivalent). Skills then load as context without referencing `framework-skills/` paths. After framework updates, run the `maintenance` skill — Phase B re-syncs the agent directory.
 
 Available skills:
 
@@ -177,6 +191,7 @@ Available skills:
 | `add-app-tool` | Scaffold an MCP App tool + paired UI resource |
 | `add-resource` | Scaffold a new resource definition |
 | `add-prompt` | Scaffold a new prompt definition |
+| `add-skill` | Author a skill the server publishes in root `skills/` for the agents that use it — when one earns its place, structure, validation, delivery |
 | `add-service` | Scaffold a new service integration |
 | `add-test` | Scaffold test file for a tool, resource, or service |
 | `field-test` | Exercise tools/resources/prompts with real inputs, verify behavior, report issues |
@@ -230,7 +245,7 @@ When you complete a skill's checklist, check the boxes and add a completion time
 | `bun run changelog:build` | Regenerate `CHANGELOG.md` from `changelog/*.md` |
 | `bun run changelog:check` | Verify `CHANGELOG.md` is in sync (used by devcheck) |
 | `bun run lint:mcp` | Validate MCP definitions against spec |
-| `bun run lint:packaging` | Validate env var alignment between `manifest.json` and `server.json` (skipped cleanly when `manifest.json` is absent) |
+| `bun run lint:packaging` | Packaging surface checks — `server.json`/`manifest.json` env-var parity, `.mcpbignore` coverage, plugin manifests, the published `skills/` tree (run by devcheck) |
 | `bun run list-skills` | List skills in `framework-skills/` with name + description |
 | `bun run bundle` | Build, pack, and clean `dist/earthquake-mcp-server.mcpb` for one-click Claude Desktop install |
 | `bun run release:github` | Create GitHub Release from the current tag — attaches `.mcpb` bundle, uses tag subject as title |
@@ -243,7 +258,7 @@ When you complete a skill's checklist, check the boxes and add a completion time
 
 **CI is one file.** `.github/workflows/codeql.yml` is the only GitHub Actions workflow, running one job per language while CodeQL default setup is off. Verification runs locally; do not add a workflow that duplicates the local gates.
 
-`bun run bundle` produces `dist/earthquake-mcp-server.mcpb` for one-click install in Claude Desktop. The pack step is followed by `scripts/clean-mcpb.ts`, which prunes dev dependencies (`mcpb clean`) and strips dependency-shipped agent docs (`node_modules/**` `framework-skills/`, `skills/`, `.claude/`, `.agents/`, `SKILL.md`) and platform-specific native bindings that root-anchored `.mcpbignore` patterns cannot reach. Optional native features then report an install hint when needed. MCPB is stdio-only — HTTP and Docker deployments are unaffected. The `release-and-publish` skill attaches the bundle to the GitHub Release at a stable `releases/latest/download/earthquake-mcp-server.mcpb` URL that powers the README install badge.
+`bun run bundle` produces `dist/earthquake-mcp-server.mcpb` for one-click install in Claude Desktop. `mcpb pack` reads `.mcpbignore`, not `.gitignore`, so every root path the bundle must not ship — source, tests, docs, caches, logs, agent docs, plugin manifests, gitignored local files — needs a root-anchored line there (`/docs/`, never `docs/`, which also strips `node_modules/*/docs/`); `lint:packaging` names each missing or unanchored line. The pack step is followed by `scripts/clean-mcpb.ts`, which prunes dev dependencies (`mcpb clean`) and strips four classes of `node_modules/**` content that root-anchored `.mcpbignore` patterns cannot reach: dependency-shipped agent docs (`framework-skills/`, `.claude/`, `.agents/`, `SKILL.md`, and a `skills/` tree at a package's root); platform-specific native bindings; node-gyp build output beside a `binding.gyp`, which records the packing machine's paths; and build-only package files (the framework's `changelog/`, `scripts/`, `templates/`, `CLAUDE.md`, `AGENTS.md`, and config bases). A `skills/` directory deeper inside a package is runtime code — the MCP SDK's `dist/ext/skills/` — so `AGENT_DOC_ENTRY` in `clean-mcpb.ts` and `lint-packaging.ts` matches only the package-root form (cyanheads/mcp-ts-core#794); `tests/scripts/bundle-agent-docs.test.ts` holds the two selectors together and fails if a framework resync restores the broader match. Optional native features then report an install hint when needed. MCPB is stdio-only — HTTP and Docker deployments are unaffected. The `release-and-publish` skill attaches the bundle to the GitHub Release at a stable `releases/latest/download/earthquake-mcp-server.mcpb` URL that powers the README install badge.
 
 **Adding an env var requires both files**: `server.json` stdio `environmentVariables[]` (registry discovery) and `manifest.json` `mcp_config.env` (bundle install UX, plus `user_config` if user-prompted). `bun run lint:packaging` (run by `devcheck`) verifies the env var names align. Wire each bundle option as `${user_config.X}` and give optional string options `default: ''`. npm registry entries launch through `npx` without package arguments; the HTTP entry fixes `MCP_TRANSPORT_TYPE` with `value: 'http'`.
 
@@ -322,7 +337,10 @@ import { getMyService } from '@/services/my-domain/my-service.js';
 - [ ] If wrapping external API: tests include at least one sparse payload case with omitted upstream fields
 - [ ] Registered in `createApp()` arrays (directly or via barrel exports)
 - [ ] Tests use `createMockContext()` from `@cyanheads/mcp-ts-core/testing`
+- [ ] `plugin.json` + `mcp.json` (Agent Plugins 1.0.0) populated — `plugin.json` `name` = the unscoped repo name; `version`, `description`, `author`, `homepage`, `repository`, `license`, `keywords` from `package.json`; no other top-level field. `mcp.json` holds one `"type": "stdio"` entry keyed by the unscoped name, `npx -y <full package name>`, and the same fixed `env` as `.codex-plugin/mcp.json`; user-supplied variables never appear in either file
 - [ ] `.codex-plugin/plugin.json` populated — `name` and `interface.displayName` are the unscoped repo name; version, description, repository, and license match `package.json`
 - [ ] `.codex-plugin/mcp.json` updated — server key is the unscoped repo name, install argument is the full npm package name; user-supplied variables use `env_vars`, never empty `env` values
 - [ ] `.claude-plugin/plugin.json` populated — unscoped name/server key, full npm install argument; version, description, author, keywords, repository, and license match `package.json`; user-supplied variables use `userConfig` and `${user_config.<option>}` references
+- [ ] Any new root dev path has a root-anchored line in `.mcpbignore`; `bun run bundle` and `lint:packaging` pass
+- [ ] If the server publishes a skill in root `skills/`: `lint:packaging` passes, and `field-test` verified every gate and identifier claim in it against live tool behavior
 - [ ] `bun run devcheck` passes

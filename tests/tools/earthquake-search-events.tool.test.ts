@@ -150,7 +150,6 @@ describe('earthquakeSearchEvents', () => {
   });
 
   it('sets truncated enrichment when count equals limit', async () => {
-    // Default limit is 100 from server config, so mock exactly 100 events
     const events = Array.from({ length: 100 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
     mockUsgsSearch.mockResolvedValue({ events, count: 100 });
 
@@ -332,7 +331,7 @@ describe('earthquakeSearchEvents — queryEcho enrichment (issue #11)', () => {
       end_time: '2026-06-30T00:00:00',
       min_magnitude: 5,
       source: 'usgs',
-      limit: 100,
+      limit: 15,
       order_by: 'time',
     });
   });
@@ -452,7 +451,7 @@ describe('earthquakeSearchEvents — offset paging (issue #19)', () => {
     await earthquakeSearchEvents.handler(input, ctx);
 
     expect(mockUsgsSearch).toHaveBeenCalledWith(
-      expect.objectContaining({ offset: 20001, limit: 100 }),
+      expect.objectContaining({ offset: 20001, limit: 1000 }),
       ctx,
     );
   });
@@ -523,8 +522,8 @@ describe('earthquakeSearchEvents — offset paging (issue #19)', () => {
   });
 
   it('truncation notice names offset as the next step, never "increase limit"', async () => {
-    const events = Array.from({ length: 20000 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
-    mockUsgsSearch.mockResolvedValue({ events, count: 20000, totalCount: 78820 });
+    const events = Array.from({ length: 1000 }, (_, i) => ({ ...sampleEvent, id: `us${i}` }));
+    mockUsgsSearch.mockResolvedValue({ events, count: 1000, totalCount: 78820 });
 
     const ctx = createMockContext({ errors: earthquakeSearchEvents.errors });
     const input = earthquakeSearchEvents.input.parse({ limit: 20000 });
@@ -813,7 +812,8 @@ describe('earthquakeSearchEvents — EMSC described as a global catalog (issue #
   it('keeps the caveats that are genuinely EMSC-specific', () => {
     const text = sourceDescription();
     expect(text).toContain('PAGER');
-    expect(text).toContain('USGS IDs only');
+    expect(text).not.toContain('USGS IDs only');
+    expect(text).toContain('earthquake_get_event accepts IDs from either source');
     expect(text).toContain('densest');
   });
 

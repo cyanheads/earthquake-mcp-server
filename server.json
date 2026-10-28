@@ -27,6 +27,41 @@
           "format": "string",
           "isRequired": false,
           "default": "info"
+        },
+        {
+          "name": "USGS_BASE_URL",
+          "description": "USGS API base URL. Override for testing or mirroring.",
+          "format": "string",
+          "isRequired": false,
+          "default": "https://earthquake.usgs.gov"
+        },
+        {
+          "name": "EMSC_BASE_URL",
+          "description": "EMSC API base URL. Override for testing or mirroring.",
+          "format": "string",
+          "isRequired": false,
+          "default": "https://www.seismicportal.eu"
+        },
+        {
+          "name": "DEFAULT_LIMIT",
+          "description": "Events earthquake_search_events returns when a call omits limit (1-1000).",
+          "format": "string",
+          "isRequired": false,
+          "default": "15"
+        },
+        {
+          "name": "REQUEST_TIMEOUT_MS",
+          "description": "Per-attempt HTTP timeout in milliseconds (1000-120000). Feed, search, and event calls also share a 50-second total deadline across every request and retry; standalone count calls use this per-attempt value.",
+          "format": "string",
+          "isRequired": false,
+          "default": "10000"
+        },
+        {
+          "name": "EARTHQUAKE_CLAMP_LIMITS",
+          "description": "Clamp a search or feed limit above 1000 to 1000 with a notice. Set false to advertise and enforce a maximum of 1000 instead.",
+          "format": "string",
+          "isRequired": false,
+          "default": "true"
         }
       ],
       "transport": {

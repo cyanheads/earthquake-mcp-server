@@ -1,0 +1,23 @@
+{
+  "geometry": {
+    "type": "Point",
+    "coordinates": [27.158, 40.632, 9]
+  },
+  "type": "Feature",
+  "properties": {
+    "lastupdate": "2011-02-10T08:00:48.400064Z",
+    "magtype": "MD",
+    "evtype": "ke",
+    "lon": 27.158,
+    "auth": "EMSC",
+    "source_id": "104969",
+    "depth": 9,
+    "unid": "19980101_0000021",
+    "mag": 2.9,
+    "time": "1998-01-01T01:02:13.2Z",
+    "lat": 40.632,
+    "source_catalog": "EMSC-EMB",
+    "flynn_region": "WESTERN TURKEY"
+  },
+  "id": "19980101_0000021"
+}

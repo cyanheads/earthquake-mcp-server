@@ -18,6 +18,8 @@ export type EarthquakeEventCertainty = 'known' | 'suspected' | 'unknown' | 'unre
  */
 export interface EarthquakeEvent {
   alert: 'green' | 'yellow' | 'orange' | 'red' | null;
+  /** USGS only: the other network IDs `properties.ids` lists for the event, in upstream order. Absent when it lists none. */
+  associated_ids?: string[];
   /** Agency or network the source names as authoritative — EMSC `auth`, USGS `net`. */
   auth?: string;
   cdi: number | null;
@@ -83,8 +85,12 @@ export interface UsgsFeatureProperties {
  * Every value inside `properties` arrives as a string, including the numeric ones.
  */
 export interface UsgsProduct<TProperties = Record<string, string | undefined>> {
+  /** Product code — for an `origin` product, the contributing network's event ID. */
+  code?: string;
   contents?: Record<string, { url?: string } | undefined>;
   properties?: TProperties;
+  /** Network that contributed the product. */
+  source?: string;
 }
 
 /** `losspager` properties read by the detail projection. */
@@ -124,12 +130,26 @@ export interface UsgsGroundFailureProperties {
   'liquefaction-alert'?: string;
 }
 
-/** `origin` properties read by the detail projection. */
+/** `origin` properties read by the detail projection and the `origins` include group. */
 export interface UsgsOriginProperties {
   'azimuthal-gap'?: string;
+  depth?: string;
+  /** How the depth was set, e.g. "from location" or "operator assigned". */
+  'depth-type'?: string;
+  'evaluation-status'?: string;
+  eventtime?: string;
   'horizontal-error'?: string;
+  latitude?: string;
+  longitude?: string;
+  magnitude?: string;
+  'magnitude-type'?: string;
+  /** Distance to the nearest station, in degrees. */
+  'minimum-distance'?: string;
+  'num-phases-used'?: string;
   'num-stations-used'?: string;
   'review-status'?: string;
+  /** RMS travel-time residual, in seconds. */
+  'standard-error'?: string;
   /** Depth uncertainty in km — USGS names the vertical component this way. */
   'vertical-error'?: string;
 }
@@ -180,6 +200,7 @@ export interface EarthquakeEventDetail {
   origin?: {
     azimuthal_gap_deg?: number;
     depth_error_km?: number;
+    depth_type?: string;
     horizontal_error_km?: number;
     num_stations_used?: number;
     review_status?: string;
@@ -191,6 +212,107 @@ export interface EarthquakeEventDetail {
     max_pga?: number;
     max_pgv?: number;
   };
+}
+
+/** Opt-in `earthquake_get_event` groups, in the order responses report them. */
+export const EVENT_INCLUDE_GROUPS = [
+  'origins',
+  'magnitudes',
+  'arrivals',
+  'aftershock_forecast',
+] as const;
+
+export type EventIncludeGroup = (typeof EVENT_INCLUDE_GROUPS)[number];
+
+/** One contributed origin solution, from an `origin` product on the single-event response. */
+export interface EventOrigin {
+  azimuthal_gap_deg?: number;
+  depth_error_km?: number;
+  depth_km?: number;
+  depth_type?: string;
+  evaluation_status?: string;
+  event_id?: string;
+  horizontal_error_km?: number;
+  /** True for the first origin product — the one USGS ranks as preferred. */
+  is_preferred: boolean;
+  latitude?: number;
+  longitude?: number;
+  magnitude?: number;
+  magnitude_type?: string;
+  minimum_distance_deg?: number;
+  num_phases_used?: number;
+  num_stations_used?: number;
+  review_status?: string;
+  source?: string;
+  standard_error_s?: number;
+  time?: string;
+}
+
+/** One event-level magnitude solution from the preferred phase-data QuakeML. */
+export interface EventMagnitude {
+  agency?: string;
+  evaluation_mode?: string;
+  evaluation_status?: string;
+  is_preferred: boolean;
+  station_count?: number;
+  type?: string;
+  value?: number;
+}
+
+/** One phase arrival on the preferred origin, joined to its pick. */
+export interface EventArrival {
+  azimuth_deg?: number;
+  channel?: string;
+  distance_deg?: number;
+  location?: string;
+  network?: string;
+  phase?: string;
+  station?: string;
+  time?: string;
+  time_residual_s?: number;
+  time_weight?: number;
+}
+
+/** Probability and expected count of aftershocks at or above one magnitude. */
+interface AftershockForecastBin {
+  count_median?: number;
+  count_p95_max?: number;
+  count_p95_min?: number;
+  magnitude: number;
+  probability: number;
+}
+
+/** One forecast window of the USGS Operational Aftershock Forecast. */
+interface AftershockForecastWindow {
+  above_mainshock?: { magnitude: number; probability: number };
+  bins: AftershockForecastBin[];
+  end: string;
+  label: string;
+  start: string;
+}
+
+/** Projection of the `oaf` product's `forecast.json`. */
+export interface AftershockForecast {
+  advisory_window: string;
+  created: string;
+  expires: string;
+  next_update?: string;
+  windows: AftershockForecastWindow[];
+}
+
+/** A requested include group the response does not carry, and why. */
+export interface UnavailableInclude {
+  group: EventIncludeGroup;
+  reason: 'not_published' | 'fetch_failed';
+}
+
+/** The include groups an event lookup returns — each present only when requested and available. */
+export interface EventIncludes {
+  aftershock_forecast?: AftershockForecast;
+  arrivals?: EventArrival[];
+  magnitudes?: EventMagnitude[];
+  origins?: EventOrigin[];
+  unavailable_includes?: UnavailableInclude[];
 }
 
 /** Raw USGS GeoJSON feature. */

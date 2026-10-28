@@ -1,0 +1,130 @@
+<?xml version="1.0" ?>
+<q:quakeml xmlns="http://quakeml.org/xmlns/bed/1.2" xmlns:anss="http://anss.org/xmlns/event/0.1" xmlns:catalog="http://anss.org/xmlns/catalog/0.1" xmlns:q="http://quakeml.org/xmlns/quakeml/1.2">
+  <eventParameters publicID="quakeml:earthquake.alaska.edu/event/018fcnsk91">
+    <event catalog:datasource="AK" catalog:eventid="018fcnsk91" catalog:eventsource="AK" publicID="quakeml:earthquake.alaska.edu/event/018fcnsk91">
+      <magnitude publicID="quakeml:earthquake.alaska.edu/magnitude/018fcnsk91/mw">
+        <mag>
+          <value>7.1</value>
+        </mag>
+        <type>mw</type>
+        <originID>quakeml:earthquake.alaska.edu/origin/018fcnsk91</originID>
+        <methodID>quakeml:anss.org/cube/magnitudeType/L</methodID>
+      </magnitude>
+      <preferredMagnitudeID>quakeml:earthquake.alaska.edu/magnitude/018fcnsk91/mw</preferredMagnitudeID>
+      <origin publicID="quakeml:earthquake.alaska.edu/origin/018fcnsk91">
+        <arrival publicID="quakeml:earthquake.alaska.edu/arrival/106749">
+          <pickID>quakeml:earthquake.alaska.edu/pick/106749</pickID>
+          <phase>P</phase>
+          <azimuth>221.9</azimuth>
+          <distance>2.595</distance>
+          <timeResidual>0.38</timeResidual>
+          <timeWeight>0.022</timeWeight>
+          <creationInfo>
+            <agencyID>AK</agencyID>
+            <author>Alaska Earthquake Center, UAF/GI</author>
+            <creationTime>2018-12-01T02:08:04.160Z</creationTime>
+          </creationInfo>
+        </arrival>
+        <arrival publicID="quakeml:earthquake.alaska.edu/arrival/106750">
+          <pickID>quakeml:earthquake.alaska.edu/pick/106750</pickID>
+          <phase>P</phase>
+          <azimuth>222.76</azimuth>
+          <distance>2.612</distance>
+          <timeResidual>0.603</timeResidual>
+          <timeWeight>0.021</timeWeight>
+          <creationInfo>
+            <agencyID>AK</agencyID>
+            <author>Alaska Earthquake Center, UAF/GI</author>
+            <creationTime>2018-11-30T17:34:28.353Z</creationTime>
+          </creationInfo>
+        </arrival>
+        <arrival publicID="quakeml:earthquake.alaska.edu/arrival/106751">
+          <pickID>quakeml:earthquake.alaska.edu/pick/106751</pickID>
+          <phase>P</phase>
+          <azimuth>222.63</azimuth>
+          <distance>2.637</distance>
+          <timeResidual>0.394</timeResidual>
+          <timeWeight>0.021</timeWeight>
+          <creationInfo>
+            <agencyID>AK</agencyID>
+            <author>Alaska Earthquake Center, UAF/GI</author>
+            <creationTime>2018-12-05T22:29:01.725Z</creationTime>
+          </creationInfo>
+        </arrival>
+        <originUncertainty>
+          <minHorizontalUncertainty>100</minHorizontalUncertainty>
+          <maxHorizontalUncertainty>200</maxHorizontalUncertainty>
+          <azimuthMaxHorizontalUncertainty>278.78</azimuthMaxHorizontalUncertainty>
+          <preferredDescription>uncertainty ellipse</preferredDescription>
+        </originUncertainty>
+        <time>
+          <value>2018-11-30T17:29:29.330Z</value>
+        </time>
+        <longitude>
+          <value>-149.9552</value>
+        </longitude>
+        <latitude>
+          <value>61.3464</value>
+        </latitude>
+        <depth>
+          <value>46700</value>
+          <uncertainty>100</uncertainty>
+        </depth>
+        <methodID>quakeml:anss.org/cube/locationMethod/D</methodID>
+        <quality>
+          <usedPhaseCount>389</usedPhaseCount>
+          <standardError>1.04</standardError>
+        </quality>
+        <evaluationMode>manual</evaluationMode>
+      </origin>
+      <pick publicID="quakeml:earthquake.alaska.edu/pick/106749">
+        <time>
+          <value>2018-11-30T17:30:08.584Z</value>
+        </time>
+        <waveformID channelCode="BHZ" locationCode="--" networkCode="AV" stationCode="AU22"/>
+        <evaluationMode>manual</evaluationMode>
+        <creationInfo>
+          <agencyID>AK</agencyID>
+          <author>Alaska Earthquake Center, UAF/GI</author>
+          <creationTime>2018-12-01T02:08:04.160Z</creationTime>
+        </creationInfo>
+      </pick>
+      <pick publicID="quakeml:earthquake.alaska.edu/pick/106750">
+        <time>
+          <value>2018-11-30T17:30:09.080Z</value>
+        </time>
+        <waveformID channelCode="BHZ" locationCode="--" networkCode="AV" stationCode="AUL"/>
+        <evaluationMode>automatic</evaluationMode>
+        <creationInfo>
+          <agencyID>AK</agencyID>
+          <author>Alaska Earthquake Center, UAF/GI</author>
+          <creationTime>2018-11-30T17:34:28.353Z</creationTime>
+        </creationInfo>
+      </pick>
+      <pick publicID="quakeml:earthquake.alaska.edu/pick/106751">
+        <time>
+          <value>2018-11-30T17:30:09.235Z</value>
+        </time>
+        <waveformID channelCode="BHZ" locationCode="--" networkCode="AV" stationCode="AUWS"/>
+        <evaluationMode>manual</evaluationMode>
+        <creationInfo>
+          <agencyID>AK</agencyID>
+          <author>Alaska Earthquake Center, UAF/GI</author>
+          <creationTime>2018-12-05T22:29:01.725Z</creationTime>
+        </creationInfo>
+      </pick>
+      <preferredOriginID>quakeml:earthquake.alaska.edu/origin/018fcnsk91</preferredOriginID>
+      <type>earthquake</type>
+      <creationInfo>
+        <agencyID>AK</agencyID>
+        <author>Alaska Earthquake Center, UAF/GI</author>
+        <creationTime>2019-06-17T01:16:40.323Z</creationTime>
+        <version>2</version>
+      </creationInfo>
+    </event>
+    <creationInfo>
+      <creationTime>2019-06-17T01:16:40.323Z</creationTime>
+    </creationInfo>
+  </eventParameters>
+</q:quakeml>
+

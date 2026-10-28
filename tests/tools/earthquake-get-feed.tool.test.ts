@@ -234,9 +234,8 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
     const input = earthquakeGetFeed.input.parse({ magnitude_tier: 'all', time_window: 'month' });
     const result = await earthquakeGetFeed.handler(input, ctx);
 
-    expect(result.count).toBeGreaterThan(0);
-    expect(result.count).toBeLessThanOrEqual(100);
-    expect(result.events).toHaveLength(result.count);
+    expect(result.count).toBe(15);
+    expect(result.events).toHaveLength(15);
     expect(getEnrichment(ctx).totalCount).toBe(10_656);
     expect(getEnrichment(ctx).truncated).toBe(true);
     expect(getEnrichment(ctx).nextCursor).toEqual(expect.any(String));
@@ -273,7 +272,8 @@ describe('earthquakeGetFeed — cursor pagination (issue #18)', () => {
     } while (cursor != null && pages < 30);
 
     expect(cursor).toBeUndefined();
-    expect(pages).toBeGreaterThan(3);
+    // 100 + 100 + 50: each page returns exactly the cursor's page size until the last.
+    expect(pages).toBe(3);
     expect(seen).toHaveLength(250);
     expect(new Set(seen).size).toBe(250);
     expect(seen[0]).toBe('us0');

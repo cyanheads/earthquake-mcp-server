@@ -37,6 +37,10 @@ const calls = [
   { name: 'EMSC count', run: () => runToolContract(earthquakeCountEvents, { source: 'emsc' }) },
   { name: 'feed', run: () => runToolContract(earthquakeGetFeed, {}) },
   { name: 'event', run: () => runToolContract(earthquakeGetEvent, { event_id: 'us6000sznj' }) },
+  {
+    name: 'EMSC event',
+    run: () => runToolContract(earthquakeGetEvent, { event_id: '20190706_0000043' }),
+  },
 ];
 
 describe.each(calls)('$name upstream retry contract', ({ run }) => {

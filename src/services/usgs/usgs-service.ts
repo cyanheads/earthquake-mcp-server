@@ -13,11 +13,16 @@ import {
   validationError,
 } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
-import { fetchWithTimeout, requestContextService, withRetry } from '@cyanheads/mcp-ts-core/utils';
+import { fetchWithTimeout, withRetry } from '@cyanheads/mcp-ts-core/utils';
+import { CALL_DEADLINE_MS, HTML_BODY, isCancellation, makeReqCtx } from '../upstream-call.js';
+import { loadEventIncludes, normalizeIncludeGroups } from './event-includes.js';
+import { maybe, num } from './product-fields.js';
 import type {
   EarthquakeEvent,
   EarthquakeEventDetail,
   EarthquakeQueryParams,
+  EventIncludeGroup,
+  EventIncludes,
   NodalPlane,
   UsgsCountResponse,
   UsgsDyfiProperties,
@@ -38,17 +43,6 @@ function epochMsToIso(ms: number | null | undefined): string {
   return new Date(ms).toISOString();
 }
 
-/**
- * Build an operation-labelled child of the handler context for withRetry/fetchWithTimeout.
- * `Context extends RequestContext`, so passing `ctx` as the parent inherits every
- * correlation field. The label is what the child adds: `ctx.operation` names the calling
- * tool, while `fetchWithTimeout` reports `context.operation` on a timeout — so the error
- * names the upstream call that hung, not whichever tool reached it.
- */
-function makeReqCtx(operation: string, ctx: Context) {
-  return requestContextService.createRequestContext({ operation, parentContext: ctx });
-}
-
 /** Normalize a USGS GeoJSON feature to the shared EarthquakeEvent domain type. */
 function normalizeUsgsFeature(f: UsgsFeature): EarthquakeEvent {
   const p = f.properties;
@@ -63,6 +57,11 @@ function normalizeUsgsFeature(f: UsgsFeature): EarthquakeEvent {
     rawAlert === 'green' || rawAlert === 'yellow' || rawAlert === 'orange' || rawAlert === 'red'
       ? rawAlert
       : null;
+
+  // `ids` is comma-wrapped (",ci38457511,us70004bn0,") and lists the canonical ID
+  // among the others, not always first; every other entry is an ID USGS also
+  // answers for this event.
+  const associatedIds = p.ids?.split(',').filter((entry) => entry !== '' && entry !== f.id) ?? [];
 
   return {
     id: f.id,
@@ -91,14 +90,8 @@ function normalizeUsgsFeature(f: UsgsFeature): EarthquakeEvent {
     ...(p.type ? { event_type: p.type } : {}),
     ...(p.url ? { event_url: p.url } : {}),
     ...(p.detail ? { detail_url: p.detail } : {}),
+    ...(associatedIds.length > 0 ? { associated_ids: associatedIds } : {}),
   };
-}
-
-/** Parse a USGS product property — every value arrives as a string — into a finite number. */
-function num(value: string | undefined): number | undefined {
-  if (value == null) return;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 /**
@@ -123,11 +116,6 @@ function contentUrl(
 /** Keep a projected product group only when at least one of its fields survived. */
 function group<T extends object>(fields: T): T | undefined {
   return Object.keys(fields).length > 0 ? fields : undefined;
-}
-
-/** Contribute `{ key: value }` when the value survived projection, nothing when it did not. */
-function maybe<K extends string, V>(key: K, value: V | undefined): Partial<Record<K, V>> {
-  return value === undefined ? {} : ({ [key]: value } as Record<K, V>);
 }
 
 /** A nodal plane is only meaningful with all three angles — drop a partial one. */
@@ -237,6 +225,7 @@ function projectDetail(
         ...maybe('num_stations_used', num(originProps?.['num-stations-used'])),
         ...maybe('horizontal_error_km', num(originProps?.['horizontal-error'])),
         ...maybe('depth_error_km', num(originProps?.['vertical-error'])),
+        ...maybe('depth_type', originProps?.['depth-type']),
         ...maybe('review_status', originProps?.['review-status']),
       }),
     ),
@@ -289,7 +278,7 @@ export class UsgsService {
         // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
         // returning, so a Response here is always 2xx.
         const text = await response.text();
-        if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
+        if (HTML_BODY.test(text)) {
           throw serviceUnavailable(
             'USGS returned HTML instead of GeoJSON — likely rate-limited or a CDN error.',
             { feedUrl },
@@ -308,7 +297,7 @@ export class UsgsService {
       },
       {
         operation: 'UsgsService.getFeed',
-        deadlineMs: 50_000,
+        deadlineMs: CALL_DEADLINE_MS,
         context: reqCtx,
         baseDelayMs: 1000,
         signal: ctx.signal,
@@ -318,8 +307,9 @@ export class UsgsService {
 
   /**
    * Query USGS FDSN event API. `params.offset` pages through the match set
-   * (1-based, forwarded upstream). Nonempty short pages establish their total
-   * before byte shaping; an empty first page establishes zero.
+   * (1-based, forwarded upstream). A nonempty page shorter than the limit
+   * establishes the total from its own offset and size; an empty first page
+   * establishes zero.
    * When the page fills the requested limit, a follow-up count query populates
    * totalCount with the real match total for the whole filter set. If that
    * follow-up fails, the page still returns and `countUnavailable` marks the
@@ -337,7 +327,7 @@ export class UsgsService {
     const query = this.buildFdsnQuery(params);
     const url = `${this.baseUrl}/fdsnws/event/1/query?format=geojson&${query}`;
     const reqCtx = makeReqCtx('UsgsService.searchEvents', ctx);
-    const deadline = Date.now() + 50_000;
+    const deadline = Date.now() + CALL_DEADLINE_MS;
 
     const result = await withRetry(
       async ({ signal, remainingMs }) => {
@@ -354,7 +344,7 @@ export class UsgsService {
         // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
         // returning, so a Response here is always 2xx.
         const text = await response.text();
-        if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
+        if (HTML_BODY.test(text)) {
           throw serviceUnavailable('USGS returned HTML instead of GeoJSON.', { url });
         }
 
@@ -368,15 +358,16 @@ export class UsgsService {
       },
       {
         operation: 'UsgsService.searchEvents',
-        deadlineMs: 50_000,
+        deadlineMs: CALL_DEADLINE_MS,
         context: reqCtx,
         baseDelayMs: 1000,
         signal: ctx.signal,
       },
     );
 
-    // Infer short-page totals before byte shaping. Empty later pages cannot establish
-    // the total; full pages use the count endpoint without making count failure fatal.
+    // A short page ends the match set, so its offset plus its size is the total. Empty
+    // later pages cannot establish the total; full pages use the count endpoint without
+    // making count failure fatal.
     const requestedLimit = params.limit ?? 100;
     if (result.count < requestedLimit && (result.count > 0 || (params.offset ?? 1) === 1))
       return { ...result, totalCount: (params.offset ?? 1) - 1 + result.count };
@@ -392,11 +383,7 @@ export class UsgsService {
         );
         return { ...result, totalCount };
       } catch (err) {
-        if (
-          ctx.signal?.aborted ||
-          (err instanceof McpError && err.code === JsonRpcErrorCode.RequestCancelled)
-        )
-          throw err;
+        if (isCancellation(err, ctx)) throw err;
         ctx.log.warning('Count sub-call for totalCount failed — returning results without it', {
           error: err instanceof Error ? err.message : String(err),
         });
@@ -413,24 +400,32 @@ export class UsgsService {
    * `products` blob the list responses omit; it is projected into `detail` here
    * so the caller gets more than a search result already holds, without a second
    * request. `detail` is absent when the event carries no projectable product.
+   *
+   * `include` opts into product groups (see `loadEventIncludes`); only the phase-data
+   * and aftershock-forecast groups cost requests. One 50-second deadline covers the
+   * event request and every product request, retries included. A product failure
+   * degrades its groups and never fails the lookup; cancellation propagates.
    */
   async getEvent(
     eventId: string,
     ctx: Context,
-  ): Promise<{ event: EarthquakeEvent; detail?: EarthquakeEventDetail }> {
+    include: readonly EventIncludeGroup[] = [],
+  ): Promise<{ event: EarthquakeEvent; detail?: EarthquakeEventDetail } & EventIncludes> {
     eventId = eventId.trim();
     if (eventId.length === 0) {
       throw validationError('Provide a nonblank USGS event ID from a feed or search result.');
     }
+    const groups = normalizeIncludeGroups(include);
+    const deadline = Date.now() + CALL_DEADLINE_MS;
     const url = `${this.baseUrl}/fdsnws/event/1/query?eventid=${encodeURIComponent(eventId)}&format=geojson`;
     const reqCtx = makeReqCtx('UsgsService.getEvent', ctx);
 
-    return await withRetry(
-      async () => {
+    const feature = await withRetry(
+      async ({ signal, remainingMs }) => {
         let response: Response;
         try {
-          response = await fetchWithTimeout(url, this.timeoutMs, reqCtx, {
-            signal: ctx.signal,
+          response = await fetchWithTimeout(url, Math.min(this.timeoutMs, remainingMs), reqCtx, {
+            signal,
             headers: { Accept: 'application/json' },
           });
         } catch (err) {
@@ -448,7 +443,7 @@ export class UsgsService {
         // Non-404 non-2xx responses are also thrown by fetchWithTimeout.
 
         const text = await response.text();
-        if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
+        if (HTML_BODY.test(text)) {
           throw serviceUnavailable('USGS returned HTML instead of GeoJSON.', { eventId });
         }
 
@@ -467,15 +462,73 @@ export class UsgsService {
             { eventId },
           );
         }
-        const feature = raw;
-        const detail = projectDetail(feature.properties.products);
-        return {
-          event: normalizeUsgsFeature(feature),
-          ...(detail ? { detail } : {}),
-        };
+        return raw;
       },
       {
         operation: 'UsgsService.getEvent',
+        deadlineMs: CALL_DEADLINE_MS,
+        context: reqCtx,
+        baseDelayMs: 1000,
+        signal: ctx.signal,
+      },
+    );
+
+    const products = feature.properties.products;
+    const detail = projectDetail(products);
+    const includes =
+      groups.length > 0
+        ? await loadEventIncludes(
+            groups,
+            products,
+            (contentUrl) => this.fetchProductText(contentUrl, ctx, deadline),
+            ctx,
+          )
+        : {};
+    return {
+      event: normalizeUsgsFeature(feature),
+      ...(detail ? { detail } : {}),
+      ...includes,
+    };
+  }
+
+  /**
+   * Download one product content file within what remains of the lookup's deadline.
+   * Content URLs come from the upstream response, so only URLs on the configured
+   * USGS origin are fetched, and redirects are not followed: USGS serves product
+   * files directly, so a 3xx fails the request rather than reaching another host.
+   */
+  private async fetchProductText(
+    contentUrl: string,
+    ctx: Context,
+    deadline: number,
+  ): Promise<string> {
+    if (new URL(contentUrl).origin !== new URL(this.baseUrl).origin) {
+      throw new Error('Product content URL is not on the configured USGS origin; not fetched.');
+    }
+    const budgetMs = deadline - Date.now();
+    if (budgetMs <= 0) {
+      throw new McpError(JsonRpcErrorCode.Timeout, 'No time left for the product request.');
+    }
+    const reqCtx = makeReqCtx('UsgsService.getEventProduct', ctx);
+    return await withRetry(
+      async ({ signal, remainingMs }) => {
+        const response = await fetchWithTimeout(
+          contentUrl,
+          Math.min(this.timeoutMs, remainingMs),
+          reqCtx,
+          // fetchWithTimeout throws a non-2xx, so under 'manual' a 3xx fails as
+          // InvalidRequest, which withRetry does not retry.
+          { signal, redirect: 'manual' },
+        );
+        const text = await response.text();
+        if (HTML_BODY.test(text)) {
+          throw serviceUnavailable('USGS returned HTML instead of the product file.');
+        }
+        return text;
+      },
+      {
+        operation: 'UsgsService.getEventProduct',
+        deadlineMs: budgetMs,
         context: reqCtx,
         baseDelayMs: 1000,
         signal: ctx.signal,
@@ -512,7 +565,7 @@ export class UsgsService {
         // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
         // returning, so a Response here is always 2xx.
         const text = await response.text();
-        if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
+        if (HTML_BODY.test(text)) {
           throw serviceUnavailable('USGS returned HTML instead of JSON.', { url });
         }
 

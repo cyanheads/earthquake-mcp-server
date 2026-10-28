@@ -6,6 +6,12 @@
 import { z } from '@cyanheads/mcp-ts-core';
 import { parseEnvConfig } from '@cyanheads/mcp-ts-core/config';
 
+/**
+ * Most events one search or feed call returns, and the largest page size a feed cursor
+ * carries. A page of 1,000 full events serializes to about 1.2 MB across both surfaces.
+ */
+export const MAX_LIMIT = 1000;
+
 const ServerConfigSchema = z.object({
   usgsBaseUrl: z
     .string()
@@ -21,9 +27,15 @@ const ServerConfigSchema = z.object({
     .number()
     .int()
     .min(1)
-    .max(20000)
-    .default(100)
+    .max(MAX_LIMIT)
+    .default(15)
     .describe('Default result limit for earthquake_search_events.'),
+  clampLimits: z
+    .stringbool()
+    .default(true)
+    .describe(
+      'Clamp a search or feed limit above 1,000 to 1,000 with a notice. False advertises and enforces a schema maximum of 1,000 instead.',
+    ),
   requestTimeoutMs: z.coerce
     .number()
     .int()
@@ -31,7 +43,7 @@ const ServerConfigSchema = z.object({
     .max(120000)
     .default(10000)
     .describe(
-      'Per-attempt HTTP timeout in milliseconds. Feed/search operations also share a 50-second total deadline; standalone event/count calls use this per-attempt value.',
+      'Per-attempt HTTP timeout in milliseconds. Feed, search, and event calls also share a 50-second total deadline across every request and retry; standalone count calls use this per-attempt value.',
     ),
 });
 
@@ -43,6 +55,7 @@ export function getServerConfig(): z.infer<typeof ServerConfigSchema> {
     emscBaseUrl: 'EMSC_BASE_URL',
     defaultLimit: 'DEFAULT_LIMIT',
     requestTimeoutMs: 'REQUEST_TIMEOUT_MS',
+    clampLimits: 'EARTHQUAKE_CLAMP_LIMITS',
   });
   return _config;
 }

@@ -8,6 +8,7 @@ import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { earthquakeEventResource } from '@/mcp-server/resources/definitions/earthquake-event.resource.js';
 import type { EarthquakeEventOutput } from '@/mcp-server/tools/schemas.js';
+import * as emscModule from '@/services/emsc/emsc-service.js';
 import * as usgsModule from '@/services/usgs/usgs-service.js';
 
 const deletedEvent: EarthquakeEventOutput = {
@@ -81,6 +82,19 @@ describe('earthquakeEventResource — handler behavior', () => {
     expect(mockGetEvent).toHaveBeenCalledWith('us9999999', ctx);
   });
 
+  it('sends a percent-encoded EMSC unid to EMSC only (issue #53)', async () => {
+    const emscEvent = { ...deletedEvent, id: '20190706_0000043', status: null, tsunami: null };
+    const emscGetEvent = vi.fn().mockResolvedValue({ event: emscEvent });
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue({
+      getEvent: emscGetEvent,
+    } as unknown as emscModule.EmscService);
+    const ctx = createMockContext({ errors: earthquakeEventResource.errors });
+    const params = earthquakeEventResource.params!.parse({ event_id: '20190706%5F0000043' });
+    expect(await earthquakeEventResource.handler(params, ctx)).toStrictEqual({ event: emscEvent });
+    expect(emscGetEvent).toHaveBeenCalledWith('20190706_0000043', ctx);
+    expect(mockGetEvent).not.toHaveBeenCalled();
+  });
+
   it('returns a deleted event without crashing', async () => {
     mockGetEvent.mockResolvedValue({ event: deletedEvent });
     const ctx = createMockContext({ errors: earthquakeEventResource.errors });
@@ -122,6 +136,28 @@ describe('earthquakeEventResource — handler behavior', () => {
       expect(err.message).toBe(message);
     },
   );
+
+  it('points a non-retryable EMSC failure at the USGS catalog, not back at EMSC', async () => {
+    const notImplemented = () =>
+      new McpError(JsonRpcErrorCode.ServiceUnavailable, 'Not implemented', { retryable: false });
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue({
+      getEvent: vi.fn().mockRejectedValue(notImplemented()),
+    } as unknown as emscModule.EmscService);
+    mockGetEvent.mockRejectedValue(notImplemented());
+    const hint = async (event_id: string) => {
+      const ctx = createMockContext({ errors: earthquakeEventResource.errors });
+      const err = (await Promise.resolve(
+        earthquakeEventResource.handler(earthquakeEventResource.params!.parse({ event_id }), ctx),
+      ).catch((e: unknown) => e)) as McpError;
+      expect(err.data).toMatchObject({ reason: 'source_unavailable', retryable: false });
+      return (err.data as { recovery?: { hint?: string } }).recovery?.hint;
+    };
+    const emscHint = await hint('20190706_0000043');
+    expect(emscHint).toMatch(/^Do not retry this EMSC lookup/);
+    expect(emscHint).not.toContain('source=emsc');
+    expect(emscHint).toContain('source=usgs');
+    expect(await hint('us6000sznj')).toMatch(/^Do not retry this USGS lookup.*source=emsc/);
+  });
 
   it('re-throws an undeclared McpError code unchanged', async () => {
     const originalErr = new McpError(JsonRpcErrorCode.RateLimited, 'Slow down', {});

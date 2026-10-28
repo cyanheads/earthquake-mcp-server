@@ -8,6 +8,7 @@ import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { earthquakeGetEvent } from '@/mcp-server/tools/definitions/earthquake-get-event.tool.js';
 import type { EarthquakeDetailOutput, EarthquakeEventOutput } from '@/mcp-server/tools/schemas.js';
+import * as emscModule from '@/services/emsc/emsc-service.js';
 import * as usgsModule from '@/services/usgs/usgs-service.js';
 
 const sampleEvent: EarthquakeEventOutput = {
@@ -104,7 +105,20 @@ describe('earthquakeGetEvent', () => {
     expect(result.event.felt).toBe(18000);
     expect(result.event.alert).toBe('orange');
     expect(result.event.event_url).toContain('usgs.gov');
-    expect(mockGetEvent).toHaveBeenCalledWith('ci38457511', ctx);
+    expect(mockGetEvent).toHaveBeenCalledWith('ci38457511', ctx, []);
+  });
+
+  it('threads include through to the service', async () => {
+    mockGetEvent.mockResolvedValue({ event: sampleEvent });
+
+    const ctx = createMockContext({ errors: earthquakeGetEvent.errors });
+    const input = earthquakeGetEvent.input.parse({
+      event_id: 'ci38457511',
+      include: ['arrivals', 'origins'],
+    });
+    await earthquakeGetEvent.handler(input, ctx);
+
+    expect(mockGetEvent).toHaveBeenCalledWith('ci38457511', ctx, ['arrivals', 'origins']);
   });
 
   it('returns the product projection a search result cannot carry (issue #25)', async () => {
@@ -298,5 +312,198 @@ describe('earthquakeGetEvent — transport failure contracts (issue #28)', () =>
     await expect(earthquakeGetEvent.handler(input, ctx)).rejects.toMatchObject({
       data: { reason: 'not_found' },
     });
+  });
+});
+
+describe('earthquakeGetEvent — routes by ID shape (issue #53)', () => {
+  const emscEvent: EarthquakeEventOutput = {
+    ...sparseEvent,
+    id: '20190706_0000043',
+    tsunami: null,
+    status: null,
+    source_catalog: 'EMSC-RTS',
+    auth: 'EMSC',
+  };
+  let usgsGetEvent: ReturnType<typeof vi.fn>;
+  let emscGetEvent: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    usgsGetEvent = vi.fn().mockResolvedValue({ event: sampleEvent });
+    emscGetEvent = vi.fn().mockResolvedValue({ event: emscEvent });
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      getEvent: usgsGetEvent,
+    } as unknown as usgsModule.UsgsService);
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue({
+      getEvent: emscGetEvent,
+    } as unknown as emscModule.EmscService);
+  });
+
+  it('sends an EMSC unid to EMSC only and reports requested groups as not_published', async () => {
+    const ctx = createMockContext({ errors: earthquakeGetEvent.errors });
+    const input = earthquakeGetEvent.input.parse({
+      event_id: '20190706_0000043',
+      include: ['arrivals', 'origins', 'arrivals'],
+    });
+    const result = await earthquakeGetEvent.handler(input, ctx);
+
+    expect(emscGetEvent).toHaveBeenCalledWith('20190706_0000043', ctx);
+    expect(usgsGetEvent).not.toHaveBeenCalled();
+    expect(result).toStrictEqual({
+      event: emscEvent,
+      unavailable_includes: [
+        { group: 'origins', reason: 'not_published' },
+        { group: 'arrivals', reason: 'not_published' },
+      ],
+    });
+  });
+
+  it('returns the bare EMSC event when no group was requested', async () => {
+    const ctx = createMockContext({ errors: earthquakeGetEvent.errors });
+    const input = earthquakeGetEvent.input.parse({ event_id: '20190706_0000043' });
+    expect(await earthquakeGetEvent.handler(input, ctx)).toStrictEqual({ event: emscEvent });
+  });
+
+  it('sends any other ID to USGS only', async () => {
+    const ctx = createMockContext({ errors: earthquakeGetEvent.errors });
+    const input = earthquakeGetEvent.input.parse({ event_id: '20190706_000043' });
+    await earthquakeGetEvent.handler(input, ctx);
+    expect(usgsGetEvent).toHaveBeenCalledWith('20190706_000043', ctx, []);
+    expect(emscGetEvent).not.toHaveBeenCalled();
+  });
+
+  it('names the source a 501 came from and sends the caller to the other catalog', async () => {
+    const notImplemented = () =>
+      new McpError(JsonRpcErrorCode.ServiceUnavailable, 'Not implemented', { retryable: false });
+    emscGetEvent.mockRejectedValue(notImplemented());
+    usgsGetEvent.mockRejectedValue(notImplemented());
+    const hint = async (event_id: string) => {
+      const err = (await Promise.resolve(
+        earthquakeGetEvent.handler(
+          earthquakeGetEvent.input.parse({ event_id }),
+          createMockContext({ errors: earthquakeGetEvent.errors }),
+        ),
+      ).catch((e: unknown) => e)) as McpError;
+      return (err.data as { recovery?: { hint?: string } }).recovery?.hint;
+    };
+    const emscHint = await hint('20190706_0000043');
+    expect(emscHint).toMatch(/^Do not retry this EMSC lookup/);
+    // The refusing catalog is never the suggested fallback.
+    expect(emscHint).not.toContain('source=emsc');
+    expect(emscHint).toContain('source=usgs');
+    const usgsHint = await hint('us6000sznj');
+    expect(usgsHint).toMatch(/^Do not retry this USGS lookup/);
+    expect(usgsHint).toContain('source=emsc');
+  });
+});
+
+describe('earthquakeGetEvent — include rendering', () => {
+  const text = (output: Parameters<NonNullable<typeof earthquakeGetEvent.format>>[0]) =>
+    (earthquakeGetEvent.format!(output)[0] as { text: string }).text;
+
+  it('renders depth_type in the origin-quality line only when published', () => {
+    const withType = text({
+      event: sampleEvent,
+      detail: { origin: { depth_error_km: 1.8, depth_type: 'operator assigned' } },
+    });
+    expect(withType).toContain(
+      'Depth error: 1.8 km | Depth type: operator assigned | Review status',
+    );
+    const without = text({ event: sampleEvent, detail: { origin: { depth_error_km: 1.8 } } });
+    expect(without).not.toContain('Depth type');
+  });
+
+  it('renders every origin, magnitude, arrival, forecast bin, and unavailable group', () => {
+    const output = text({
+      event: sampleEvent,
+      origins: [
+        {
+          source: 'ci',
+          event_id: 'ci38457511',
+          is_preferred: true,
+          time: '2019-07-06T03:19:53.040Z',
+          latitude: 35.7695,
+          longitude: -117.5993333,
+          depth_km: 8,
+          depth_type: 'operator assigned',
+          standard_error_s: 0.22,
+        },
+        { source: 'pt', event_id: 'pt19187000', is_preferred: false, depth_km: 100 },
+      ],
+      magnitudes: [
+        { type: 'Mww', value: 7.5, station_count: 82, agency: 'us', is_preferred: true },
+        { type: 'mw', value: 7.1, is_preferred: false },
+      ],
+      arrivals: [
+        {
+          network: 'IM',
+          station: 'MJAR',
+          location: 'F0',
+          channel: 'HHZ',
+          phase: 'Pn',
+          distance_deg: 1.3667,
+        },
+        { network: 'AK', station: 'BRSE', phase: 'P|S', time_residual_s: -0.5 },
+      ],
+      aftershock_forecast: {
+        advisory_window: '1 Week',
+        created: '2026-10-28T12:51:11.470Z',
+        expires: '2027-10-28T13:00:00.000Z',
+        windows: [
+          {
+            label: '1 Week',
+            start: '2026-10-28T13:00:00.000Z',
+            end: '2026-11-04T13:00:00.000Z',
+            above_mainshock: { magnitude: 4.01, probability: 0.01958 },
+            bins: [
+              {
+                magnitude: 3,
+                probability: 0.0794,
+                count_median: 0,
+                count_p95_min: 0,
+                count_p95_max: 1,
+              },
+              { magnitude: 5, probability: 0.002061 },
+            ],
+          },
+        ],
+      },
+      unavailable_includes: [{ group: 'aftershock_forecast', reason: 'fetch_failed' }],
+    });
+    const lines = output.split('\n');
+
+    expect(lines).toContain(
+      '- **ci38457511** (source ci, preferred): Time: 2019-07-06T03:19:53.040Z | Location: 35.7695°, -117.5993333° | Depth: 8 km | Depth type: operator assigned | Standard error: 0.22 s',
+    );
+    expect(lines).toContain('- **pt19187000** (source pt): Depth: 100 km');
+    expect(lines).toContain('- **Mww 7.5** (preferred): Stations: 82 | Agency: us');
+    expect(lines).toContain('- **mw 7.1**');
+    expect(lines).toContain('| IM | MJAR | F0 | HHZ | Pn |  |  | 1.3667 |  |  |');
+    // A pipe inside a value is escaped so it cannot open a new cell.
+    expect(lines).toContain('| AK | BRSE |  |  | P\\|S |  | -0.5 |  |  |  |');
+    expect(lines).toContain(
+      'Advisory window: 1 Week | Created: 2026-10-28T12:51:11.470Z | Expires: 2027-10-28T13:00:00.000Z',
+    );
+    expect(lines).toContain(
+      '**1 Week** (2026-10-28T13:00:00.000Z → 2026-11-04T13:00:00.000Z) | Above mainshock (≥ M4.01): probability 0.01958',
+    );
+    expect(lines).toContain('| 3 | 0.0794 | 0 | 0 | 1 |');
+    expect(lines).toContain('| 5 | 0.002061 |  |  |  |');
+    expect(lines).toContain(
+      '- aftershock_forecast: fetch_failed — the product exists but could not be fetched or parsed',
+    );
+    expect(output).toContain('### Origins (2)');
+    expect(output).toContain('### Arrivals (2, preferred origin, nearest first)');
+  });
+
+  it('says so when a returned group is empty', () => {
+    const output = text({ event: sampleEvent, magnitudes: [], arrivals: [] });
+    expect(output).toContain('### Magnitudes (0)\n_The phase-data document lists no magnitudes._');
+    expect(output).toContain('_The preferred origin lists no arrivals._');
+    expect(output).not.toContain('| Network |');
+  });
+
+  it('adds nothing for groups that were not requested', () => {
+    const output = text({ event: sampleEvent, detail: sampleDetail });
+    expect(output).not.toMatch(/### (Origins|Magnitudes|Arrivals|Aftershock|Unavailable)/);
   });
 });

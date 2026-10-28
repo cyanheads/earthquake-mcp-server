@@ -62,23 +62,39 @@ describe('feed retention', () => {
     expect(JSON.stringify(reply.content)).toContain('last one');
     expect(getFeed).toHaveBeenCalledTimes(1);
   });
-  it('bounds search candidates and advances by emitted rows', async () => {
+  it('sends a clamped search limit upstream and returns the whole page with both notices', async () => {
     const searchEvents = vi
       .fn()
-      .mockResolvedValue({ events: fixture(100).events, count: 100, totalCount: 150 });
+      .mockResolvedValue({ events: fixture(1000).events, count: 1000, totalCount: 1500 });
     vi.spyOn(usgs, 'getUsgsService').mockReturnValue({
       searchEvents,
     } as unknown as usgs.UsgsService);
     const result = await runToolContract(earthquakeSearchEvents, { limit: 20000, offset: 2 });
-    expect(searchEvents.mock.calls[0]?.[0].limit).toBe(100);
-    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(24000);
-    const output = result.structuredContent as {
-      count: number;
-      nextOffset: number;
-      queryEcho: { limit: number };
-    };
-    expect(output.nextOffset).toBe(2 + output.count);
-    expect(output.queryEcho.limit).toBe(100);
+    expect(searchEvents.mock.calls[0]?.[0].limit).toBe(1000);
+    expect(result.structuredContent).toMatchObject({
+      count: 1000,
+      nextOffset: 1002,
+      truncated: true,
+      queryEcho: { limit: 1000 },
+      notice:
+        'Requested limit 20000; applied limit 1000, the per-call cap. Showing events 2–1001 of 1500 matches. Call again with offset=1002 and the same filters, source, limit and order_by for the next page.',
+    });
+    const text = JSON.stringify(result.content);
+    expect(text).toContain('Requested limit 20000; applied limit 1000, the per-call cap.');
+    expect(text).toContain('Showing events 2–1001 of 1500 matches.');
+    expect(text).toContain('id999');
+  });
+  it('sends the default search limit of 15 upstream without a clamp notice', async () => {
+    const searchEvents = vi
+      .fn()
+      .mockResolvedValue({ events: fixture(15).events, count: 15, totalCount: 40 });
+    vi.spyOn(usgs, 'getUsgsService').mockReturnValue({
+      searchEvents,
+    } as unknown as usgs.UsgsService);
+    const result = await runToolContract(earthquakeSearchEvents, {});
+    expect(searchEvents.mock.calls[0]?.[0].limit).toBe(15);
+    expect(result.structuredContent).toMatchObject({ count: 15, nextOffset: 16 });
+    expect(JSON.stringify(result)).not.toContain('Requested limit');
   });
   it('continues the retained generation after upstream edits without fetching again', async () => {
     const { feed, getFeed } = mockFeed(6);
@@ -91,15 +107,41 @@ describe('feed retention', () => {
     expect(result.structuredContent).toMatchObject({ events: [{ id: 'id2' }, { id: 'id3' }] });
     expect(getFeed).toHaveBeenCalledTimes(1);
   });
-  it('bounds both final tool surfaces including UTF-8 and continuation trailers', async () => {
-    mockFeed(1000);
-    const result = await runToolContract(earthquakeGetFeed, { limit: 1000 });
+  it('clamps a first-page feed limit to the cap and continues from the last returned event', async () => {
+    mockFeed(1001);
+    const result = await runToolContract(earthquakeGetFeed, { limit: 1001 });
     expect(result.isError).not.toBe(true);
-    expect(Buffer.byteLength(JSON.stringify(result))).toBeLessThanOrEqual(24000);
-    expect(result.structuredContent).toMatchObject({
+    const output = result.structuredContent as { events: { id: string }[]; nextCursor: string };
+    expect(output).toMatchObject({
+      count: 1000,
+      totalCount: 1001,
       truncated: true,
-      nextCursor: expect.any(String),
+      notice:
+        'Requested limit 1001; applied limit 1000, the per-call cap. Showing 1000 of 1001 events. Call again with nextCursor as cursor and the same magnitude_tier and time_window.',
     });
+    expect(output.events.at(-1)?.id).toBe('id999');
+    const text = JSON.stringify(result.content);
+    expect(text).toContain('Requested limit 1001; applied limit 1000, the per-call cap.');
+    expect(text).toContain('id999');
+    const next = await runToolContract(earthquakeGetFeed, { cursor: output.nextCursor });
+    expect(next.structuredContent).toMatchObject({ count: 1, events: [{ id: 'id1000' }] });
+  });
+  it('returns 15 feed events by default', async () => {
+    mockFeed(16);
+    const result = await runToolContract(earthquakeGetFeed, {});
+    expect(result.structuredContent).toMatchObject({ count: 15, totalCount: 16, truncated: true });
+    expect(JSON.stringify(result)).not.toContain('Requested limit');
+  });
+  it('keeps the cursor page size and discloses no clamp for an unused over-cap limit', async () => {
+    mockFeed(10);
+    const first = await runToolContract(earthquakeGetFeed, { limit: 3 });
+    const cursor = (first.structuredContent as { nextCursor: string }).nextCursor;
+    const next = await runToolContract(earthquakeGetFeed, { cursor, limit: 5000 });
+    expect(next.structuredContent).toMatchObject({
+      count: 3,
+      events: [{ id: 'id3' }, { id: 'id4' }, { id: 'id5' }],
+    });
+    expect(JSON.stringify(next)).not.toContain('Requested limit');
   });
   it('maps resource availability errors without upstream data', async () => {
     const { getFeed } = mockFeed(0);
@@ -124,6 +166,25 @@ describe('feed retention', () => {
         recovery: { hint: expect.stringContaining('source=emsc') },
       },
     });
+  });
+  it('pages the feed resource 100 events at a time and continues through next_uri', async () => {
+    mockFeed(101);
+    const ctx = () => createMockContext({ errors: earthquakeFeedResource.errors });
+    const first = await earthquakeFeedResource.handler(
+      { magnitude_tier: 'all', time_window: 'day' },
+      ctx(),
+    );
+    expect(first).toMatchObject({ count: 100, totalCount: 101, truncated: true });
+    expect(first.events).toHaveLength(100);
+    expect(first.events.at(-1)?.id).toBe('id99');
+    const cursor = first.next_uri!.split('/page/')[1]!;
+    expect(first.nextCursor).toBe(cursor);
+    const last = await earthquakeFeedResource.handler(
+      { magnitude_tier: 'all', time_window: 'day', cursor },
+      ctx(),
+    );
+    expect(last).toMatchObject({ count: 1, truncated: false, events: [{ id: 'id100' }] });
+    expect(last).not.toHaveProperty('next_uri');
   });
   it('characterizes full tool fields and compact resource projection', async () => {
     mockFeed(1);

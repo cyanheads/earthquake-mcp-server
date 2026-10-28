@@ -6,7 +6,6 @@
 
 import { createApp } from '@cyanheads/mcp-ts-core';
 import { getServerConfig } from './config/server-config.js';
-import { setPageIdentity } from './mcp-server/page-budget.js';
 import { earthquakeEventResource } from './mcp-server/resources/definitions/earthquake-event.resource.js';
 import {
   earthquakeFeedPageResource,
@@ -30,10 +29,11 @@ await createApp({
    */
   sessionMode: 'stateless',
   instructions:
-    'Query keyless USGS ComCat and independent global EMSC SeismicPortal data. earthquake_get_feed covers USGS current activity; earthquake_search_events covers historical/filtered queries, sized with earthquake_count_events. Search accepts limit through 20,000 and returns byte-bounded pages; continue with nextOffset, including beyond 20,000 matches. earthquake_get_event accepts USGS IDs from feed/search results for analysis products. USGS includes PAGER, DYFI and ShakeMap; EMSC omits these and discloses unsupported filters in ignoredFilters.',
+    'Query keyless USGS ComCat and independent global EMSC SeismicPortal data. earthquake_get_feed covers USGS current activity; earthquake_search_events covers historical/filtered queries, sized with earthquake_count_events. Search returns limit events per page (at most 1,000); continue with nextOffset, including beyond 20,000 matches. earthquake_get_event takes the id of any feed or search result, USGS (us6000sznj) or EMSC (20190706_0000043). USGS events add PAGER, DYFI, ShakeMap and other products, plus include groups (alternative origins, magnitudes, phase arrivals, aftershock forecast); EMSC events carry neither, and EMSC search discloses unsupported filters in ignoredFilters.',
   tools: [earthquakeGetFeed, earthquakeSearchEvents, earthquakeGetEvent, earthquakeCountEvents],
   resources: [earthquakeFeedResource, earthquakeFeedPageResource, earthquakeEventResource],
   prompts: [],
+  skills: 'skills',
   landing: {
     // Public catalog server — serve full inventory to unauthenticated callers
     // regardless of MCP_AUTH_MODE setting (0.9.13: requireAuth defaults to true for jwt/oauth)
@@ -51,11 +51,6 @@ await createApp({
     'server/discover': { ttlMs: 3_600_000, cacheScope: 'public' },
   },
   setup(core) {
-    setPageIdentity({
-      name: core.config.mcpServerName,
-      version: core.config.mcpServerVersion,
-      title: SERVER_TITLE,
-    });
     const config = getServerConfig();
     initUsgsService(core.config, core.storage, config.usgsBaseUrl, config.requestTimeoutMs);
     initEmscService(core.config, core.storage, config.emscBaseUrl, config.requestTimeoutMs);

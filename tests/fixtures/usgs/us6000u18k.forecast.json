@@ -1,0 +1,303 @@
+{
+  "creationTime": 1793030079480,
+  "expireTime": 1824603683226,
+  "advisoryTimeFrame": "1 Month",
+  "template": "Mainshock",
+  "injectableText": "This forecast is based on aftershocks recorded in the ANSS Comprehensive Earthquake Catalog (ComCat). More detailed earthquake information may be available from scientific agencies in the affected cou",
+  "observations": [
+    {
+      "magnitude": 3.0,
+      "count": 109
+    },
+    {
+      "magnitude": 5.0,
+      "count": 21
+    }
+  ],
+  "model": {
+    "name": "Epidemic-Type aftershock model (Bayesian Combination)",
+    "reference": "#url",
+    "parameters": {
+      "ams": -2.32,
+      "a": -2.48,
+      "b": 1.0,
+      "magMain": 7.7,
+      "p": 1.18,
+      "c": 0.0116,
+      "Mc": 4.75,
+      "regionType": "circle",
+      "regionCenterLat": 7.5532,
+      "regionCenterLon": -80.7496,
+      "regionRadius": 381.6
+    }
+  },
+  "fractileProbabilities": [0.0025, 0.005, 0.0075],
+  "barLabels": [0, 1, 2, 5, 10, 20, 50, 100, 200, 500],
+  "forecast": [
+    {
+      "timeStart": 1793030428116,
+      "timeEnd": 1793116828116,
+      "label": "1 Day",
+      "bins": [
+        {
+          "magnitude": 3.0,
+          "p95minimum": 2,
+          "p95maximum": 21,
+          "probability": 0.9982,
+          "median": 8,
+          "fractileValues": [1, 1, 1],
+          "barPercentages": [0, 1, 14, 47, 35, 3, 0, 0, 0, 0]
+        },
+        {
+          "magnitude": 4.0,
+          "p95minimum": 0,
+          "p95maximum": 4,
+          "probability": 0.545,
+          "median": 1,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [45, 33, 21, 1, 0, 0, 0, 0, 0, 0]
+        },
+        {
+          "magnitude": 5.0,
+          "p95minimum": 0,
+          "p95maximum": 1,
+          "probability": 0.0801,
+          "median": 0,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [92, 7, 1, 0, 0, 0, 0, 0, 0, 0]
+        },
+        {
+          "magnitude": 6.0,
+          "p95minimum": 0,
+          "p95maximum": 0,
+          "probability": 0.008,
+          "median": 0,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [99, 1, 0, 0, 0, 0, 0, 0, 0, 0]
+        },
+        {
+          "magnitude": 7.0,
+          "p95minimum": 0,
+          "p95maximum": 0,
+          "probability": 0.0007,
+          "median": 0,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [100, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        },
+        {
+          "magnitude": 8.0,
+          "p95minimum": 0,
+          "p95maximum": 0,
+          "probability": 0.0,
+          "median": 0,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [100, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        }
+      ],
+      "aboveMainshockMag": {
+        "magnitude": 7.7,
+        "probability": 0.0001,
+        "fractileValues": null
+      }
+    },
+    {
+      "timeStart": 1793030428116,
+      "timeEnd": 1793635228116,
+      "label": "1 Week",
+      "bins": [
+        {
+          "magnitude": 3.0,
+          "p95minimum": 23,
+          "p95maximum": 125,
+          "probability": 0.9999,
+          "median": 53,
+          "fractileValues": [15, 17, 19],
+          "barPercentages": [0, 0, 0, 0, 1, 43, 51, 5, 1, 0]
+        },
+        {
+          "magnitude": 4.0,
+          "p95minimum": 1,
+          "p95maximum": 15,
+          "probability": 0.983,
+          "median": 5,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [2, 6, 36, 44, 12, 1, 0, 0, 0, 0]
+        },
+        {
+          "magnitude": 5.0,
+          "p95minimum": 0,
+          "p95maximum": 3,
+          "probability": 0.3919,
+          "median": 0,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [61, 27, 12, 1, 0, 0, 0, 0, 0, 0]
+        },
+        {
+          "magnitude": 6.0,
+          "p95minimum": 0,
+          "p95maximum": 1,
+          "probability": 0.0479,
+          "median": 0,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [95, 4, 1, 0, 0, 0, 0, 0, 0, 0]
+        },
+        {
+          "magnitude": 7.0,
+          "p95minimum": 0,
+          "p95maximum": 0,
+          "probability": 0.0039,
+          "median": 0,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [100, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        },
+        {
+          "magnitude": 8.0,
+          "p95minimum": 0,
+          "p95maximum": 0,
+          "probability": 0.0004,
+          "median": 0,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [100, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        }
+      ],
+      "aboveMainshockMag": {
+        "magnitude": 7.7,
+        "probability": 0.001,
+        "fractileValues": null
+      }
+    },
+    {
+      "timeStart": 1793030428116,
+      "timeEnd": 1795708828116,
+      "label": "1 Month",
+      "bins": [
+        {
+          "magnitude": 3.0,
+          "p95minimum": 71,
+          "p95maximum": 422,
+          "probability": 0.9999,
+          "median": 158,
+          "fractileValues": [50, 55, 58],
+          "barPercentages": [0, 0, 0, 0, 0, 0, 12, 59, 27, 2]
+        },
+        {
+          "magnitude": 4.0,
+          "p95minimum": 5,
+          "p95maximum": 46,
+          "probability": 0.9999,
+          "median": 16,
+          "fractileValues": [2, 3, 3],
+          "barPercentages": [0, 0, 2, 15, 51, 30, 2, 0, 0, 0]
+        },
+        {
+          "magnitude": 5.0,
+          "p95minimum": 0,
+          "p95maximum": 7,
+          "probability": 0.7508,
+          "median": 1,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [25, 30, 38, 7, 1, 0, 0, 0, 0, 0]
+        },
+        {
+          "magnitude": 6.0,
+          "p95minimum": 0,
+          "p95maximum": 2,
+          "probability": 0.1435,
+          "median": 0,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [86, 12, 3, 0, 0, 0, 0, 0, 0, 0]
+        },
+        {
+          "magnitude": 7.0,
+          "p95minimum": 0,
+          "p95maximum": 0,
+          "probability": 0.0158,
+          "median": 0,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [98, 2, 0, 0, 0, 0, 0, 0, 0, 0]
+        },
+        {
+          "magnitude": 8.0,
+          "p95minimum": 0,
+          "p95maximum": 0,
+          "probability": 0.0016,
+          "median": 0,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [100, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        }
+      ],
+      "aboveMainshockMag": {
+        "magnitude": 7.7,
+        "probability": 0.0032,
+        "fractileValues": null
+      }
+    },
+    {
+      "timeStart": 1793030428116,
+      "timeEnd": 1824652828116,
+      "label": "1 Year",
+      "bins": [
+        {
+          "magnitude": 3.0,
+          "p95minimum": 173,
+          "p95maximum": 1543,
+          "probability": 0.9999,
+          "median": 440,
+          "fractileValues": [119, 131, 139],
+          "barPercentages": [0, 0, 0, 0, 0, 0, 0, 5, 55, 40]
+        },
+        {
+          "magnitude": 4.0,
+          "p95minimum": 15,
+          "p95maximum": 159,
+          "probability": 0.9998,
+          "median": 44,
+          "fractileValues": [10, 11, 11],
+          "barPercentages": [0, 0, 0, 0, 6, 53, 33, 6, 1, 1]
+        },
+        {
+          "magnitude": 5.0,
+          "p95minimum": 0,
+          "p95maximum": 18,
+          "probability": 0.9591,
+          "median": 4,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [4, 10, 39, 35, 11, 2, 1, 0, 0, 0]
+        },
+        {
+          "magnitude": 6.0,
+          "p95minimum": 0,
+          "p95maximum": 3,
+          "probability": 0.3463,
+          "median": 0,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [65, 23, 10, 1, 0, 0, 0, 0, 0, 0]
+        },
+        {
+          "magnitude": 7.0,
+          "p95minimum": 0,
+          "p95maximum": 1,
+          "probability": 0.046,
+          "median": 0,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [95, 4, 1, 0, 0, 0, 0, 0, 0, 0]
+        },
+        {
+          "magnitude": 8.0,
+          "p95minimum": 0,
+          "p95maximum": 0,
+          "probability": 0.0051,
+          "median": 0,
+          "fractileValues": [0, 0, 0],
+          "barPercentages": [99, 1, 0, 0, 0, 0, 0, 0, 0, 0]
+        }
+      ],
+      "aboveMainshockMag": {
+        "magnitude": 7.7,
+        "probability": 0.0096,
+        "fractileValues": null
+      }
+    }
+  ],
+  "nextForecastTime": 1793635228116
+}

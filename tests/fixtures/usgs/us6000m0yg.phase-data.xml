@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<q:quakeml xmlns:q="http://quakeml.org/xmlns/quakeml/1.2" xmlns="http://quakeml.org/xmlns/bed/1.2" xmlns:anssevent="http://anss.org/xmlns/event/0.1" xmlns:catalog="http://anss.org/xmlns/catalog/0.1" xmlns:tensor="http://anss.org/xmlns/tensor/0.1">
+
+  <eventParameters xmlns="http://quakeml.org/xmlns/bed/1.2" publicID="quakeml:us.anss.org/eventparameters/6000m0yg/1710020311">
+    <comment>
+      <text>HYDRA - us</text>
+    </comment>
+    <event catalog:dataid="us6000m0yg" catalog:datasource="us" catalog:eventid="6000m0yg" catalog:eventsource="us" publicID="quakeml:us.anss.org/event/6000m0yg">
+      <description>
+        <text>near the west coast of Honshu, Japan</text>
+        <type>Flinn-Engdahl region</type>
+      </description>
+      <description>
+        <text>73.7 km (45.8 miles) WSW of Sado, Niigata, Japan (pop. 20000)
+
+82.3 km (51.1 miles) WSW of Ryotsu-minato, Niigata, Japan (pop. 16359)
+
+87.0 km (54.1 miles) NE of Anamizu, Ishikawa, Japan (pop. 17840)
+
+89.9 km (55.8 miles) NNW of Itoigawa, Niigata, Japan (pop. 30865)
+
+127.0 km (78.9 miles) W of Niigata, Niigata, Japan (pop. 797591)
+
+</text>
+        <type>nearest cities</type>
+      </description>
+      <magnitude catalog:dataid="us_6000m0yg_mb" catalog:datasource="us" publicID="quakeml:us.anss.org/magnitude/6000m0yg/mb">
+        <mag>
+          <value>5.1</value>
+          <uncertainty>0.085</uncertainty>
+          <confidenceLevel>90</confidenceLevel>
+        </mag>
+        <type>mb</type>
+        <originID>quakeml:us.anss.org/origin/6000m0yg</originID>
+        <methodID>smi:us.anss.org/metadata/methodid/magnitude/mb/1.0</methodID>
+        <stationCount>45</stationCount>
+        <evaluationMode>manual</evaluationMode>
+        <evaluationStatus>reviewed</evaluationStatus>
+        <creationInfo>
+          <agencyID>us</agencyID>
+          <agencyURI>smi:anss.org/metadata/agencyid/us</agencyURI>
+          <creationTime>2024-02-14T12:40:03Z</creationTime>
+        </creationInfo>
+      </magnitude>
+      <origin catalog:dataid="us6000m0yg" catalog:datasource="us" catalog:eventid="6000m0yg" publicID="quakeml:us.anss.org/origin/6000m0yg">
+        <originUncertainty>
+          <horizontalUncertainty>5230</horizontalUncertainty>
+          <minHorizontalUncertainty>6535</minHorizontalUncertainty>
+          <maxHorizontalUncertainty>9663</maxHorizontalUncertainty>
+          <azimuthMaxHorizontalUncertainty>144</azimuthMaxHorizontalUncertainty>
+          <confidenceEllipsoid>
+            <semiMajorAxisLength>9664</semiMajorAxisLength>
+            <semiMinorAxisLength>2778</semiMinorAxisLength>
+            <semiIntermediateAxisLength>6535</semiIntermediateAxisLength>
+            <majorAxisPlunge>1</majorAxisPlunge>
+            <majorAxisAzimuth>144</majorAxisAzimuth>
+            <majorAxisRotation>271</majorAxisRotation>
+          </confidenceEllipsoid>
+          <preferredDescription>confidence ellipsoid</preferredDescription>
+          <confidenceLevel>90</confidenceLevel>
+        </originUncertainty>
+        <arrival publicID="quakeml:us.anss.org/arrival/6000m0yg/us_a4622_bpid-7005220724">
+          <pickID>quakeml:us.anss.org/pick/6000m0yg/us_a4622_bpid-7005220724</pickID>
+          <phase>P</phase>
+          <azimuth>318.183</azimuth>
+          <distance>17.3807</distance>
+          <timeResidual>-2.16</timeResidual>
+          <timeWeight>0.5900</timeWeight>
+          <creationInfo>
+            <agencyID>us</agencyID>
+            <agencyURI>smi:anss.org/metadata/agencyid/us</agencyURI>
+            <author>manual</author>
+            <creationTime>2024-02-14T12:37:52Z</creationTime>
+          </creationInfo>
+        </arrival>
+        <arrival publicID="quakeml:us.anss.org/arrival/6000m0yg/us_a4622_bpid-7005220717">
+          <pickID>quakeml:us.anss.org/pick/6000m0yg/us_a4622_bpid-7005220717</pickID>
+          <phase>PKPdf</phase>
+          <azimuth>36.8834</azimuth>
+          <distance>150.607</distance>
+          <timeResidual>-0.63</timeResidual>
+          <timeWeight>0.8200</timeWeight>
+          <creationInfo>
+            <agencyID>us</agencyID>
+            <agencyURI>smi:anss.org/metadata/agencyid/us</agencyURI>
+            <author>manual</author>
+            <creationTime>2024-02-14T12:34:27Z</creationTime>
+          </creationInfo>
+        </arrival>
+        <arrival publicID="quakeml:us.anss.org/arrival/6000m0yg/us_a4622_bpid-7005220691">
+          <pickID>quakeml:us.anss.org/pick/6000m0yg/us_a4622_bpid-7005220691</pickID>
+          <phase>P</phase>
+          <azimuth>311.831</azimuth>
+          <distance>39.1215</distance>
+          <timeResidual>-0.07</timeResidual>
+          <timeWeight>0.9100</timeWeight>
+          <creationInfo>
+            <agencyID>us</agencyID>
+            <agencyURI>smi:anss.org/metadata/agencyid/us</agencyURI>
+            <author>manual</author>
+            <creationTime>2024-02-14T12:30:06Z</creationTime>
+          </creationInfo>
+        </arrival>
+        <arrival publicID="quakeml:us.anss.org/arrival/6000m0yg/us_a4622_bpid-7005220671">
+          <pickID>quakeml:us.anss.org/pick/6000m0yg/us_a4622_bpid-7005220671</pickID>
+          <phase>Pn</phase>
+          <azimuth>157.748</azimuth>
+          <distance>1.3667</distance>
+          <timeResidual>-0.68</timeResidual>
+          <timeWeight>1.2200</timeWeight>
+          <creationInfo>
+            <agencyID>us</agencyID>
+            <agencyURI>smi:anss.org/metadata/agencyid/us</agencyURI>
+            <author>manual</author>
+            <creationTime>2024-02-14T12:20:19Z</creationTime>
+          </creationInfo>
+        </arrival>
+        <arrival publicID="quakeml:us.anss.org/arrival/6000m0yg/us_a4622_bpid-7005220679">
+          <pickID>quakeml:us.anss.org/pick/6000m0yg/us_a4622_bpid-7005220679</pickID>
+          <phase>Pn</phase>
+          <azimuth>29.5111</azimuth>
+          <distance>7.35893</distance>
+          <timeResidual>-0.30</timeResidual>
+          <timeWeight>0.8800</timeWeight>
+          <creationInfo>
+            <agencyID>us</agencyID>
+            <agencyURI>smi:anss.org/metadata/agencyid/us</agencyURI>
+            <author>manual</author>
+            <creationTime>2024-02-14T12:26:49Z</creationTime>
+          </creationInfo>
+        </arrival>
+        <time>
+          <value>2024-01-01T09:45:26.217Z</value>
+          <uncertainty>2.42</uncertainty>
+          <confidenceLevel>90.00</confidenceLevel>
+        </time>
+        <longitude>
+          <value>137.5664</value>
+          <uncertainty>0.0580</uncertainty>
+          <confidenceLevel>90.00</confidenceLevel>
+        </longitude>
+        <latitude>
+          <value>37.8107</value>
+          <uncertainty>0.0516</uncertainty>
+          <confidenceLevel>90.00</confidenceLevel>
+        </latitude>
+        <depth>
+          <value>10000</value>
+          <uncertainty>1835</uncertainty>
+          <confidenceLevel>90.00</confidenceLevel>
+        </depth>
+        <depthType>operator assigned</depthType>
+        <methodID>smi:us.anss.org/metadata/methodid/origin/Java_Locator/</methodID>
+        <earthModelID>smi:us.anss.org/metadata/methodid/earthModel/ak135/1.0</earthModelID>
+        <quality>
+          <associatedPhaseCount>80</associatedPhaseCount>
+          <usedPhaseCount>65</usedPhaseCount>
+          <associatedStationCount>79</associatedStationCount>
+          <usedStationCount>65</usedStationCount>
+          <standardError>1.19</standardError>
+          <azimuthalGap>90</azimuthalGap>
+          <secondaryAzimuthalGap>109</secondaryAzimuthalGap>
+          <minimumDistance>0.592</minimumDistance>
+        </quality>
+        <type>hypocenter</type>
+        <evaluationMode>manual</evaluationMode>
+        <evaluationStatus>reviewed</evaluationStatus>
+        <creationInfo>
+          <agencyID>us</agencyID>
+          <agencyURI>smi:anss.org/metadata/agencyid/us</agencyURI>
+          <creationTime>2024-02-14T12:39:40Z</creationTime>
+          <version>97</version>
+        </creationInfo>
+      </origin>
+      <pick publicID="quakeml:us.anss.org/pick/6000m0yg/us_a4622_bpid-7005220724">
+        <time>
+          <value>2024-01-01T09:49:27.96Z</value>
+        </time>
+        <waveformID channelCode="BHZ" locationCode="F0" networkCode="IM" stationCode="HILR"/>
+        <evaluationMode>manual</evaluationMode>
+        <creationInfo>
+          <agencyID>us</agencyID>
+          <agencyURI>smi:anss.org/metadata/agencyid/us</agencyURI>
+          <creationTime>2024-02-14T12:37:52Z</creationTime>
+        </creationInfo>
+      </pick>
+      <pick publicID="quakeml:us.anss.org/pick/6000m0yg/us_a4622_bpid-7005220717">
+        <time>
+          <value>2024-01-01T10:05:12.85Z</value>
+        </time>
+        <waveformID channelCode="HHZ" locationCode="--" networkCode="BR" stationCode="VILB"/>
+        <phaseHint>PKPdf</phaseHint>
+        <evaluationMode>manual</evaluationMode>
+        <creationInfo>
+          <agencyID>us</agencyID>
+          <agencyURI>smi:anss.org/metadata/agencyid/us</agencyURI>
+          <creationTime>2024-02-14T12:34:27Z</creationTime>
+        </creationInfo>
+      </pick>
+      <pick publicID="quakeml:us.anss.org/pick/6000m0yg/us_a4622_bpid-7005220691">
+        <time>
+          <value>2024-01-01T09:52:53.5Z</value>
+        </time>
+        <waveformID channelCode="SHZ" locationCode="F0" networkCode="IM" stationCode="ZALV"/>
+        <phaseHint>P</phaseHint>
+        <evaluationMode>manual</evaluationMode>
+        <creationInfo>
+          <agencyID>us</agencyID>
+          <agencyURI>smi:anss.org/metadata/agencyid/us</agencyURI>
+          <creationTime>2024-02-14T12:30:06Z</creationTime>
+        </creationInfo>
+      </pick>
+      <pick publicID="quakeml:us.anss.org/pick/6000m0yg/us_a4622_bpid-7005220671">
+        <time>
+          <value>2024-01-01T09:45:50.69Z</value>
+        </time>
+        <waveformID channelCode="HHZ" locationCode="F0" networkCode="IM" stationCode="MJAR"/>
+        <phaseHint>Pn</phaseHint>
+        <evaluationMode>manual</evaluationMode>
+        <creationInfo>
+          <agencyID>us</agencyID>
+          <agencyURI>smi:anss.org/metadata/agencyid/us</agencyURI>
+          <creationTime>2024-02-14T12:20:19Z</creationTime>
+        </creationInfo>
+      </pick>
+      <pick publicID="quakeml:us.anss.org/pick/6000m0yg/us_a4622_bpid-7005220679">
+        <time>
+          <value>2024-01-01T09:47:13.36Z</value>
+        </time>
+        <waveformID channelCode="BHZ" locationCode="--" networkCode="JP" stationCode="JKA"/>
+        <evaluationMode>manual</evaluationMode>
+        <creationInfo>
+          <agencyID>us</agencyID>
+          <agencyURI>smi:anss.org/metadata/agencyid/us</agencyURI>
+          <creationTime>2024-02-14T12:26:49Z</creationTime>
+        </creationInfo>
+      </pick>
+      <preferredOriginID>quakeml:us.anss.org/origin/6000m0yg</preferredOriginID>
+      <preferredMagnitudeID>quakeml:us.anss.org/magnitude/6000m0yg/mb</preferredMagnitudeID>
+      <type>earthquake</type>
+      <creationInfo>
+        <agencyID>us</agencyID>
+        <agencyURI>smi:anss.org/metadata/agencyid/us</agencyURI>
+        <creationTime>2024-02-14T12:40:11Z</creationTime>
+      </creationInfo>
+    </event>
+    <creationInfo>
+      <agencyID>us</agencyID>
+      <agencyURI>smi:anss.org/metadata/agencyid/us</agencyURI>
+      <creationTime>2024-03-09T21:38:23.04Z</creationTime>
+    </creationInfo>
+  </eventParameters>
+
+</q:quakeml>

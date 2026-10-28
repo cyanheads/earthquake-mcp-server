@@ -21,7 +21,12 @@
       "env": {
         "MCP_TRANSPORT_TYPE": "stdio",
         "MCP_AUTH_MODE": "none",
-        "NODE_ENV": "production"
+        "NODE_ENV": "production",
+        "USGS_BASE_URL": "${user_config.USGS_BASE_URL}",
+        "EMSC_BASE_URL": "${user_config.EMSC_BASE_URL}",
+        "DEFAULT_LIMIT": "${user_config.DEFAULT_LIMIT}",
+        "REQUEST_TIMEOUT_MS": "${user_config.REQUEST_TIMEOUT_MS}",
+        "EARTHQUAKE_CLAMP_LIMITS": "${user_config.EARTHQUAKE_CLAMP_LIMITS}"
       }
     }
   },
@@ -32,5 +37,41 @@
   },
   "tools_generated": true,
   "prompts_generated": true,
-  "user_config": {}
+  "user_config": {
+    "USGS_BASE_URL": {
+      "type": "string",
+      "title": "USGS Base URL",
+      "description": "USGS API base URL. Leave blank for https://earthquake.usgs.gov.",
+      "default": "",
+      "required": false
+    },
+    "EMSC_BASE_URL": {
+      "type": "string",
+      "title": "EMSC Base URL",
+      "description": "EMSC API base URL. Leave blank for https://www.seismicportal.eu.",
+      "default": "",
+      "required": false
+    },
+    "DEFAULT_LIMIT": {
+      "type": "string",
+      "title": "Default search limit",
+      "description": "Events earthquake_search_events returns when a call omits limit (1-1000). Leave blank for 15.",
+      "default": "",
+      "required": false
+    },
+    "REQUEST_TIMEOUT_MS": {
+      "type": "string",
+      "title": "Request timeout (ms)",
+      "description": "Per-attempt HTTP timeout in milliseconds (1000-120000). Feed, search, and event calls also share a 50-second total deadline across every request and retry; standalone count calls use this per-attempt value. Leave blank for 10000.",
+      "default": "",
+      "required": false
+    },
+    "EARTHQUAKE_CLAMP_LIMITS": {
+      "type": "string",
+      "title": "Clamp limits",
+      "description": "Clamp a search or feed limit above 1000 to 1000 with a notice. Set false to advertise and enforce a maximum of 1000 instead. Leave blank for true.",
+      "default": "",
+      "required": false
+    }
+  }
 }

@@ -98,6 +98,10 @@ const entryPoints = [
     name: 'EmscService.countEvents',
     run: (ctx: Context) => emsc().countEvents({ limit: 10 }, ctx),
   },
+  {
+    name: 'EmscService.getEvent',
+    run: (ctx: Context) => emsc().getEvent('20190706_0000043', ctx),
+  },
 ] as const;
 
 describe.each(entryPoints)('$name — an aborted request', ({ run }) => {

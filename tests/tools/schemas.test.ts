@@ -266,6 +266,21 @@ describe('formatEvent', () => {
     expect(text).not.toContain('Detail URL:');
   });
 
+  it('renders associated IDs in upstream order directly under the ID line (issue #53)', () => {
+    const event = EarthquakeEventSchema.parse({
+      ...fullEvent,
+      id: 'us6000qw60',
+      associated_ids: ['at00t06p1k', 'pt25210002', 'usauto6000qw60'],
+    });
+    const lines = formatEvent(event);
+    expect(lines[1]).toMatch(/^\*\*ID:\*\* us6000qw60 \|/);
+    expect(lines[2]).toBe('**Associated IDs:** at00t06p1k, pt25210002, usauto6000qw60');
+  });
+
+  it('renders no associated-IDs line when the field is absent', () => {
+    expect(formatEvent(fullEvent).join('\n')).not.toContain('Associated IDs');
+  });
+
   it('renders location coordinates with 4 decimal places', () => {
     const lines = formatEvent(fullEvent);
     const text = lines.join('\n');
@@ -383,7 +398,7 @@ describe('formatEvent — null impact fields reach content[] (issue #17)', () =>
     };
 
     // Absent from this event, so absent from both surfaces — that is parity too
-    const absent = ['event_url', 'detail_url'];
+    const absent = ['event_url', 'detail_url', 'associated_ids'];
     expect(Object.keys(EarthquakeEventSchema.shape).sort()).toEqual(
       [...Object.keys(expectedFragments), ...absent].sort(),
     );

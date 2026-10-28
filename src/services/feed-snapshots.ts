@@ -5,6 +5,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Context } from '@cyanheads/mcp-ts-core';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { MAX_LIMIT } from '../config/server-config.js';
 import type { UsgsService } from './usgs/usgs-service.js';
 
 type Feed = Awaited<ReturnType<UsgsService['getFeed']>>;
@@ -25,6 +26,8 @@ type RecordEntry = {
   charge: number;
 };
 const TTL_MS = 15 * 60_000;
+/** First-page size when the selection names none: the feed resource's page. */
+const DEFAULT_PAGE_SIZE = 100;
 /** Process-wide retained payload and charged metadata bound; not a heap limit. */
 export const SNAPSHOT_BUDGET = 32 * 1024 * 1024;
 
@@ -58,7 +61,7 @@ export class FeedSnapshots {
   async read(selection: Selection, ctx: Context, fetch: () => Promise<Feed>) {
     let handle: string;
     let index = 0;
-    let limit = selection.limit ?? 100;
+    let limit = selection.limit ?? DEFAULT_PAGE_SIZE;
     let record: RecordEntry | undefined;
     const now = Date.now();
     if (selection.cursor != null) {
@@ -78,7 +81,7 @@ export class FeedSnapshots {
         value[1] < 0 ||
         !Number.isInteger(value[2]) ||
         value[2] < 1 ||
-        value[2] > 1000 ||
+        value[2] > MAX_LIMIT ||
         Buffer.from(JSON.stringify(value)).toString('base64url') !== token
       ) {
         throw failure('invalid_cursor', 'Malformed feed cursor.');

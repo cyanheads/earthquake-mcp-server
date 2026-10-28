@@ -5,9 +5,10 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
-import { JsonRpcErrorCode, McpError, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
+import { notFound, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
-import { fetchWithTimeout, requestContextService, withRetry } from '@cyanheads/mcp-ts-core/utils';
+import { fetchWithTimeout, withRetry } from '@cyanheads/mcp-ts-core/utils';
+import { CALL_DEADLINE_MS, HTML_BODY, isCancellation, makeReqCtx } from '../upstream-call.js';
 import type {
   EarthquakeEvent,
   EarthquakeEventCertainty,
@@ -21,14 +22,16 @@ import type {
 const KM_PER_DEGREE = 111.2;
 
 /**
- * Build an operation-labelled child of the handler context for withRetry/fetchWithTimeout.
- * `Context extends RequestContext`, so passing `ctx` as the parent inherits every
- * correlation field. The label is what the child adds: `ctx.operation` names the calling
- * tool, while `fetchWithTimeout` reports `context.operation` on a timeout — so the error
- * names the upstream call that hung, not whichever tool reached it.
+ * The EMSC unid: the origin date and a seven-digit, zero-padded sequence
+ * (`20190706_0000043`). USGS IDs begin with letters and USGS answers this shape
+ * with 404, so the shape alone decides which catalog a lookup goes to; any other
+ * ID still reaches USGS unchanged.
  */
-function makeReqCtx(operation: string, ctx: Context) {
-  return requestContextService.createRequestContext({ operation, parentContext: ctx });
+const EMSC_EVENT_ID = /^\d{8}_\d{7}$/;
+
+/** Whether an event ID is an EMSC unid rather than a USGS ID. */
+export function isEmscEventId(eventId: string): boolean {
+  return EMSC_EVENT_ID.test(eventId);
 }
 
 /**
@@ -164,8 +167,8 @@ export class EmscService {
 
   /**
    * Query EMSC FDSN event API. `params.offset` pages through the match set
-   * (1-based, forwarded upstream). Nonempty short pages establish their total
-   * before byte shaping; an empty first page establishes zero.
+   * (1-based, forwarded upstream). Nonempty short pages establish their total;
+   * an empty first page establishes zero.
    * When the page fills the requested limit, a follow-up count query populates
    * totalCount with the real match total for the whole filter set. If that
    * follow-up fails, the page still returns and `countUnavailable` marks the
@@ -183,7 +186,7 @@ export class EmscService {
     const query = this.buildFdsnQuery(params);
     const url = `${this.baseUrl}/fdsnws/event/1/query?format=json&${query}`;
     const reqCtx = makeReqCtx('EmscService.searchEvents', ctx);
-    const deadline = Date.now() + 50_000;
+    const deadline = Date.now() + CALL_DEADLINE_MS;
 
     const result = await withRetry(
       async ({ signal, remainingMs }) => {
@@ -200,7 +203,7 @@ export class EmscService {
         // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
         // returning, so a Response here is always 2xx.
         const text = await response.text();
-        if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
+        if (HTML_BODY.test(text)) {
           throw serviceUnavailable('EMSC returned HTML instead of JSON.', { url });
         }
 
@@ -221,15 +224,15 @@ export class EmscService {
       },
       {
         operation: 'EmscService.searchEvents',
-        deadlineMs: 50_000,
+        deadlineMs: CALL_DEADLINE_MS,
         context: reqCtx,
         baseDelayMs: 1000,
         signal: ctx.signal,
       },
     );
 
-    // Infer short-page totals before byte shaping. Empty later pages cannot establish
-    // the total; full pages use the count endpoint without making count failure fatal.
+    // Infer short-page totals. Empty later pages cannot establish the total;
+    // full pages use the count endpoint without making count failure fatal.
     const requestedLimit = params.limit ?? 100;
     if (result.count < requestedLimit && (result.count > 0 || (params.offset ?? 1) === 1))
       return { ...result, totalCount: (params.offset ?? 1) - 1 + result.count };
@@ -245,11 +248,7 @@ export class EmscService {
         );
         return { ...result, totalCount };
       } catch (err) {
-        if (
-          ctx.signal?.aborted ||
-          (err instanceof McpError && err.code === JsonRpcErrorCode.RequestCancelled)
-        )
-          throw err;
+        if (isCancellation(err, ctx)) throw err;
         ctx.log.warning('Count sub-call for totalCount failed — returning results without it', {
           error: err instanceof Error ? err.message : String(err),
         });
@@ -259,6 +258,55 @@ export class EmscService {
       }
     }
     return result;
+  }
+
+  /**
+   * Fetch one event by EMSC unid. SeismicPortal answers with a bare `Feature` (no
+   * collection wrapper) carrying the same properties as a search result, so the
+   * event is normalized exactly as search normalizes it. EMSC publishes no analysis
+   * products, so there is no `detail`. An unknown unid is a 204 with an empty body,
+   * mapped to NotFound; `nodata=404` is never sent, because its 404 body echoes an
+   * internal host. One 50-second deadline covers every attempt and backoff.
+   */
+  async getEvent(unid: string, ctx: Context): Promise<{ event: EarthquakeEvent }> {
+    const url = `${this.baseUrl}/fdsnws/event/1/query?eventid=${encodeURIComponent(unid)}&format=json`;
+    const reqCtx = makeReqCtx('EmscService.getEvent', ctx);
+
+    const feature = await withRetry(
+      async ({ signal, remainingMs }) => {
+        const response = await fetchWithTimeout(
+          url,
+          Math.min(this.timeoutMs, remainingMs),
+          reqCtx,
+          { signal, headers: { Accept: 'application/json' } },
+        );
+
+        // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
+        // returning, so a Response here is always 2xx.
+        const text = await response.text();
+        if (HTML_BODY.test(text)) {
+          throw serviceUnavailable('EMSC returned HTML instead of JSON.', { eventId: unid });
+        }
+        if (text.trim() === '') {
+          throw notFound('EMSC returned no event for the requested ID.', { eventId: unid });
+        }
+
+        const raw = JSON.parse(text) as EmscFeature | EmscFeatureCollection;
+        if (raw.type !== 'Feature' || (raw.properties.unid ?? raw.id) !== unid) {
+          throw notFound(`No earthquake event found for ID "${unid}".`, { eventId: unid });
+        }
+        return raw;
+      },
+      {
+        operation: 'EmscService.getEvent',
+        deadlineMs: CALL_DEADLINE_MS,
+        context: reqCtx,
+        baseDelayMs: 1000,
+        signal: ctx.signal,
+      },
+    );
+
+    return { event: normalizeEmscFeature(feature) };
   }
 
   /** Count events matching a query. */
@@ -290,7 +338,7 @@ export class EmscService {
         // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
         // returning, so a Response here is always 2xx.
         const text = await response.text();
-        if (/^\s*<(!DOCTYPE\s+html|html[\s>])/i.test(text)) {
+        if (HTML_BODY.test(text)) {
           throw serviceUnavailable('EMSC returned HTML instead of JSON.', { url });
         }
 

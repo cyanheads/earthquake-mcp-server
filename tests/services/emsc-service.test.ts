@@ -6,13 +6,15 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EarthquakeEventSchema, formatEvent } from '@/mcp-server/tools/schemas.js';
-import { EmscService } from '@/services/emsc/emsc-service.js';
+import { EmscService, isEmscEventId } from '@/services/emsc/emsc-service.js';
 import type { EarthquakeEvent, EmscFeature, UsgsFeature } from '@/services/usgs/types.js';
 import { UsgsService } from '@/services/usgs/usgs-service.js';
+import { emscFixture } from '../helpers/usgs-fetch-stub.js';
 
 function makeService(): EmscService {
   return new EmscService(
@@ -645,5 +647,180 @@ describe('EMSC event_type reaches content[] the same way it reaches structuredCo
     expect(text).toContain('**Event type:** fe');
     // Nothing to claim about certainty, so nothing is claimed.
     expect(text).not.toContain('certainty:');
+  });
+});
+
+describe('isEmscEventId — routes on the EMSC unid shape (issue #53)', () => {
+  it.each(['20190706_0000043', '19980101_0000021', '20261028_0000191'])('accepts %s', (id) => {
+    expect(isEmscEventId(id)).toBe(true);
+  });
+
+  it.each([
+    '20190706_000043', // six-digit sequence
+    '20190706_00000430',
+    '2019070600000043',
+    '20190706_43',
+    ' 20190706_0000043',
+    'us70004bn0',
+    'ci38457511',
+    'official20110311054624120_30',
+    '775626', // EMSC source_id, not a unid
+  ])('leaves %j to USGS', (id) => {
+    expect(isEmscEventId(id)).toBe(false);
+  });
+});
+
+describe('EmscService.getEvent — lookup by EMSC unid (issue #53)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('reads the bare Feature SeismicPortal returns into the event a search returns', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(emscFixture('20190706_0000043.json')))
+      .mockResolvedValueOnce(new Response(emscFixture('20190706_0000043.search.json')));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { event } = await makeService().getEvent('20190706_0000043', createMockContext());
+    const search = await makeService().searchEvents({ limit: 10 }, createMockContext());
+
+    expect(event).toStrictEqual(search.events[0]);
+    expect(event).toStrictEqual({
+      id: '20190706_0000043',
+      title: 'M 7.1 - SOUTHERN CALIFORNIA',
+      magnitude: 7.1,
+      magnitude_type: 'mw',
+      time: '2019-07-06T03:19:57.8Z',
+      updated: '2019-07-06T03:39:00.0Z',
+      place: 'SOUTHERN CALIFORNIA',
+      latitude: 35.79,
+      longitude: -117.58,
+      // properties.depth (10), not the negated geometry coordinate (-10).
+      depth_km: 10,
+      felt: null,
+      cdi: null,
+      mmi: null,
+      alert: null,
+      significance: null,
+      status: null,
+      tsunami: null,
+      source_catalog: 'EMSC-RTS',
+      auth: 'EMSC',
+      event_type: 'earthquake',
+      event_certainty: 'known',
+    });
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]));
+    expect(`${url.origin}${url.pathname}`).toBe(
+      'https://www.seismicportal.eu/fdsnws/event/1/query',
+    );
+    // nodata=404 is never sent: its 404 body names an internal host.
+    expect([...url.searchParams]).toEqual([
+      ['eventid', '20190706_0000043'],
+      ['format', 'json'],
+    ]);
+  });
+
+  it('resolves a 1998 EMSC-EMB unid', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(new Response(emscFixture('19980101_0000021.json'))),
+    );
+    const { event } = await makeService().getEvent('19980101_0000021', createMockContext());
+    expect(event).toMatchObject({
+      id: '19980101_0000021',
+      magnitude: 2.9,
+      magnitude_type: 'MD',
+      time: '1998-01-01T01:02:13.2Z',
+      place: 'WESTERN TURKEY',
+      source_catalog: 'EMSC-EMB',
+    });
+  });
+
+  it('leaves unpublished provenance absent on a sparse Feature', async () => {
+    const feature = JSON.parse(emscFixture('20190706_0000043.json')) as EmscFeature;
+    for (const key of [
+      'evtype',
+      'auth',
+      'source_catalog',
+      'flynn_region',
+      'mag',
+      'magtype',
+    ] as const)
+      delete feature.properties[key];
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(feature)));
+    const { event } = await makeService().getEvent('20190706_0000043', createMockContext());
+    expect(event).toMatchObject({
+      id: '20190706_0000043',
+      title: 'M ? - Unknown location',
+      magnitude: null,
+      magnitude_type: 'unknown',
+      place: 'Unknown location',
+    });
+    for (const key of ['source_catalog', 'auth', 'event_type', 'event_certainty', 'associated_ids'])
+      expect(event).not.toHaveProperty(key);
+  });
+
+  it.each([200, 204])('maps an empty %s body to NotFound in one request', async (status) => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      makeService().getEvent('20190706_9999999', createMockContext()),
+    ).rejects.toMatchObject({ code: JsonRpcErrorCode.NotFound });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['a FeatureCollection', () => emscFixture('20190706_0000043.search.json'), '20190706_0000043'],
+    ['a different event', () => emscFixture('19980101_0000021.json'), '20190706_0000043'],
+  ])('rejects %s as NotFound', async (_label, body, unid) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(body())));
+    await expect(makeService().getEvent(unid, createMockContext())).rejects.toMatchObject({
+      code: JsonRpcErrorCode.NotFound,
+    });
+  });
+
+  it('reports an HTML body as ServiceUnavailable after retrying', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(new Response('<!DOCTYPE html><p>busy</p>')));
+    vi.stubGlobal('fetch', fetchMock);
+    const pending = makeService()
+      .getEvent('20190706_0000043', createMockContext())
+      .catch((err: unknown) => err);
+    await vi.runAllTimersAsync();
+    expect(await pending).toMatchObject({ code: JsonRpcErrorCode.ServiceUnavailable });
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+  });
+
+  it('bounds a lookup that keeps timing out by one 50 s deadline across retries', async () => {
+    vi.useFakeTimers();
+    const started = Date.now();
+    const fetchMock = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const fail = () =>
+            reject(init?.signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+          if (init?.signal?.aborted) fail();
+          else init?.signal?.addEventListener('abort', fail, { once: true });
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const service = new EmscService(
+      {} as AppConfig,
+      {} as StorageService,
+      'https://www.seismicportal.eu',
+      45_000,
+    );
+    const pending = service
+      .getEvent('20190706_0000043', createMockContext())
+      .catch((err: unknown) => err);
+    await vi.runAllTimersAsync();
+    expect(await pending).toMatchObject({ code: JsonRpcErrorCode.Timeout });
+    // A per-attempt 45 s timeout retried would run to 90 s and more.
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+    expect(Date.now() - started).toBeLessThanOrEqual(50_000);
   });
 });
