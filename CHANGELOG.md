@@ -2,6 +2,10 @@
 
 All notable changes to this project. Each entry links to its full per-version file in [changelog/](changelog/).
 
+## [0.5.0](changelog/0.5.x/0.5.0.md) — 2026-10-28
+
+Opt-in USGS origins, magnitudes, phase arrivals, and aftershock forecasts on earthquake_get_event; EMSC IDs resolve there too; search and feed pages return exactly limit events; the server publishes an earthquake-guide skill.
+
 ## [0.4.1](changelog/0.4.x/0.4.1.md) — 2026-10-24
 
 Correct event lookups, query ranges, and paging totals.
