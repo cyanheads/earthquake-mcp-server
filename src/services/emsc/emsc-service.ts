@@ -8,7 +8,18 @@ import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
 import { notFound, serviceUnavailable } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { fetchWithTimeout, withRetry } from '@cyanheads/mcp-ts-core/utils';
-import { CALL_DEADLINE_MS, HTML_BODY, isCancellation, makeReqCtx } from '../upstream-call.js';
+import {
+  CALL_DEADLINE_MS,
+  HTML_BODY,
+  isCancellation,
+  isJsonObject,
+  isPointFeature,
+  isTransientUpstream,
+  makeReqCtx,
+  malformedResponse,
+  parseJsonBody,
+  readResponseText,
+} from '../upstream-call.js';
 import type {
   EarthquakeEvent,
   EarthquakeEventCertainty,
@@ -20,6 +31,46 @@ import type {
 
 /** 1 degree of latitude ≈ 111.2 km. */
 const KM_PER_DEGREE = 111.2;
+
+/**
+ * Top-level shapes of the documents EMSC answers with. Each guard checks what its caller
+ * reads next; the features inside a collection are checked as they are normalized.
+ */
+const isFeatureCollection = (value: unknown): value is EmscFeatureCollection =>
+  isJsonObject(value) && Array.isArray(value.features);
+const isCountResponse = (value: unknown): value is EmscCountResponse =>
+  isJsonObject(value) && typeof value.count === 'number';
+const isEventDocument = (value: unknown): value is EmscFeature | EmscFeatureCollection =>
+  isJsonObject(value);
+
+/** Where an EMSC event is: latitude, longitude, and depth in km. */
+interface EmscPosition {
+  depthKm: number | null;
+  latitude: number;
+  longitude: number;
+}
+
+/**
+ * The position of an EMSC record. EMSC publishes it twice, in `properties.lat`, `lon`, and
+ * `depth` and in the point geometry; properties win, and each coordinate they lack is read
+ * from the geometry. Undefined when `properties` is not an object or a coordinate is
+ * readable from neither.
+ */
+function emscPosition(value: unknown): EmscPosition | undefined {
+  if (!isJsonObject(value) || !isJsonObject(value.properties)) return;
+  const { lat, lon, depth } = value.properties;
+  const point = isPointFeature(value)
+    ? (value.geometry as EmscFeature['geometry']).coordinates
+    : undefined;
+  const latitude = typeof lat === 'number' ? lat : point?.[1];
+  const longitude = typeof lon === 'number' ? lon : point?.[0];
+  const depthKm = typeof depth === 'number' ? depth : point?.[2];
+  if (latitude === undefined || longitude === undefined || depthKm === undefined) return;
+  return { latitude, longitude, depthKm };
+}
+
+/** A record the normalizer can read. Collection entries reach the normalizer unchecked. */
+const isFeature = (value: unknown): value is EmscFeature => emscPosition(value) !== undefined;
 
 /**
  * The EMSC unid: the origin date and a seven-digit, zero-padded sequence
@@ -101,21 +152,25 @@ function decodeEmscEventType(code: string): {
   return { event_type, event_certainty };
 }
 
-/** Normalize an EMSC GeoJSON feature to the shared EarthquakeEvent domain type. */
+/**
+ * Normalize an EMSC GeoJSON feature to the shared EarthquakeEvent domain type. A record with
+ * no `properties` object or no readable position fails the response as malformed.
+ */
 function normalizeEmscFeature(f: EmscFeature): EarthquakeEvent {
+  const position = emscPosition(f);
+  if (!position) throw malformedResponse('EMSC');
   const p = f.properties;
-  const [lon, lat, depth] = f.geometry.coordinates;
 
-  const id = p.unid ?? f.id ?? `emsc-unknown-${Date.now()}`;
+  const id = p.unid ?? f.id;
+  const time = p.time;
+  const updated = p.lastupdate;
+  // EMSC publishes all three on every record, so a missing one means its format changed;
+  // the response fails as malformed rather than carrying an ID or time EMSC never gave.
+  if (typeof id !== 'string' || typeof time !== 'string' || typeof updated !== 'string') {
+    throw malformedResponse('EMSC');
+  }
   const place = p.flynn_region ?? 'Unknown location';
   const magType = p.magtype ?? 'unknown';
-  const time = p.time ?? new Date(0).toISOString();
-  const updated = p.lastupdate ?? time;
-
-  // EMSC: properties.lat/lon may duplicate geometry coordinates; use them when present
-  const actualLat = typeof p.lat === 'number' ? p.lat : lat;
-  const actualLon = typeof p.lon === 'number' ? p.lon : lon;
-  const actualDepth = typeof p.depth === 'number' ? p.depth : depth;
 
   return {
     id,
@@ -125,9 +180,9 @@ function normalizeEmscFeature(f: EmscFeature): EarthquakeEvent {
     time,
     updated,
     place,
-    latitude: actualLat,
-    longitude: actualLon,
-    depth_km: actualDepth,
+    latitude: position.latitude,
+    longitude: position.longitude,
+    depth_km: position.depthKm,
     // EMSC does not provide USGS-specific impact fields
     felt: null,
     cdi: null,
@@ -202,7 +257,7 @@ export class EmscService {
 
         // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
         // returning, so a Response here is always 2xx.
-        const text = await response.text();
+        const text = await readResponseText(response, 'EMSC');
         if (HTML_BODY.test(text)) {
           throw serviceUnavailable('EMSC returned HTML instead of JSON.', { url });
         }
@@ -214,7 +269,7 @@ export class EmscService {
           return { events: [], count: 0 };
         }
 
-        const data = JSON.parse(text) as EmscFeatureCollection;
+        const data = parseJsonBody(text, 'EMSC', isFeatureCollection);
         const events = data.features.map(normalizeEmscFeature);
 
         return {
@@ -225,6 +280,7 @@ export class EmscService {
       {
         operation: 'EmscService.searchEvents',
         deadlineMs: CALL_DEADLINE_MS,
+        isTransient: isTransientUpstream,
         context: reqCtx,
         baseDelayMs: 1000,
         signal: ctx.signal,
@@ -283,7 +339,7 @@ export class EmscService {
 
         // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
         // returning, so a Response here is always 2xx.
-        const text = await response.text();
+        const text = await readResponseText(response, 'EMSC');
         if (HTML_BODY.test(text)) {
           throw serviceUnavailable('EMSC returned HTML instead of JSON.', { eventId: unid });
         }
@@ -291,15 +347,22 @@ export class EmscService {
           throw notFound('EMSC returned no event for the requested ID.', { eventId: unid });
         }
 
-        const raw = JSON.parse(text) as EmscFeature | EmscFeatureCollection;
-        if (raw.type !== 'Feature' || (raw.properties.unid ?? raw.id) !== unid) {
-          throw notFound(`No earthquake event found for ID "${unid}".`, { eventId: unid });
-        }
+        const raw = parseJsonBody(text, 'EMSC', isEventDocument);
+        const notTheEvent = () =>
+          notFound(`No earthquake event found for ID "${unid}".`, { eventId: unid });
+        if (raw.type !== 'Feature') throw notTheEvent();
+        // A Feature the normalizer cannot read fails before its properties are read for the ID.
+        if (!isFeature(raw)) throw malformedResponse('EMSC');
+        const id = raw.properties.unid ?? raw.id;
+        // A Feature with no ID cannot be matched to the request, nor be the event it names.
+        if (typeof id !== 'string') throw malformedResponse('EMSC');
+        if (id !== unid) throw notTheEvent();
         return raw;
       },
       {
         operation: 'EmscService.getEvent',
         deadlineMs: CALL_DEADLINE_MS,
+        isTransient: isTransientUpstream,
         context: reqCtx,
         baseDelayMs: 1000,
         signal: ctx.signal,
@@ -309,11 +372,14 @@ export class EmscService {
     return { event: normalizeEmscFeature(feature) };
   }
 
-  /** Count events matching a query. */
+  /**
+   * Count events matching a query. One deadline covers every attempt and backoff: the
+   * full call budget for a standalone count, or what remains of a search's.
+   */
   countEvents(
     params: EarthquakeQueryParams,
     ctx: Context,
-    deadlineMs?: number,
+    deadlineMs = CALL_DEADLINE_MS,
   ): Promise<{
     count: number;
     maxAllowed: number | null;
@@ -337,12 +403,12 @@ export class EmscService {
 
         // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
         // returning, so a Response here is always 2xx.
-        const text = await response.text();
+        const text = await readResponseText(response, 'EMSC');
         if (HTML_BODY.test(text)) {
           throw serviceUnavailable('EMSC returned HTML instead of JSON.', { url });
         }
 
-        const data = JSON.parse(text) as EmscCountResponse;
+        const data = parseJsonBody(text, 'EMSC', isCountResponse);
         const EMSC_LIMIT = 20000;
         return {
           count: data.count,
@@ -352,7 +418,8 @@ export class EmscService {
       },
       {
         operation: 'EmscService.countEvents',
-        ...(deadlineMs != null ? { deadlineMs } : {}),
+        deadlineMs,
+        isTransient: isTransientUpstream,
         context: reqCtx,
         baseDelayMs: 1000,
         signal: ctx.signal,
@@ -386,9 +453,10 @@ export class EmscService {
     if (params.maxLongitude != null) q.set('maxlongitude', String(params.maxLongitude));
     if (params.minDepthKm != null) q.set('mindepth', String(params.minDepthKm));
     if (params.maxDepthKm != null) q.set('maxdepth', String(params.maxDepthKm));
-    // EMSC does not support alertlevel, minfelt, minsig, eventtype — silently omit.
-    // Its endpoint has no eventtype parameter at all and answers one with HTTP 400
-    // "Unknown request parameters(s)", so sending it would fail the whole query.
+    // EMSC does not support alertlevel, minfelt, minsig, minmmi, mincdi, eventtype —
+    // silently omit. Its endpoint has no eventtype, minmmi, or mincdi parameter at all and
+    // answers one with HTTP 400 "Unknown request parameters(s)", so sending it would fail
+    // the whole query.
     if (params.limit != null) q.set('limit', String(params.limit));
     // FDSN offset is 1-based — offset=1 is the first match, and 0 is rejected.
     if (params.offset != null) q.set('offset', String(params.offset));

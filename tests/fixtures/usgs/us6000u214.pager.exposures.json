@@ -1,0 +1,13 @@
+{
+  "population_exposure": {
+    "mmi": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "aggregated_exposure": [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    "maximum_border_mmi": 3.9000000953674316,
+    "country_exposures": []
+  },
+  "economic_exposure": {
+    "mmi": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    "aggregated_exposure": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    "country_exposures": []
+  }
+}

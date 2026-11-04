@@ -15,15 +15,22 @@
 
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
-import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import {
+  createInMemoryStorage,
+  createMockContext,
+  runToolContract,
+} from '@cyanheads/mcp-ts-core/testing';
 import { fetchWithTimeout, requestContextService } from '@cyanheads/mcp-ts-core/utils';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { earthquakeEventResource } from '@/mcp-server/resources/definitions/earthquake-event.resource.js';
 import { earthquakeCountEvents } from '@/mcp-server/tools/definitions/earthquake-count-events.tool.js';
 import { earthquakeGetEvent } from '@/mcp-server/tools/definitions/earthquake-get-event.tool.js';
 import { earthquakeGetFeed } from '@/mcp-server/tools/definitions/earthquake-get-feed.tool.js';
 import { earthquakeSearchEvents } from '@/mcp-server/tools/definitions/earthquake-search-events.tool.js';
+import { initEmscService } from '@/services/emsc/emsc-service.js';
+import { CALL_DEADLINE_MS } from '@/services/upstream-call.js';
 import * as usgsModule from '@/services/usgs/usgs-service.js';
 
 /** What `fetchWithTimeout` raises on a deadline overrun, as the services see it. */
@@ -186,4 +193,59 @@ describe('tool contracts — an upstream timeout lands on a declared reason', ()
       expect(errors?.some((e) => e.code === JsonRpcErrorCode.ServiceUnavailable)).toBe(true);
     }
   });
+});
+
+describe('earthquake_count_events — a hung upstream with a long per-attempt timeout (issue #59)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    // REQUEST_TIMEOUT_MS=30000: four attempts would outlast a 60 s client timeout.
+    usgsModule.initUsgsService(
+      {} as AppConfig,
+      createInMemoryStorage(),
+      'https://usgs.test',
+      30_000,
+    );
+    initEmscService({} as AppConfig, createInMemoryStorage(), 'https://emsc.test', 30_000);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it.each(['usgs', 'emsc'] as const)(
+    '%s fails as source_timeout within the 50 s call deadline',
+    async (source) => {
+      vi.useFakeTimers();
+      const started = Date.now();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          (_url: string, init?: RequestInit) =>
+            new Promise<Response>((_resolve, reject) => {
+              const fail = () =>
+                reject(init?.signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+              if (init?.signal?.aborted) fail();
+              else init?.signal?.addEventListener('abort', fail, { once: true });
+            }),
+        ),
+      );
+
+      const pending = runToolContract(earthquakeCountEvents, { source, min_magnitude: 5 });
+      await vi.runAllTimersAsync();
+      const result = await pending;
+
+      expect(Date.now() - started).toBeLessThanOrEqual(CALL_DEADLINE_MS);
+      expect(result.structuredContent).toMatchObject({
+        error: {
+          code: JsonRpcErrorCode.Timeout,
+          message: `${source === 'usgs' ? 'Usgs' : 'Emsc'}Service.countEvents exceeded its 50000ms retry deadline after 2 attempts.`,
+          data: {
+            reason: 'source_timeout',
+            recovery: { hint: contractRecovery(earthquakeCountEvents.errors, 'source_timeout') },
+          },
+        },
+      });
+    },
+  );
 });

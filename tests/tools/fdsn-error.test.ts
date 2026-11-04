@@ -6,8 +6,10 @@
  */
 
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import { ErrorHandler } from '@cyanheads/mcp-ts-core/utils';
 import { describe, expect, it } from 'vitest';
 import { extractFdsnReason, upstreamRejection } from '@/mcp-server/tools/fdsn-error.js';
+import { malformedResponse, readResponseText } from '@/services/upstream-call.js';
 
 /** USGS: generic reason phrase on the stamp line, the useful sentence on the next one. */
 const USGS_BAD_STARTTIME = `Error 400: Bad Request
@@ -226,4 +228,32 @@ describe('upstreamRejection', () => {
     expect(upstreamRejection(new Error('boom'))).toBeUndefined();
     expect(upstreamRejection(undefined)).toBeUndefined();
   });
+
+  it.each(['USGS', 'EMSC'] as const)(
+    'never reads a %s body this server could not read as a fault in the caller input (issue #60)',
+    async (source) => {
+      const dropped = (await readResponseText(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.error(new TypeError('terminated'));
+            },
+          }),
+        ),
+        source,
+      ).catch((e: unknown) => e)) as McpError;
+      const inputFaults = [
+        JsonRpcErrorCode.InvalidParams,
+        JsonRpcErrorCode.InvalidRequest,
+        JsonRpcErrorCode.ValidationError,
+        JsonRpcErrorCode.NotFound,
+      ];
+      for (const err of [malformedResponse(source), dropped]) {
+        expect(err).toBeInstanceOf(McpError);
+        expect(upstreamRejection(err)).toBeUndefined();
+        // Classified by its text alone, as the framework classifies a plain Error.
+        expect(inputFaults).not.toContain(ErrorHandler.determineErrorCode(new Error(err.message)));
+      }
+    },
+  );
 });

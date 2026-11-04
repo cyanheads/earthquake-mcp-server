@@ -13,7 +13,9 @@ import {
   ignoredUsgsFilters,
   invertedRange,
 } from '@/mcp-server/tools/query-params.js';
+import { renderNotice, unlistedValueNotice } from '@/mcp-server/tools/vocabulary-notice.js';
 import { getEmscService } from '@/services/emsc/emsc-service.js';
+import { CALL_DEADLINE_MS } from '@/services/upstream-call.js';
 import type { EarthquakeQueryParams } from '@/services/usgs/types.js';
 import { getUsgsService, type UsgsService } from '@/services/usgs/usgs-service.js';
 
@@ -30,10 +32,7 @@ export const earthquakeCountEvents = tool('earthquake_count_events', {
         'Use to count events with confirmed public impact. Only available from USGS.',
     ),
     event_type: earthquakeFilterFields.event_type.describe(
-      'Filter by upstream event classification, e.g. "earthquake" to exclude quarry blasts and ' +
-        'explosions from the count, or "quarry blast" to count only those. Matched verbatim ' +
-        'against the USGS catalog, which accepts any string and returns a count of zero for an ' +
-        'unrecognized one. Only available from USGS.',
+      'Filter by upstream event classification, e.g. "earthquake" to exclude quarry blasts and explosions from the count, or "quarry blast" to count only those; a comma-separated list such as "earthquake,explosion" counts any of them. USGS matches case-insensitively and counts zero for a value it does not list, which the notice then names. Only available from USGS.',
     ),
     source: z
       .enum(['usgs', 'emsc'])
@@ -116,6 +115,14 @@ export const earthquakeCountEvents = tool('earthquake_count_events', {
           .number()
           .optional()
           .describe('Applied minimum significance; absent for EMSC.'),
+        min_mmi: z
+          .number()
+          .optional()
+          .describe('Applied minimum ShakeMap intensity (MMI); absent for EMSC.'),
+        min_cdi: z
+          .number()
+          .optional()
+          .describe('Applied minimum DYFI community intensity (CDI); absent for EMSC.'),
         event_type: z.string().optional().describe('Applied event type; absent for EMSC.'),
         magnitude_type: z.string().optional().describe('Applied magnitude type.'),
         product_type: z.string().optional().describe('Applied required product; USGS only.'),
@@ -139,6 +146,12 @@ export const earthquakeCountEvents = tool('earthquake_count_events', {
           'does not support them. The count is NOT constrained by these — re-run with ' +
           'source=usgs to apply them. Absent when every supplied filter was applied.',
       ),
+    notice: z
+      .string()
+      .optional()
+      .describe(
+        'On a USGS count of zero, names each supplied event_type, magnitude_type, or product_type value USGS does not list, which matches no events, with the listed value it likely meant. Absent otherwise.',
+      ),
   },
 
   enrichmentTrailer: {
@@ -153,6 +166,7 @@ export const earthquakeCountEvents = tool('earthquake_count_events', {
         `**Ignored filters (not supported by EMSC, not sent upstream):** ${(f ?? []).join(', ')} — ` +
         'this count is NOT constrained by the listed filters. Re-run with source=usgs to apply them.',
     },
+    notice: { render: renderNotice },
   },
 
   errors: [
@@ -180,7 +194,7 @@ export const earthquakeCountEvents = tool('earthquake_count_events', {
     {
       reason: 'source_unavailable',
       code: JsonRpcErrorCode.ServiceUnavailable,
-      when: 'Selected source API returns a 5xx or is unreachable.',
+      when: 'Selected source API returns a 5xx, serves HTML or an unreadable body, or is unreachable.',
       retryable: true,
       recovery: 'Try the other source (usgs or emsc) or retry after a short delay.',
     },
@@ -265,6 +279,8 @@ export const earthquakeCountEvents = tool('earthquake_count_events', {
 
     // Shared builder applies the documented 30-day start-time default server-side
     const params: EarthquakeQueryParams = buildQueryParams(input);
+    // The call's budget, armed before the count's own: the vocabulary lookup gets what remains.
+    const deadline = Date.now() + CALL_DEADLINE_MS;
 
     let result: Awaited<ReturnType<UsgsService['countEvents']>>;
     try {
@@ -343,6 +359,12 @@ export const earthquakeCountEvents = tool('earthquake_count_events', {
     // constrained the count — name the dropped filters outright.
     const ignoredFilters = ignoredUsgsFilters(input, input.source);
     if (ignoredFilters.length > 0) ctx.enrich({ ignoredFilters });
+
+    // USGS counts zero for a type value outside its vocabulary; name the value, not a bare zero.
+    if (input.source === 'usgs' && result.count === 0) {
+      const notice = await unlistedValueNotice(params, ctx, deadline);
+      if (notice) ctx.enrich.notice(notice);
+    }
 
     return {
       count: result.count,

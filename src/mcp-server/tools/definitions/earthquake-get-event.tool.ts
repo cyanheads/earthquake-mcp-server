@@ -16,6 +16,7 @@ import {
   formatEvent,
   formatEventDetail,
   formatEventIncludes,
+  PagerEstimatesSchema,
   UnavailableIncludeSchema,
 } from '@/mcp-server/tools/schemas.js';
 import { getEmscService, isEmscEventId } from '@/services/emsc/emsc-service.js';
@@ -25,7 +26,7 @@ import { getUsgsService, type UsgsService } from '@/services/usgs/usgs-service.j
 
 export const earthquakeGetEvent = tool('earthquake_get_event', {
   title: 'Get Earthquake Event Detail',
-  description: `Fetch one earthquake by event ID: a USGS ID, or an EMSC ID (an origin date and seven-digit sequence, e.g. "20190706_0000043"). Returns the same normalized event a search result carries. For a USGS event it adds a projection of the analysis products only the single-event response holds: PAGER impact alert and report link, ShakeMap peak intensity and ground motion, DYFI felt-report totals, the moment-tensor focal mechanism, landslide and liquefaction alerts, origin quality (azimuthal gap, station count, location uncertainty, depth type), and finite-fault rupture dimensions. Product groups are omitted when no projected field is available — a small automatic event typically carries only origin quality, while a large reviewed one has most of it. Opt into more with include: alternative origin solutions, magnitude solutions, phase arrivals, or the USGS aftershock forecast; a requested group that is not returned is listed in unavailable_includes. EMSC publishes none of these products, so an EMSC event has no detail and lists every requested group as not_published. Event IDs appear in the "id" field of earthquake_get_feed and earthquake_search_events results; a USGS event's associated_ids are also accepted.`,
+  description: `Fetch one earthquake by event ID: a USGS ID, or an EMSC ID (an origin date and seven-digit sequence, e.g. "20190706_0000043"). Returns the same normalized event a search result carries. For a USGS event it adds a projection of the analysis products only the single-event response holds: PAGER impact alert and report link, ShakeMap peak intensity and ground motion, DYFI felt-report totals, the moment-tensor focal mechanism, landslide and liquefaction alerts, origin quality (azimuthal gap, station count, location uncertainty, depth type), and finite-fault rupture dimensions. Product groups are omitted when no projected field is available — a small automatic event typically carries only origin quality, while a large reviewed one has most of it. Opt into more with include: alternative origin solutions, magnitude solutions, phase arrivals, the USGS aftershock forecast, or the PAGER loss estimates behind the alert with population exposure by shaking intensity; a requested group that is not returned is listed in unavailable_includes. EMSC publishes none of these products, so an EMSC event has no detail and lists every requested group as not_published. Event IDs appear in the "id" field of earthquake_get_feed and earthquake_search_events results; a USGS event's associated_ids are also accepted.`,
   annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
 
   input: z.object({
@@ -40,7 +41,7 @@ export const earthquakeGetEvent = tool('earthquake_get_event', {
       .array(z.enum(EVENT_INCLUDE_GROUPS))
       .optional()
       .describe(
-        'Optional groups: origins (every contributed origin solution, no extra request), magnitudes and arrivals (one shared phase-data download; every arrival of the preferred origin, nearest first), aftershock_forecast (one extra request). Omit for the default response.',
+        'Optional groups: origins (every contributed origin solution, no extra request), magnitudes and arrivals (one shared phase-data download; every arrival of the preferred origin, nearest first), aftershock_forecast (one extra request), pager (fatality and economic-loss brackets with probabilities, and people exposed at each intensity by country; two or three extra requests). Omit for the default response.',
       ),
   }),
 
@@ -63,6 +64,9 @@ export const earthquakeGetEvent = tool('earthquake_get_event', {
       .describe('All phase arrivals of the preferred origin, sorted by distance ascending.'),
     aftershock_forecast: AftershockForecastSchema.optional().describe(
       'USGS Operational Aftershock Forecast; probabilities change with each update.',
+    ),
+    pager: PagerEstimatesSchema.optional().describe(
+      'USGS PAGER loss estimates and population exposure; values change with each PAGER update.',
     ),
     unavailable_includes: z
       .array(UnavailableIncludeSchema)
@@ -89,7 +93,7 @@ export const earthquakeGetEvent = tool('earthquake_get_event', {
     {
       reason: 'source_unavailable',
       code: JsonRpcErrorCode.ServiceUnavailable,
-      when: 'The USGS or EMSC event API returns a 5xx, serves HTML, or is unreachable.',
+      when: 'The USGS or EMSC event API returns a 5xx, serves HTML or an unreadable body, or is unreachable.',
       retryable: true,
       recovery:
         'Retry after a short delay. The same event also appears in earthquake_search_events results (source=emsc for an EMSC ID), and a recent USGS event in earthquake_get_feed results, which carry the normalized record without the products.',

@@ -19,16 +19,28 @@ export const emscFixture = (name: string) =>
 /** A fixture file name served as a 200, or a function answering the request. */
 export type Responder = string | ((url: URL, init?: RequestInit) => Response | Promise<Response>);
 
+/** Responders keyed by content path within the product, e.g. `json/alerts.json`. */
+export type ContentFiles = Readonly<Record<string, Responder>>;
+
+/** The PAGER content files the `pager` group reads, served from `<eventId>.pager.<file>.json`. */
+export const pagerFiles = (eventId: string): ContentFiles => ({
+  'json/alerts.json': `${eventId}.pager.alerts.json`,
+  'json/exposures.json': `${eventId}.pager.exposures.json`,
+  'json/comments.json': `${eventId}.pager.comments.json`,
+});
+
 /**
- * Stub `fetch` for one event. `products` maps a product type (`phase-data`, `oaf`) to
- * the responder for its content files. Any other URL rejects and is still recorded.
+ * Stub `fetch` for one event. `products` maps a product type (`phase-data`, `oaf`,
+ * `losspager`) to one responder for every content file, or to responders per content
+ * path. Any other URL rejects and is still recorded.
  */
 export function stubUsgsEvent(
   eventId: string,
-  products: Partial<Record<'phase-data' | 'oaf', Responder>> = {},
+  products: Partial<Record<'phase-data' | 'oaf' | 'losspager', Responder | ContentFiles>> = {},
   detail: Responder = `${eventId}.detail.json`,
 ) {
   const urls: string[] = [];
+  const byType = new Map(Object.entries(products));
   const answer = (responder: Responder, url: URL, init?: RequestInit) =>
     typeof responder === 'string'
       ? new Response(fixture(responder), { status: 200 })
@@ -39,12 +51,13 @@ export function stubUsgsEvent(
     if (url.pathname === '/fdsnws/event/1/query' && url.searchParams.get('eventid') === eventId) {
       return answer(detail, url, init);
     }
-    const productType = url.pathname.split('/')[2];
+    // /product/<type>/<code>/<source>/<version>/<content path>
+    const [, root, productType = '', , , , ...contentPath] = url.pathname.split('/');
+    const entry = root === 'product' ? byType.get(productType) : undefined;
     const responder =
-      url.pathname.startsWith('/product/') &&
-      (productType === 'phase-data' || productType === 'oaf')
-        ? products[productType]
-        : undefined;
+      entry === undefined || typeof entry === 'string' || typeof entry === 'function'
+        ? entry
+        : entry[contentPath.join('/')];
     if (responder !== undefined) return answer(responder, url, init);
     throw new Error(`unexpected fetch ${url.href}`);
   });

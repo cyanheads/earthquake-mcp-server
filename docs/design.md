@@ -7,8 +7,8 @@
 | Name | Description | Key Inputs | Annotations |
 |:-----|:------------|:-----------|:------------|
 | `earthquake_get_feed` | Fetch a USGS real-time pre-computed feed by magnitude tier and time window. Fast, cached, low-latency. | `magnitude_tier` (all/1.0/2.5/4.5/significant), `time_window` (hour/day/week/month) | `readOnlyHint: true`, `openWorldHint: true` |
-| `earthquake_search_events` | Query earthquakes by time range, magnitude, depth, location radius, PAGER alert level, or felt reports. Supports both USGS and EMSC sources. | `start_time`, `end_time`, `min_magnitude`, `latitude`+`longitude`+`radius_km`, `source`, `limit`, `order_by` | `readOnlyHint: true`, `openWorldHint: true` |
-| `earthquake_get_event` | Fetch one earthquake by USGS or EMSC event ID. USGS events add felt reports, ShakeMap intensity, PAGER alert, and other product projections; `include` opts into alternative origins, magnitudes, phase arrivals, and the aftershock forecast. | `event_id`, `include` | `readOnlyHint: true`, `openWorldHint: true` |
+| `earthquake_search_events` | Query earthquakes by time range, magnitude, depth, location radius, PAGER alert level, felt reports, or ShakeMap and DYFI intensity. Supports both USGS and EMSC sources. | `start_time`, `end_time`, `min_magnitude`, `latitude`+`longitude`+`radius_km`, `source`, `limit`, `order_by` | `readOnlyHint: true`, `openWorldHint: true` |
+| `earthquake_get_event` | Fetch one earthquake by USGS or EMSC event ID. USGS events add felt reports, ShakeMap intensity, PAGER alert, and other product projections; `include` opts into alternative origins, magnitudes, phase arrivals, the aftershock forecast, and PAGER loss estimates. | `event_id`, `include` | `readOnlyHint: true`, `openWorldHint: true` |
 | `earthquake_count_events` | Count earthquakes matching filters without fetching full records. Useful for "how many M5+ earthquakes happened in Japan this year?" queries. | same filters as `earthquake_search_events` minus `limit`/`offset`/`order_by` | `readOnlyHint: true`, `openWorldHint: true` |
 
 ### Resources
@@ -63,11 +63,11 @@ These services are thin clients — shared HTTP retry logic, base URL, response 
 
 | Env Var | Required | Description |
 |:--------|:---------|:------------|
-| `USGS_BASE_URL` | No | Override USGS API base URL. Defaults to `https://earthquake.usgs.gov`. Useful for testing or mirroring; a mirror must also serve product files on its own origin (content URLs rewritten), or the `magnitudes`, `arrivals`, and `aftershock_forecast` groups report `fetch_failed`. |
+| `USGS_BASE_URL` | No | Override USGS API base URL. Defaults to `https://earthquake.usgs.gov`. Useful for testing or mirroring; a mirror must also serve product files on its own origin (content URLs rewritten), or the `magnitudes`, `arrivals`, `aftershock_forecast`, and `pager` groups report `fetch_failed`. |
 | `EMSC_BASE_URL` | No | Override EMSC API base URL. Defaults to `https://www.seismicportal.eu`. |
 | `DEFAULT_LIMIT` | No | Events `earthquake_search_events` returns when a call omits `limit`. Defaults to `15`; accepts 1–1,000. |
 | `EARTHQUAKE_CLAMP_LIMITS` | No | `true` (default) clamps a search or feed `limit` above 1,000 to 1,000 with a notice and advertises no schema maximum; `false` advertises and enforces `maximum: 1000`. Parsed with `z.stringbool()`. |
-| `REQUEST_TIMEOUT_MS` | No | Per-attempt HTTP timeout in milliseconds. Defaults to `10000`. Feed, search, and event calls also share a 50-second total deadline across every request and retry; standalone count calls use this per-attempt value. |
+| `REQUEST_TIMEOUT_MS` | No | Per-attempt HTTP timeout in milliseconds. Defaults to `10000`. Every feed, search, count, and event call also runs under one 50-second total deadline across its requests and retries. |
 
 ---
 
@@ -117,8 +117,9 @@ One query and, when the page fills `limit`, a count lookup on the selected sourc
 |:--|:-----|:--------|
 | 1 | `GET /fdsnws/event/1/query?format=geojson&{filters}&limit={limit}` (USGS) or `?format=json&…` (EMSC) | Filtered event query |
 | 2 | `GET /fdsnws/event/1/count?{filters}` | Full match count when the page fills `limit` |
+| 3 | USGS `GET /fdsnws/event/1/application.json` | The event, magnitude, and product type vocabulary, when the first page is empty and the call sent `event_type`, `magnitude_type`, or `product_type`; cached per service for 24 hours |
 
-USGS uses `format=geojson`; EMSC uses `format=json` (`format=geojson` returns HTTP 400 on EMSC). Both accept the shared time, magnitude, depth, and area filters. USGS supports `maxradiuskm` directly; EMSC accepts `maxradius` in degrees. The service layer selects the format and converts the radius. USGS-only filters (`minalertlevel`, `minsig`, `minfelt`, `eventtype`, `producttype`, `reviewstatus`) are omitted for EMSC and disclosed in `ignoredFilters`.
+USGS uses `format=geojson`; EMSC uses `format=json` (`format=geojson` returns HTTP 400 on EMSC). Both accept the shared time, magnitude, depth, and area filters. USGS supports `maxradiuskm` directly; EMSC accepts `maxradius` in degrees. The service layer selects the format and converts the radius. USGS-only filters (`minalertlevel`, `minsig`, `minfelt`, `minmmi`, `mincdi`, `eventtype`, `producttype`, `reviewstatus`) are omitted for EMSC and disclosed in `ignoredFilters`.
 
 ### `earthquake_get_event`
 
@@ -129,16 +130,18 @@ An ID matching `^\d{8}_\d{7}$` is an EMSC unid and goes to SeismicPortal; every 
 | 1 | USGS `GET /fdsnws/event/1/query?eventid={id}&format=geojson`, or EMSC `GET /fdsnws/event/1/query?eventid={unid}&format=json` | The event; on USGS, with `products` populated |
 | 2 | The preferred `phase-data` product's `quakeml.xml` | `magnitudes` and `arrivals`, when requested and the product exists |
 | 3 | The `oaf` product's `forecast.json` | `aftershock_forecast`, when requested and the product exists |
+| 4 | The preferred `losspager` product's `json/alerts.json`, `json/exposures.json`, and, when listed, `json/comments.json` | `pager`, when requested and the product lists the alerts and exposures files |
 
-Calls 2 and 3 are USGS-only and run concurrently after call 1; `origins` reads call 1's `origin` products and costs nothing. One 50-second deadline covers all three, retries included. EMSC answers an unknown or malformed unid with HTTP 204 and an empty body, which maps to `not_found`.
+Calls 2–4 are USGS-only and run concurrently after call 1, the PAGER files concurrently with each other; `origins` reads call 1's `origin` products and costs nothing. With every group requested, a lookup makes six requests, five of them concurrent. One 50-second deadline covers them all, retries included. EMSC answers an unknown or malformed unid with HTTP 204 and an empty body, which maps to `not_found`.
 
 ### `earthquake_count_events`
 
-Single call per source:
+One call per source, plus the vocabulary on a zero USGS count:
 
 | # | Call | Purpose |
 |:--|:-----|:--------|
 | 1 | `GET /fdsnws/event/1/count?format=geojson&{filters}` (USGS) or `?format=json&{filters}` (EMSC) | Returns `{count, maxAllowed}` (USGS) or `{count}` (EMSC) |
+| 2 | USGS `GET /fdsnws/event/1/application.json` | The type vocabulary, when the count is zero and the call sent `event_type`, `magnitude_type`, or `product_type`; cached per service for 24 hours |
 
 USGS count endpoint returns `{"count": N, "maxAllowed": 20000}`. When count > maxAllowed, the response also includes `"error": "..."` — the service layer should detect this and set `exceeds_limit: true`, not treat the `error` field as a failure. EMSC count endpoint is the same FDSN spec but returns only `{"count": N}` — no `maxAllowed` field. Use this when the human asks "how many" without needing individual events.
 
@@ -187,7 +190,7 @@ USGS count endpoint returns `{"count": N, "maxAllowed": 20000}`. When count > ma
 ```ts
 errors: [
   { reason: 'feed_unavailable', code: ServiceUnavailable,
-    when: 'USGS feed endpoint returns a 5xx, serves HTML, or is unreachable',
+    when: 'USGS feed endpoint returns a 5xx, serves HTML or an unreadable body, or is unreachable',
     recovery: 'Try a smaller time_window, or use earthquake_search_events as a fallback.' },
   { reason: 'feed_timeout', code: Timeout,
     when: 'USGS feed endpoint did not answer before the request deadline',
@@ -205,7 +208,9 @@ Search and count normalize date-only bounds to midnight at the start of the name
 
 Both tools reject strictly inverted magnitude, depth, and explicit time pairs before fetching, with `invalid_range`, both values, and recovery on both client surfaces. Time ordering compares normalized UTC instants. Equal/single bounds and calendar-invalid upstream errors retain their existing behavior.
 
-Both tools accept `magnitude_type` (open string, sent as `magnitudetype`) on either source. `product_type` (open string, `producttype`) and `review_status` (`automatic`/`reviewed`, `reviewstatus`) are USGS-only. Blank values mean omitted. EMSC queries/counts omit unsupported values, name them in `ignoredFilters`, and echo only applied filters.
+Both tools accept `magnitude_type` (open string, sent as `magnitudetype`) on either source; EMSC matches its own lowercase types (`mb`, `mw`) exactly and has no `mww`. `product_type` (open string, `producttype`) and `review_status` (`automatic`/`reviewed`, `reviewstatus`) are USGS-only. Blank values mean omitted. EMSC queries/counts omit unsupported values, name them in `ignoredFilters`, and echo only applied filters.
+
+`min_mmi` (sent as `minmmi`) and `min_cdi` (`mincdi`) floor the ShakeMap and DYFI intensities at 1–12. Both are USGS-only and sent only when supplied; an event without a ShakeMap or DYFI reports never matches. USGS answers a value outside 0–12 with HTTP 400, and local validation rejects one before any request.
 
 **Selected input fields:** The complete shared filter schema is in [`query-params.ts`](../src/mcp-server/tools/query-params.ts).
 ```ts
@@ -234,6 +239,10 @@ Both tools accept `magnitude_type` (open string, sent as `magnitudetype`) on eit
     .describe('Minimum number of DYFI (Did You Feel It?) reports. Use to find events with confirmed public impact. Only available from USGS.'),
   min_significance: z.number().int().optional()
     .describe('Minimum USGS significance score (0–2000+). Combines magnitude, felt reports, and PAGER estimates. Significant events typically score 600+. Only available from USGS.'),
+  min_mmi: z.number().min(1).max(12).optional()
+    .describe('Minimum ShakeMap intensity on the Modified Mercalli scale (1–12): the strongest shaking USGS modeled for the event, e.g. 7 for very strong shaking. Finds shaking a magnitude floor or alert_level misses. An event without a ShakeMap never matches; product_type "shakemap" requires one at any intensity. Only available from USGS.'),
+  min_cdi: z.number().min(1).max(12).optional()
+    .describe('Minimum DYFI (Did You Feel It?) community intensity (1–12): the strongest shaking people reported for the event. An event without DYFI reports never matches. Only available from USGS.'),
   source: z.enum(['usgs', 'emsc']).default('usgs')
     .describe('USGS includes PAGER, DYFI and ShakeMap; EMSC (European-Mediterranean Seismological Centre) is an independent global catalog, with densest station coverage around Europe/Mediterranean and no such impact products. earthquake_get_event accepts IDs from either source.'),
   limit: limitSchema((capRule) => `Events to return per call. Default ${getServerConfig().defaultLimit}; ${capRule}. Combine with offset to retrieve match sets larger than one call can return.`),
@@ -253,6 +262,8 @@ Both tools accept `magnitude_type` (open string, sent as `magnitudetype`) on eit
 
 **Enrichment (both client surfaces):** `totalCount` is inferred as `offset - 1 + returned events` for nonempty short pages; an empty first page establishes zero, while an empty later page establishes no total. Full pages keep the count sub-call and `countUnavailable` on failure. `truncated`, `nextOffset`, and `notice` guide continuation; `queryEcho` contains effective defaults and applied filters only.
 
+**Unlisted type values:** `event_type`, `magnitude_type`, and `product_type` are open strings USGS matches case-insensitively, and it answers a value outside its vocabulary with zero events. When a USGS search's first page (no `offset`, or `offset` 1) or a USGS count comes back empty and the call sent any of the three, [`vocabulary-notice.ts`](../src/mcp-server/tools/vocabulary-notice.ts) checks each value against `eventtypes`, `magnitudetypes`, and `producttypes` from `application.json`: `event_type` split on commas, members untrimmed and deduplicated, as USGS reads them; the other two whole. Each unlisted value gets a sentence in input order (`<field> "<value>" is not a listed USGS <kind> type`), suggesting the listed values it equals once case and `-`, `_`, and spaces are ignored, joined with " or ", and one closing sentence follows: `USGS matches an unlisted value against no events.` Search puts those sentences after `No events matched the query.` in place of the broadening advice, joined after any clamp sentence; count sends them as its `notice`. Values are quoted as JSON strings; `structuredContent.notice` carries them raw, and the `content[]` render escapes them. No lookup runs on a nonzero result, a later empty page, an EMSC call, or a call without the three. The read is one attempt bounded by `REQUEST_TIMEOUT_MS` and what remains of the call's deadline, skipped when none remains; any failure (non-2xx, timeout, network error, HTML, a body without the three string arrays) logs a warning and leaves the zero as it was, while cancellation propagates. One parsed copy per `UsgsService` serves every caller for 24 hours; a failure is not cached, and concurrent first calls fetch independently.
+
 Each call sends the applied `limit` upstream and returns every event the page holds: exactly `limit`, fewer only on the last page. `nextOffset` is the input offset (default 1) plus the events returned, and `truncated` reflects the count alone. `queryEcho.limit` is the applied limit, after any clamp (see **Limits** under `earthquake_get_feed`). Search does not freeze the upstream catalog. Feed fetching and each search's query/count chain share a 50-second deadline across attempts and backoff. An optional count timeout preserves the page with `countUnavailable`; caller cancellation propagates.
 
 **Error contract:**
@@ -268,7 +279,7 @@ errors: [
     when: 'min_latitude exceeds max_latitude, or min_longitude exceeds max_longitude',
     recovery: 'Swap the inverted pair so the minimum is not above the maximum.' },
   { reason: 'source_unavailable', code: ServiceUnavailable,
-    when: 'Selected source API returns a 5xx or is unreachable',
+    when: 'Selected source API returns a 5xx, serves HTML or an unreadable body, or is unreachable',
     recovery: 'Try the other source (usgs or emsc) or retry after a short delay.' },
   { reason: 'source_timeout', code: Timeout,
     when: 'Selected source API did not answer before the request deadline',
@@ -293,8 +304,8 @@ errors: [
 {
   event_id: z.string().trim().min(1)
     .describe('USGS event ID, e.g. "hv74966427" or "us6000sznj", or EMSC event ID, e.g. "20190706_0000043". Found in the "id" field of earthquake_get_feed and earthquake_search_events results.'),
-  include: z.array(z.enum(['origins', 'magnitudes', 'arrivals', 'aftershock_forecast'])).optional()
-    .describe('Optional groups: origins (every contributed origin solution, no extra request), magnitudes and arrivals (one shared phase-data download; every arrival of the preferred origin, nearest first), aftershock_forecast (one extra request). Omit for the default response.'),
+  include: z.array(z.enum(['origins', 'magnitudes', 'arrivals', 'aftershock_forecast', 'pager'])).optional()
+    .describe('Optional groups: origins (every contributed origin solution, no extra request), magnitudes and arrivals (one shared phase-data download; every arrival of the preferred origin, nearest first), aftershock_forecast (one extra request), pager (fatality and economic-loss brackets with probabilities, and people exposed at each intensity by country; two or three extra requests). Omit for the default response.'),
 }
 ```
 
@@ -307,13 +318,14 @@ errors: [
   magnitudes: z.array(EventMagnitudeSchema).optional(), // event-level magnitudes from the preferred phase-data QuakeML, document order
   arrivals: z.array(EventArrivalSchema).optional(),     // the QuakeML's preferred origin's arrivals joined to their picks, nearest first
   aftershock_forecast: AftershockForecastSchema.optional(), // every `oaf` forecast.json window and magnitude bin, upstream order
+  pager: PagerEstimatesSchema.optional(), // both PAGER alerts with every bracket, impact statements, and every exposure row, upstream order
   unavailable_includes: z.array(UnavailableIncludeSchema).optional(), // requested groups not returned: not_published | fetch_failed
 }
 ```
 
 **Routing:** an `event_id` matching `^\d{8}_\d{7}$` is an EMSC unid. It is fetched from SeismicPortal, normalized by the same function EMSC search uses, and returned without `detail`; every requested `include` group is listed as `not_published` and no USGS request is made. Every other ID goes to USGS. Canonical IDs and aliases match case-insensitively; an alias returns the preferred event, whose `associated_ids` lists the alias. Event resource URI parameters decode once before validation, and the resource routes the same way but takes no `include`.
 
-**Include groups (USGS):** `origins` projects every `origin` product's properties from the response already fetched, so it costs no request. `magnitudes` and `arrivals` share one download of the preferred `phase-data` product's `quakeml.xml`, parsed with `fast-xml-parser` (attributes kept, namespace prefixes removed, values left as strings, entities unexpanded). `magnitudes` lists the document's event-level magnitudes in document order, summarizing station magnitudes as `station_count`. `arrivals` returns every arrival of the document's `preferredOriginID` origin, joined to its pick and sorted by `distance_deg` ascending; a pick time published without a UTC offset is read as UTC and emitted with `Z`. `aftershock_forecast` downloads the `oaf` product's `forecast.json` and projects every window and bin in upstream order, with epoch-ms times as ISO 8601; it runs concurrently with the phase-data download. Sparse upstream fields stay absent, never defaulted. A group whose product the event lacks is `not_published` with no request. A download that fails, returns non-2xx (a redirect included; it is never followed) or HTML, does not parse, or has a content URL off the configured USGS origin lists its groups as `fetch_failed`; the event, `detail`, and the other groups still return, and cancellation propagates. One 50-second deadline covers the event request and every product request, retries included; a product request that cannot finish in the remainder degrades its groups to `fetch_failed`.
+**Include groups (USGS):** `origins` projects every `origin` product's properties from the response already fetched, so it costs no request. `magnitudes` and `arrivals` share one download of the preferred `phase-data` product's `quakeml.xml`, parsed with `fast-xml-parser` (attributes kept, namespace prefixes removed, values left as strings, entities unexpanded). `magnitudes` lists the document's event-level magnitudes in document order, summarizing station magnitudes as `station_count`. `arrivals` returns every arrival of the document's `preferredOriginID` origin, joined to its pick and sorted by `distance_deg` ascending; a pick time published without a UTC offset is read as UTC and emitted with `Z`. `aftershock_forecast` downloads the `oaf` product's `forecast.json` and projects every window and bin in upstream order, with epoch-ms times as ISO 8601. `pager` downloads the preferred `losspager` product's `json/alerts.json` and `json/exposures.json`, plus `json/comments.json` when the product lists it, all three concurrently and concurrently with the other product downloads. It projects both alerts' `level` and every bracket (`min` and `max` parsed from strings to numbers, `min` inclusive and `max` exclusive; economic bounds in millions of USD; `color` and an unrounded `probability`), `impact1` and `impact2` as an ordered `impact` list with blank statements dropped, and the population exposure's `mmi` axis, `aggregated_exposure` as `population`, and every `country_exposures` row, all-zero rows included. PAGER writes `UK` for areas assigned to no country. Sparse upstream fields stay absent, never defaulted; the alert levels and bracket colors may be absent, while a file missing a bound, a probability, or an exposure array does not parse. A group whose product the event lacks is `not_published` with no request; for `pager` that includes a product listing no `json/alerts.json` or no `json/exposures.json`, as PAGER products published before the JSON files do, though `detail.losspager` still carries their alert and report. A download that fails, returns non-2xx (a redirect included; it is never followed) or HTML, does not parse, or has a content URL off the configured USGS origin lists its groups as `fetch_failed`; any failed PAGER file fails the whole `pager` group, which waits for its other downloads to settle first. The event, `detail`, and the other groups still return, and cancellation propagates. One 50-second deadline covers the event request and every product request, retries included; a product request that cannot finish in the remainder degrades its groups to `fetch_failed`.
 
 ShakeMap exposes optional `code_version`; PGV is converted from logarithmic values only for producer `4.0.2+335.gcbad862` and its `.dirty` variant, with unrepresentable converted values omitted.
 
@@ -327,7 +339,7 @@ errors: [
     when: 'No USGS or EMSC event matches the provided event_id',
     recovery: 'Verify the event ID from a feed or search result. USGS IDs are network-specific strings like "us6000sznj" or "hv74966427"; EMSC IDs are an origin date and seven-digit sequence like "20190706_0000043".' },
   { reason: 'source_unavailable', code: ServiceUnavailable,
-    when: 'The USGS or EMSC event API returns a 5xx, serves HTML, or is unreachable',
+    when: 'The USGS or EMSC event API returns a 5xx, serves HTML or an unreadable body, or is unreachable',
     recovery: 'Retry after a short delay. The same event also appears in earthquake_search_events results (source=emsc for an EMSC ID), and a recent USGS event in earthquake_get_feed results, which carry the normalized record without the products.' },
   { reason: 'source_timeout', code: Timeout,
     when: 'The USGS or EMSC event API did not answer before the request deadline',
@@ -353,6 +365,10 @@ errors: [
 }
 ```
 
+**Enrichment (both client surfaces):** `queryEcho`, `ignoredFilters`, and `notice`, which a USGS count of zero carries when a supplied `event_type`, `magnitude_type`, or `product_type` value is not in the USGS vocabulary (see **Unlisted type values** under `earthquake_search_events`).
+
+One 50-second deadline covers every attempt and backoff of a count, whatever `REQUEST_TIMEOUT_MS` is; a hung upstream fails as `source_timeout`. A search's count lookup runs under what remains of the search's deadline instead, and a zero count's vocabulary read under what remains of the count's.
+
 ---
 
 ## Shared Schema: `EarthquakeEventSchema`
@@ -373,11 +389,11 @@ Selected fields returned by feeds and search results; the complete schema is in 
   depth_km: z.number().nullable().describe('Hypocenter depth in kilometers. Extracted from geometry.coordinates[2] (USGS, positive = depth) or properties.depth (EMSC, positive km). Shallow (<70 km), intermediate (70–300 km), or deep (>300 km). Null for events where depth was not measured.'),
   felt: z.number().nullable().describe('Number of DYFI (Did You Feel It?) responses. Null if no reports. USGS only.'),
   cdi: z.number().nullable().describe('Maximum reported intensity (Community Decimal Intensity, 0–12 scale). USGS only.'),
-  mmi: z.number().nullable().describe('Maximum ShakeMap instrumental intensity (Modified Mercalli, 0–12 scale). USGS only.'),
+  mmi: z.number().nullable().describe('Maximum ShakeMap instrumental intensity (Modified Mercalli, 1–12 scale). Null without a ShakeMap, or when the ShakeMap computed no intensity (USGS publishes that as 0). USGS only.'),
   alert: z.enum(['green', 'yellow', 'orange', 'red']).nullable().describe('PAGER estimated impact alert level. Null if not computed. USGS only.'),
   tsunami: z.number().nullable().describe('USGS tsunami flag; null for EMSC. Check tsunami.gov for warning status.'),
   significance: z.number().nullable().describe('USGS significance score (0–2000+). Combines magnitude, felt reports, PAGER. Mapped from API field "sig". USGS only.'),
-  status: z.enum(['automatic', 'reviewed', 'deleted']).nullable().describe('Review status; null for EMSC. Automatic detections may be revised.'),
+  status: z.enum(['automatic', 'reviewed', 'deleted']).nullable().describe('Review status; null for EMSC, and for a USGS record that publishes none of these values. Automatic detections may be revised.'),
   event_url: z.string().optional().describe('USGS event page URL for full human-readable detail. Present for USGS events only.'),
   detail_url: z.string().optional().describe('URL to fetch the full GeoJSON detail record. Present in USGS list responses.'),
   associated_ids: z.array(z.string()).optional().describe('Other network IDs USGS lists for this event, in upstream order; earthquake_get_event accepts them. Absent when USGS lists none, and for EMSC events.'),
@@ -403,7 +419,7 @@ Both catalogs use FDSN query parameters. A `source` enum lets callers switch cat
 USGS supports `maxradiuskm`; EMSC only supports `maxradius` in degrees. The `radius_km` input is always specified in km (more intuitive), and the service layer converts: `degrees = km / 111.2`. This conversion is approximate (Earth isn't a perfect sphere) but well within the precision that matters for seismic queries.
 
 **USGS-only filters omitted for EMSC.**
-USGS-specific filters (`alert_level`, `event_type`, `min_felt`, `min_significance`, `product_type`, `review_status`) are not forwarded when `source=emsc`. `ignoredFilters` names each supplied filter that did not constrain the result, and `queryEcho` omits it. `magnitude_type` applies to both sources.
+USGS-specific filters (`alert_level`, `event_type`, `min_cdi`, `min_felt`, `min_mmi`, `min_significance`, `product_type`, `review_status`) are not forwarded when `source=emsc`. `ignoredFilters` names each supplied filter that did not constrain the result, and `queryEcho` omits it. `magnitude_type` applies to both sources.
 
 **Significance score vs. alert level vs. felt reports.**
 These three metadata fields measure impact from different angles: significance is a USGS composite score, alert level is PAGER's economic/casualty estimate, felt reports count public responses. All three are exposed as optional search filters because they serve different query patterns. Journalists want alert level; researchers might filter on significance; local impact queries use felt reports.
@@ -412,7 +428,7 @@ These three metadata fields measure impact from different angles: significance i
 An `id` from an EMSC search must close the cross-checking loop `source=emsc` exists for, so the lookup accepts EMSC unids as well as USGS IDs. The two grammars are disjoint — USGS IDs begin with letters, and USGS answers an EMSC unid with 404 — so the ID's shape picks the catalog, with no `source` input. EMSC publishes no analysis products, so an EMSC event returns without `detail` or `include` groups. On USGS, `associated_ids` exposes the other network IDs merged into the event, so an alias that resolves to a different canonical `id` stays traceable.
 
 **`include` groups are opt-in on the tool only.**
-Phase arrivals, alternative origins, magnitude solutions, and the aftershock forecast belong to one event record, so they extend `earthquake_get_event` rather than adding tools. Three of the four groups cost a product download, and most events have no aftershock forecast, so nothing is fetched unless requested. The event resource takes no `include`: a URI addresses the event, and the extra requests stay where a caller asks for them.
+Phase arrivals, alternative origins, magnitude solutions, the aftershock forecast, and the PAGER estimates belong to one event record, so they extend `earthquake_get_event` rather than adding tools. Four of the five groups cost product downloads, and most events have no aftershock forecast or PAGER product, so nothing is fetched unless requested. The event resource takes no `include`: a URI addresses the event, and the extra requests stay where a caller asks for them.
 
 **Resources are supplementary.**
 Feed and event resources are added for clients that support injectable context (e.g., Claude Desktop resource panel), but the tool surface is self-sufficient. A tool-only agent can do everything.
@@ -446,7 +462,7 @@ The server returns the USGS `tsunami` flag, with null for EMSC. Warning status m
 - Default order: `time` (newest first)
 - Circle search requires all three of `latitude`, `longitude`, `maxradiuskm` (or `maxradius` in degrees)
 - `eventid` query returns a single Feature with a `products` block (DYFI, ShakeMap, losspager, moment-tensor, focal-mechanism, origin, phase-data, and `oaf` where published). Classify HTTP 404 as `not_found` and HTTP 409 as `event_deleted` from status, without parsing body text. An alias ID returns the canonical Feature; `properties.ids` lists every ID merged into it.
-- Product content files are linked from `products.<type>[].contents.<file>.url`. The `include` groups read the preferred `phase-data` product's `quakeml.xml` (QuakeML: event magnitudes, origins, arrivals, picks) and the `oaf` product's `forecast.json`. Only URLs on the configured base URL's origin are requested.
+- Product content files are linked from `products.<type>[].contents.<file>.url`. The `include` groups read the preferred `phase-data` product's `quakeml.xml` (QuakeML: event magnitudes, origins, arrivals, picks), the `oaf` product's `forecast.json`, and the preferred `losspager` product's `json/alerts.json`, `json/exposures.json`, and `json/comments.json`. Sampled PAGER products last updated from September 2017 on list those three under `json/`, and 2026 products also carry root-level copies; those last updated through February 2017 carry `pager.xml` and `exposure.xml` instead. Only URLs on the configured base URL's origin are requested.
 - Empty results: returns GeoJSON FeatureCollection with `count: 0` and `features: []` at HTTP 200 (not 404) by default; pass `nodata=404` to get HTTP 404 on empty results instead — do NOT set this, let the service layer detect `features.length === 0`
 - Error format: plain text `Error {code}: {reason}\n\n{detail}` for all client errors (4xx). Parse by HTTP status, not response body.
 
@@ -465,7 +481,7 @@ The server returns the USGS `tsunami` flag, with null for EMSC. Warning status m
 - Format: `json` (not `geojson` — EMSC returns HTTP 400 "unknown format requested" for `format=geojson`)
 - Supports same FDSN parameters as USGS with exceptions:
   - No `maxradiuskm` — use `maxradius` in degrees only
-  - No `alertlevel`/`minalertlevel`, `minfelt`, `minsig`, `eventtype`, `producttype`, or `reviewstatus` parameters
+  - No `alertlevel`/`minalertlevel`, `minfelt`, `minsig`, `minmmi`, `mincdi`, `eventtype`, `producttype`, or `reviewstatus` parameters; `minmmi`, `mincdi`, and `eventtype` fail the whole request with HTTP 400 `Unknown request parameters(s)`
   - No `detail` per-event URL with products block
 - `eventid={unid}&format=json` returns a bare `Feature` (no collection wrapper) identical to the search result's. An unknown or malformed unid returns HTTP 204 with an empty body; `nodata=404` is never sent, because its 404 body echoes an internal host.
 - Response shape differs from USGS: properties use `lat`/`lon`/`depth` (lat/lon also duplicated in `geometry.coordinates`), `flynn_region` instead of `place`, `magtype` (lowercase) instead of `magType`, `unid` as primary ID, no `url`/`detail`/`felt`/`cdi`/`mmi`/`alert`/`tsunami`/`sig` fields
@@ -503,6 +519,14 @@ The server returns the USGS `tsunami` flag, with null for EMSC. Warning status m
 | 2026-10-28 | `arrivals`: the preferred origin's only, uncapped, nearest first | The phase-data document can carry several origins, each with its own arrival set; `preferredOriginID` names the one the catalog solution used. A cap without continuation would leave the rest unreachable, and the group is opt-in. Sorting by epicentral distance reads the nearest stations first. |
 | 2026-10-28 | The event resource takes no `include` | A resource URI addresses an event, not a query. The groups that cost product downloads stay on the tool, where a caller opts in per call. |
 | 2026-10-28 | One 50-second deadline per event call | MCP SDK clients time out after 60 seconds by default. Per-attempt timeouts multiplied by retries, or a fresh deadline per chained request, can run past that, so one deadline covers the event request, every product request, and every retry. A product request that cannot finish in what remains degrades its groups to `fetch_failed`. |
-| 2026-10-28 | Product content URLs requested only on the configured USGS origin, redirects not followed | Content URLs come from the upstream response. A link naming any origin other than `USGS_BASE_URL`'s is not requested, and its groups degrade to `fetch_failed`. A same-origin URL could still redirect elsewhere, so product requests use `redirect: 'manual'` and any 3xx fails the download the same way; USGS serves `quakeml.xml` and `forecast.json` with a direct 200, so no real product needs a hop. |
+| 2026-10-28 | Product content URLs requested only on the configured USGS origin, redirects not followed | Content URLs come from the upstream response. A link naming any origin other than `USGS_BASE_URL`'s is not requested, and its groups degrade to `fetch_failed`. A same-origin URL could still redirect elsewhere, so product requests use `redirect: 'manual'` and any 3xx fails the download the same way; USGS serves `quakeml.xml`, `forecast.json`, and the PAGER JSON files with a direct 200, so no real product needs a hop. |
 | 2026-10-28 | `earthquake_get_event` routes EMSC unids by ID shape | `^\d{8}_\d{7}$` IDs go to SeismicPortal's `eventid` query; everything else goes to USGS. The grammars are disjoint (USGS IDs begin with letters, and USGS answers an EMSC unid with 404), so no `source` input is needed, and an `id` from a `source=emsc` search can be looked up. A separate match tool was rejected: by-ID lookup belongs on this tool. |
 | 2026-10-28 | SeismicPortal EventID cross-catalog matching left out | Its matches are heuristic (a misfit tuned for M4.5+), each call queries up to five FDSN services live, and most matches name catalogs (INGV, GFZ, ISC) no tool here can fetch. `associated_ids` covers the USGS side: the network IDs USGS already merged into one event. |
+| 2026-11-03 | `pager` reads the PAGER JSON files, not `pager.xml` | `pager.xml` also exists on products older than the JSON files, but in two dialects (PAGER 1.0: raw-USD bounds, percent probabilities; 2.x: millions of USD, fractions) at 31–400 KB per event, against at most about 7 KB for the three JSON files. Products without the JSON files report `pager` as `not_published`; `detail.losspager` still carries their alert. |
+| 2026-11-03 | `pager` projects ranges, never point estimates or the `summary` flag | PAGER publishes its estimates as probability brackets; `losses.json` point estimates would read as predictions. `alerts.json`'s `summary` flag is undocumented and is not the alert that set the event color (`us6000u18k` flags its yellow fatality alert while the orange economic alert set the event alert), so both alert levels are projected and the caller compares them. |
+| 2026-11-03 | A 2xx body that is not the expected document fails without a retry | A body delivered whole that does not parse, or parses to another top-level shape, is what the origin or its cache served, so an immediate repeat returns the same bytes and spends 1–4 s of backoff per attempt from the 50-second budget. It fails as `ServiceUnavailable` with `data.reason: 'malformed_response'`, which the tools map to `source_unavailable` or `feed_unavailable`; a later call may succeed, so the wire keeps `retryable: true`. HTML pages and connections dropped mid-body stay retried. An event lookup that parses to an object other than the requested `Feature` stays `not_found`. |
+| 2026-11-03 | A standalone count runs under the same 50-second deadline | The count was the one entry point without a total deadline: four attempts of `REQUEST_TIMEOUT_MS` plus backoff pass 60 seconds once the setting exceeds about 13 seconds. `countEvents` defaults its deadline to the call budget, so no caller can omit it; a search still passes its count lookup what remains of its own deadline. |
+| 2026-11-03 | A record missing a value the source always publishes fails the response; none is invented | A record with no ID, origin time, or update time, one whose `properties` is not an object or whose position is unreadable (USGS reads it from a point geometry of numeric longitude and latitude; EMSC from `properties.lat`, `lon`, and `depth`, each falling back to that geometry), and a feed with no `metadata.generated` fail as `malformed_response`, which the tools map to `source_unavailable` or `feed_unavailable`. Dropping the record would shorten the page, and a short page ends the match set through the inferred total, so paging would stop early; making those fields nullable would retype required output. Depth stays nullable, since USGS publishes a null depth on many historical records. An absent or unrecognized USGS `status` becomes `null`, as EMSC's does. |
+| 2026-11-03 | USGS `mmi` of exactly 0 becomes `null` | USGS publishes `mmi: 0` when the event's ShakeMap computed no maximum intensity (its `maxmmi`, `maxpga`, and `maxpgv` are `"nan"`, typical of offshore events), and the Modified Mercalli scale starts at I. Every sampled `mmi: 0` event had a `"nan"` ShakeMap maximum and no nonzero one did, and no published value fell between 0 and 1, so the rule is `=== 0`, not `< 1`. `cdi: 0` is left alone: there the DYFI product itself publishes `maxmmi: "0.0"`. |
+| 2026-11-03 | `min_mmi` and `min_cdi` floor at 1, not USGS's 0 | USGS accepts 0–12, but reads `minmmi=0` as "has a ShakeMap" and matches the events whose `mmi` is the 0 placeholder reported as `null`, so a `min_mmi: 0` result would carry events that look unfiltered. Both scales start at I, and no published value lies between 0 and 1 (`minmmi=0.1` and `minmmi=1` count the same events), so 1 loses nothing; `product_type: "shakemap"` or `"dyfi"` asks the has-a-product question. |
+| 2026-11-03 | An unlisted type value is named after a zero, never rejected before the request | `event_type`, `magnitude_type`, and `product_type` stay open strings and are still sent, so a value USGS adds works before the cached list knows it. Checking only a zero USGS result keeps every nonzero call free of the extra read, and the read is advisory: one attempt inside the call's deadline, any failure leaving the zero as it was. Suggestions are exact matches once case and `-`, `_`, and spaces are ignored; substring or fuzzy matching would offer `internal-moment-tensor` and `trump-moment-tensor` for `moment_tensor`. Concurrent first calls fetch independently rather than share one in-flight read, which would tie every waiting caller to the first caller's signal. EMSC is not checked: it publishes no vocabulary and matches magnitude types case-sensitively (`mww` counts 0 there). |

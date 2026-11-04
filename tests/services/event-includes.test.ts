@@ -13,10 +13,11 @@ import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { projectAftershockForecast } from '@/services/usgs/aftershock-forecast.js';
 import { normalizeIncludeGroups, unpublishedIncludes } from '@/services/usgs/event-includes.js';
+import { projectPagerEstimates } from '@/services/usgs/pager-estimates.js';
 import { parsePhaseData, projectArrivals, projectMagnitudes } from '@/services/usgs/quakeml.js';
 import { EVENT_INCLUDE_GROUPS, type EventIncludeGroup } from '@/services/usgs/types.js';
 import { UsgsService } from '@/services/usgs/usgs-service.js';
-import { fixture, hang, stubUsgsEvent } from '../helpers/usgs-fetch-stub.js';
+import { fixture, hang, pagerFiles, stubUsgsEvent } from '../helpers/usgs-fetch-stub.js';
 
 const service = (timeoutMs = 5000) =>
   new UsgsService({} as AppConfig, {} as StorageService, 'https://earthquake.usgs.gov', timeoutMs);
@@ -25,6 +26,23 @@ const lookup = (eventId: string, include: readonly EventIncludeGroup[], ctx?: Co
   service().getEvent(eventId, ctx ?? (createMockContext() as Context), include);
 
 const phaseData = (name: string) => parsePhaseData(fixture(name));
+
+/** The PAGER content-file captures of one event, as the projection receives them. */
+const pagerText = (eventId: string) => ({
+  alerts: fixture(`${eventId}.pager.alerts.json`),
+  exposures: fixture(`${eventId}.pager.exposures.json`),
+  comments: fixture(`${eventId}.pager.comments.json`),
+});
+
+/** The us6000u18k detail capture with its `losspager` content list edited. */
+const u18kWithPagerContents = (edit: (contents: Record<string, unknown>) => void) => {
+  const detail = JSON.parse(fixture('us6000u18k.detail.json'));
+  edit(detail.properties.products.losspager[0].contents);
+  return () => Response.json(detail);
+};
+
+const pagerUrl = (file: string) =>
+  `https://earthquake.usgs.gov/product/losspager/us6000u18k/us/1793723988986/${file}`;
 
 afterEach(() => {
   vi.useRealTimers();
@@ -39,6 +57,7 @@ describe('include normalization', () => {
       'magnitudes',
       'arrivals',
       'aftershock_forecast',
+      'pager',
     ]);
     expect(
       normalizeIncludeGroups(['aftershock_forecast', 'arrivals', 'arrivals', 'origins']),
@@ -290,6 +309,115 @@ describe('aftershock forecast projection', () => {
   });
 });
 
+describe('PAGER projection', () => {
+  it('projects both alerts with every bracket, the impact statements, and every exposure row', () => {
+    const pager = projectPagerEstimates(pagerText('us6000u18k'));
+    expect(pager.fatality.level).toBe('yellow');
+    // Bounds are strings upstream ("1", "10"); the projection emits numbers.
+    expect(pager.fatality.bins).toEqual([
+      { min: 0, max: 1, color: 'green', probability: 0.11227771547768949 },
+      { min: 1, max: 10, color: 'yellow', probability: 0.33828893378760094 },
+      { min: 10, max: 100, color: 'yellow', probability: 0.3824232389419826 },
+      { min: 100, max: 1000, color: 'orange', probability: 0.14713455883818316 },
+      { min: 1000, max: 10000, color: 'red', probability: 0.01904966073673453 },
+      { min: 10000, max: 100000, color: 'red', probability: 0.0008145599592240815 },
+      { min: 100000, max: 10000000, color: 'red', probability: 1.1332245432704724e-5 },
+    ]);
+    expect(pager.economic.level).toBe('orange');
+    expect(pager.economic.bins).toHaveLength(7);
+    expect(pager.economic.bins[3]).toEqual({
+      min: 100,
+      max: 1000,
+      color: 'orange',
+      probability: 0.35322181682545284,
+    });
+    expect(pager.impact).toEqual([
+      'Orange alert for economic losses. Significant damage is likely and the disaster is potentially widespread. Estimated economic losses are 0-2% GDP of Panama. Past events with this alert level have required a regional or national level response.',
+      'Yellow alert for shaking-related fatalities. Some casualties are possible.',
+    ]);
+    expect(pager.exposure.mmi).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(pager.exposure.population).toEqual([
+      0, 0, 3221021, 1877984, 2595241, 555396, 140964, 11406, 0, 0,
+    ]);
+    expect(pager.exposure.countries.map((row) => row.country_code)).toEqual([
+      'CO',
+      'CR',
+      'NI',
+      'PA',
+    ]);
+    // An all-zero country row is relayed, not dropped.
+    expect(pager.exposure.countries[2]).toEqual({
+      country_code: 'NI',
+      population: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    });
+    expect(pager.exposure.countries[3]?.population[6]).toBe(140964);
+  });
+
+  it('drops a blank impact statement and keeps an empty country list', () => {
+    const pager = projectPagerEstimates(pagerText('us6000u214'));
+    expect(fixture('us6000u214.pager.comments.json')).toContain('"impact2": ""');
+    expect(pager.impact).toEqual([
+      'Green alert for shaking-related fatalities and economic losses. There is a low likelihood of casualties and damage.',
+    ]);
+    expect(pager.exposure.countries).toEqual([]);
+    expect(pager.exposure.population).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    expect([pager.fatality.level, pager.economic.level]).toEqual(['green', 'green']);
+  });
+
+  it('leaves impact absent without a comments file or without a nonblank statement', () => {
+    const { alerts, exposures } = pagerText('us6000u18k');
+    expect(projectPagerEstimates({ alerts, exposures })).not.toHaveProperty('impact');
+    const blank = JSON.stringify({ impact1: '  ', impact2: '', struct_comment: 'kept out' });
+    expect(projectPagerEstimates({ alerts, exposures, comments: blank })).not.toHaveProperty(
+      'impact',
+    );
+  });
+
+  it('leaves an unpublished alert level or bracket color absent rather than defaulted', () => {
+    const raw = JSON.parse(fixture('us6000u18k.pager.alerts.json'));
+    delete raw.fatality.level;
+    raw.economic.bins[0].color = null;
+    const pager = projectPagerEstimates({
+      ...pagerText('us6000u18k'),
+      alerts: JSON.stringify(raw),
+    });
+    expect(pager.fatality).not.toHaveProperty('level');
+    expect(pager.fatality.bins).toHaveLength(7);
+    expect(pager.economic.bins[0]).toEqual({ min: 0, max: 1, probability: 0.008150438623064488 });
+  });
+
+  const alerts = fixture('us6000u18k.pager.alerts.json');
+  const withAlerts = (text: string) => ({ ...pagerText('us6000u18k'), alerts: text });
+
+  it.each([
+    ['non-JSON alerts', withAlerts('<html>busy</html>')],
+    [
+      'an unparseable bracket bound',
+      withAlerts(
+        alerts.replace(
+          '"max": "10000000", "probability": 0.0137',
+          '"max": "", "probability": 0.0137',
+        ),
+      ),
+    ],
+    [
+      'a bracket without a probability',
+      withAlerts(alerts.replace(', "probability": 0.33828893378760094', '')),
+    ],
+    [
+      'alerts without the economic estimate',
+      withAlerts(JSON.stringify({ fatality: JSON.parse(alerts).fatality })),
+    ],
+    [
+      'exposures without population_exposure',
+      { ...pagerText('us6000u18k'), exposures: JSON.stringify({ economic_exposure: {} }) },
+    ],
+    ['non-JSON comments', { ...pagerText('us6000u18k'), comments: '{"impact1":' }],
+  ])('rejects %s', (_label, files) => {
+    expect(() => projectPagerEstimates(files)).toThrow();
+  });
+});
+
 describe('UsgsService.getEvent — include requests', () => {
   it('makes one upstream request when nothing is included', async () => {
     const { urls } = stubUsgsEvent('ci38457511');
@@ -344,18 +472,24 @@ describe('UsgsService.getEvent — include requests', () => {
     expect(result.aftershock_forecast?.windows).toHaveLength(4);
   });
 
-  it('runs the phase-data and forecast requests concurrently', async () => {
+  it('runs the phase-data, forecast, and PAGER requests concurrently', async () => {
     const pending: Array<() => void> = [];
     const held = (name: string) => (): Promise<Response> =>
       new Promise((resolve) => pending.push(() => resolve(new Response(fixture(name)))));
-    const { urls } = stubUsgsEvent('ci38457511', {
+    const { urls } = stubUsgsEvent('us6000u18k', {
+      // Another event's phase-data capture stands in for this event's file.
       'phase-data': held('ci38457511.phase-data.xml'),
       oaf: held('us6000u18k.forecast.json'),
+      losspager: {
+        'json/alerts.json': held('us6000u18k.pager.alerts.json'),
+        'json/exposures.json': held('us6000u18k.pager.exposures.json'),
+        'json/comments.json': held('us6000u18k.pager.comments.json'),
+      },
     });
-    const promise = lookup('ci38457511', [...EVENT_INCLUDE_GROUPS]);
-    await vi.waitFor(() => expect(pending).toHaveLength(2));
-    // Both product requests are in flight before either has answered.
-    expect(urls).toHaveLength(3);
+    const promise = lookup('us6000u18k', [...EVENT_INCLUDE_GROUPS]);
+    await vi.waitFor(() => expect(pending).toHaveLength(5));
+    // Every product request is in flight before any has answered.
+    expect(urls).toHaveLength(6);
     for (const release of pending) release();
     const result = await promise;
     expect(Object.keys(result)).toEqual([
@@ -365,8 +499,86 @@ describe('UsgsService.getEvent — include requests', () => {
       'magnitudes',
       'arrivals',
       'aftershock_forecast',
+      'pager',
     ]);
   });
+});
+
+describe('UsgsService.getEvent — the pager group', () => {
+  it('reads the three json/ files with three extra requests', async () => {
+    const { urls } = stubUsgsEvent('us6000u18k', { losspager: pagerFiles('us6000u18k') });
+    const result = await lookup('us6000u18k', ['pager']);
+    expect(urls[0]).toBe(
+      'https://earthquake.usgs.gov/fdsnws/event/1/query?eventid=us6000u18k&format=geojson',
+    );
+    // The root-level copies and pager.xml the product also lists are never requested.
+    expect(urls.slice(1).sort()).toEqual([
+      pagerUrl('json/alerts.json'),
+      pagerUrl('json/comments.json'),
+      pagerUrl('json/exposures.json'),
+    ]);
+    expect(Object.keys(result)).toEqual(['event', 'detail', 'pager']);
+    expect(result.pager?.fatality.bins).toHaveLength(7);
+    expect(result.pager?.economic.bins).toHaveLength(7);
+    expect(result.pager?.exposure.population).toHaveLength(10);
+    expect(result.pager?.exposure.countries).toHaveLength(4);
+    expect(result.pager?.impact).toHaveLength(2);
+    // detail.losspager is unchanged by the group.
+    expect(result.detail?.losspager).toEqual({
+      alert_level: 'orange',
+      report_url: pagerUrl('onepager.pdf'),
+    });
+  });
+
+  it('makes no comments request, and leaves impact absent, when the product lists none', async () => {
+    const { urls } = stubUsgsEvent(
+      'us6000u18k',
+      { losspager: pagerFiles('us6000u18k') },
+      u18kWithPagerContents((contents) => delete contents['json/comments.json']),
+    );
+    const result = await lookup('us6000u18k', ['pager']);
+    expect(urls.slice(1).sort()).toEqual([
+      pagerUrl('json/alerts.json'),
+      pagerUrl('json/exposures.json'),
+    ]);
+    expect(result.pager).not.toHaveProperty('impact');
+    expect(result.pager?.exposure.countries).toHaveLength(4);
+  });
+
+  it('is not_published, with no request, on an event without a losspager product', async () => {
+    const { urls } = stubUsgsEvent('us7000tumt', { losspager: pagerFiles('us6000u18k') });
+    const result = await lookup('us7000tumt', ['pager']);
+    expect(urls).toHaveLength(1);
+    expect(result).not.toHaveProperty('pager');
+    expect(result.unavailable_includes).toEqual([{ group: 'pager', reason: 'not_published' }]);
+  });
+
+  it('is not_published, with no request, on a product that predates the JSON files', async () => {
+    const { urls } = stubUsgsEvent('us10003re5', { losspager: pagerFiles('us6000u18k') });
+    const result = await lookup('us10003re5', ['pager']);
+    expect(urls).toHaveLength(1);
+    expect(result.unavailable_includes).toEqual([{ group: 'pager', reason: 'not_published' }]);
+    // The product still carries its alert and report into detail.
+    expect(result.detail?.losspager).toEqual({
+      alert_level: 'orange',
+      report_url:
+        'https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/onepager.pdf',
+    });
+  });
+
+  it.each(['json/alerts.json', 'json/exposures.json'])(
+    'is not_published, with no request, when the product lists no %s',
+    async (missing) => {
+      const { urls } = stubUsgsEvent(
+        'us6000u18k',
+        { losspager: pagerFiles('us6000u18k') },
+        u18kWithPagerContents((contents) => delete contents[missing]),
+      );
+      const result = await lookup('us6000u18k', ['pager']);
+      expect(urls).toHaveLength(1);
+      expect(result.unavailable_includes).toEqual([{ group: 'pager', reason: 'not_published' }]);
+    },
+  );
 });
 
 describe('UsgsService.getEvent — a failed product degrades only its groups', () => {
@@ -389,11 +601,126 @@ describe('UsgsService.getEvent — a failed product degrades only its groups', (
     expect(result.aftershock_forecast?.windows).toHaveLength(4);
     expect(result).not.toHaveProperty('magnitudes');
     expect(result).not.toHaveProperty('arrivals');
+    // The trimmed Ridgecrest capture carries no losspager product.
     expect(result.unavailable_includes).toEqual([
       { group: 'magnitudes', reason: 'fetch_failed' },
       { group: 'arrivals', reason: 'fetch_failed' },
+      { group: 'pager', reason: 'not_published' },
     ]);
     expect(urls.filter((u) => u.includes('/oaf/'))).toHaveLength(1);
+  });
+
+  const pagerFailing = (file: string, respond: () => Response) => ({
+    ...pagerFiles('us6000u18k'),
+    [file]: respond,
+  });
+
+  it.each([
+    [
+      'a 404 alerts file',
+      pagerFailing('json/alerts.json', () => new Response('', { status: 404 })),
+    ],
+    [
+      'an HTML exposures file',
+      pagerFailing('json/exposures.json', () => new Response('<!DOCTYPE html><html>busy</html>')),
+    ],
+    [
+      'an unparseable comments file',
+      pagerFailing('json/comments.json', () => new Response('{"impact1":')),
+    ],
+    [
+      'a 403 alerts file',
+      pagerFailing('json/alerts.json', () => new Response('', { status: 403 })),
+    ],
+    [
+      'a 429 exposures file',
+      pagerFailing('json/exposures.json', () => new Response('', { status: 429 })),
+    ],
+    [
+      'a 500 comments file',
+      pagerFailing('json/comments.json', () => new Response('', { status: 500 })),
+    ],
+    [
+      'a 503 alerts file',
+      pagerFailing('json/alerts.json', () => new Response('', { status: 503 })),
+    ],
+    [
+      'an exposures body dropped mid-stream',
+      pagerFailing(
+        'json/exposures.json',
+        () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode('{"population_exposure":'));
+                controller.error(new TypeError('terminated'));
+              },
+            }),
+          ),
+      ),
+    ],
+    [
+      'an alerts file missing a bracket probability',
+      pagerFailing(
+        'json/alerts.json',
+        () =>
+          new Response(
+            fixture('us6000u18k.pager.alerts.json').replace(
+              ', "probability": 0.33828893378760094',
+              '',
+            ),
+          ),
+      ),
+    ],
+  ])('lists pager as fetch_failed on %s, returning the rest', async (_label, losspager) => {
+    vi.useFakeTimers();
+    const { urls } = stubUsgsEvent('us6000u18k', {
+      oaf: 'us6000u18k.forecast.json',
+      losspager,
+    });
+    const promise = lookup('us6000u18k', ['aftershock_forecast', 'pager']);
+    await vi.runAllTimersAsync();
+    const result = await promise;
+    expect(result.event.id).toBe('us6000u18k');
+    expect(result.detail?.losspager?.alert_level).toBe('orange');
+    expect(result.aftershock_forecast?.windows).toHaveLength(4);
+    expect(result).not.toHaveProperty('pager');
+    expect(result.unavailable_includes).toEqual([{ group: 'pager', reason: 'fetch_failed' }]);
+    // Every file was requested; the failing one alone fails the group.
+    for (const file of ['json/alerts.json', 'json/exposures.json', 'json/comments.json']) {
+      expect(urls).toContain(pagerUrl(file));
+    }
+  });
+
+  it('holds the group until every PAGER download settles, leaving none running', async () => {
+    let alertsAnswered = false;
+    let releaseExposures: (() => void) | undefined;
+    stubUsgsEvent('us6000u18k', {
+      losspager: {
+        ...pagerFiles('us6000u18k'),
+        'json/alerts.json': () => {
+          alertsAnswered = true;
+          return new Response('', { status: 404 });
+        },
+        'json/exposures.json': () =>
+          new Promise((resolve) => {
+            releaseExposures = () =>
+              resolve(new Response(fixture('us6000u18k.pager.exposures.json')));
+          }),
+      },
+    });
+    let settled = false;
+    const promise = lookup('us6000u18k', ['pager']).finally(() => {
+      settled = true;
+    });
+    await vi.waitFor(() => expect(alertsAnswered && releaseExposures !== undefined).toBe(true));
+    // Let the failed alerts download run its course; the lookup still waits on exposures.
+    for (let turn = 0; turn < 20; turn++) await new Promise((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    releaseExposures?.();
+    expect((await promise).unavailable_includes).toEqual([
+      { group: 'pager', reason: 'fetch_failed' },
+    ]);
   });
 
   it('retries a 5xx product request before giving up on it', async () => {
@@ -524,5 +851,46 @@ describe('UsgsService.getEvent — one deadline and cancellation', () => {
     );
     await expect(pending).rejects.toThrow(/abort|cancel/i);
     expect(urls.filter((u) => u.includes('/oaf/'))).toHaveLength(1);
+  });
+
+  it('propagates cancellation during a PAGER download instead of degrading the group', async () => {
+    const controller = new AbortController();
+    const { urls } = stubUsgsEvent('us6000u18k', {
+      losspager: {
+        ...pagerFiles('us6000u18k'),
+        'json/exposures.json': (url, init) => {
+          controller.abort();
+          return hang(url, init);
+        },
+      },
+    });
+    const pending = service().getEvent(
+      'us6000u18k',
+      createMockContext({ signal: controller.signal }) as Context,
+      ['pager'],
+    );
+    await expect(pending).rejects.toThrow(/abort|cancel/i);
+    expect(urls.filter((u) => u.includes('/losspager/'))).toHaveLength(3);
+  });
+
+  it('bounds a hung PAGER download by the same deadline', async () => {
+    vi.useFakeTimers();
+    const started = Date.now();
+    stubUsgsEvent(
+      'us6000u18k',
+      { losspager: { ...pagerFiles('us6000u18k'), 'json/alerts.json': hang } },
+      () =>
+        new Promise((resolve) =>
+          setTimeout(() => resolve(new Response(fixture('us6000u18k.detail.json'))), 45_000),
+        ),
+    );
+    const promise = service(45_000).getEvent('us6000u18k', createMockContext() as Context, [
+      'pager',
+    ]);
+    await vi.runAllTimersAsync();
+    const result = await promise;
+    expect(Date.now() - started).toBeLessThanOrEqual(50_000);
+    expect(result.event.id).toBe('us6000u18k');
+    expect(result.unavailable_includes).toEqual([{ group: 'pager', reason: 'fetch_failed' }]);
   });
 });

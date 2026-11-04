@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { earthquakeEventResource } from '@/mcp-server/resources/definitions/earthquake-event.resource.js';
 import type { EarthquakeDetailOutput, EarthquakeEventOutput } from '@/mcp-server/tools/schemas.js';
 import * as usgsModule from '@/services/usgs/usgs-service.js';
-import { stubUsgsEvent } from '../helpers/usgs-fetch-stub.js';
+import { pagerFiles, stubUsgsEvent } from '../helpers/usgs-fetch-stub.js';
 
 const sampleEvent: EarthquakeEventOutput = {
   id: 'ci38457511',
@@ -156,11 +156,13 @@ describe('earthquakeEventResource — include groups stay off the resource (issu
       'https://earthquake.usgs.gov',
       5000,
     );
-    const { urls } = stubUsgsEvent('ci38457511', {
+    // The Panama capture lists phase-data, forecast, and PAGER content files.
+    const { urls } = stubUsgsEvent('us6000u18k', {
       'phase-data': 'ci38457511.phase-data.xml',
       oaf: 'us6000u18k.forecast.json',
+      losspager: pagerFiles('us6000u18k'),
     });
-    const params = earthquakeEventResource.params!.parse({ event_id: 'ci38457511' });
+    const params = earthquakeEventResource.params!.parse({ event_id: 'us6000u18k' });
     const result = await earthquakeEventResource.handler(
       params,
       createMockContext({ errors: earthquakeEventResource.errors }),

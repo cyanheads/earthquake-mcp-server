@@ -157,6 +157,216 @@ describe('EmscService.searchEvents — unpublished fields stay unasserted (issue
   });
 });
 
+describe('EmscService — a field EMSC always publishes is never invented (issue #61)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  const malformed = {
+    code: JsonRpcErrorCode.ServiceUnavailable,
+    message: 'EMSC returned a response in an unexpected format.',
+    data: { reason: 'malformed_response' },
+  };
+
+  /** An EMSC feature with the named keys removed — top-level `id` included. */
+  function without(unid: string, ...keys: string[]) {
+    const feature = makeFeature(unid, 3.1) as unknown as Record<string, unknown>;
+    const props = feature.properties as Record<string, unknown>;
+    for (const key of keys) {
+      delete props[key];
+      if (key === 'id') delete feature.id;
+    }
+    return feature;
+  }
+
+  it('fails a search page of records with no ID, origin time, or update time', async () => {
+    // The shape that produced two records sharing `emsc-unknown-<now>` at the epoch.
+    const sparse = ['unid', 'id', 'time', 'lastupdate'];
+    const fetchMock = vi.fn().mockResolvedValue(
+      Response.json({
+        type: 'FeatureCollection',
+        features: [without('20260601_0000001', ...sparse), without('20260601_0000002', ...sparse)],
+      }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      makeService().searchEvents({ limit: 15 }, createMockContext()),
+    ).rejects.toMatchObject(malformed);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['no identifier', ['unid', 'id']],
+    ['no origin time', ['time']],
+    ['no update time', ['lastupdate']],
+  ])('fails a search record with %s', async (_label, keys) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json({
+          type: 'FeatureCollection',
+          features: [without('20260601_0000001', ...keys)],
+        }),
+      ),
+    );
+    await expect(
+      makeService().searchEvents({ limit: 15 }, createMockContext()),
+    ).rejects.toMatchObject(malformed);
+  });
+
+  it('still reads the ID from the feature id when properties.unid is absent', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        Response.json({
+          type: 'FeatureCollection',
+          features: [without('20260601_0000001', 'unid')],
+        }),
+      ),
+    );
+    const { events } = await makeService().searchEvents({ limit: 15 }, createMockContext());
+    expect(events[0]?.id).toBe('20260601_0000001');
+  });
+
+  it.each([
+    ['no identifier', ['unid', 'id']],
+    ['no origin time', ['time']],
+  ])('fails an event lookup whose Feature has %s in one request', async (_label, keys) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(Response.json(without('20190706_0000043', ...keys)));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      makeService().getEvent('20190706_0000043', createMockContext()),
+    ).rejects.toMatchObject(malformed);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('EmscService — a record that is not a readable feature fails as malformed (issue #60)', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  const malformed = {
+    code: JsonRpcErrorCode.ServiceUnavailable,
+    message: 'EMSC returned a response in an unexpected format.',
+    data: { reason: 'malformed_response' },
+  };
+
+  /** makeFeature as raw JSON, so any member can take a value its type rules out. */
+  const raw = (unid: string) =>
+    JSON.parse(JSON.stringify(makeFeature(unid, 3.1))) as Record<string, unknown>;
+  const withGeometry = (geometry: unknown) => ({ ...raw('20260601_0000001'), geometry });
+  const withCoordinates = (coordinates: unknown) => withGeometry({ type: 'Point', coordinates });
+  const { geometry: _geometry, ...noGeometry } = raw('20260601_0000001');
+
+  /** Run a lookup to completion under fake timers, so a retried failure shows its attempts. */
+  async function settle(pending: Promise<unknown>) {
+    const settled = pending.catch((e: unknown) => e);
+    await vi.runAllTimersAsync();
+    return settled;
+  }
+
+  it.each([
+    ['a null entry', null],
+    ['null properties', { ...raw('20260601_0000001'), properties: null }],
+    ['no geometry', noGeometry],
+    ['a null geometry', withGeometry(null)],
+    ['a non-point geometry', withGeometry({ type: 'MultiPoint', coordinates: [[28.2, 38.4, 10]] })],
+    ['no coordinates', withGeometry({ type: 'Point' })],
+    ['a string longitude', withCoordinates(['28.2', 38.4, 10])],
+    ['a null latitude', withCoordinates([28.2, null, 10])],
+    ['no depth', withCoordinates([28.2, 38.4])],
+    ['a string depth', withCoordinates([28.2, 38.4, '10'])],
+  ])('fails a search page holding %s in one request', async (_label, entry) => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        Response.json({
+          type: 'FeatureCollection',
+          features: [makeFeature('20260601_0000000', 4.2), entry],
+        }),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    expect(
+      await settle(makeService().searchEvents({ limit: 15 }, createMockContext())),
+    ).toMatchObject(malformed);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['null properties', { ...raw('20190706_0000043'), properties: null }],
+    ['a null geometry', { ...raw('20190706_0000043'), geometry: null }],
+  ])('fails an event lookup whose Feature has %s in one request', async (_label, feature) => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(() => Promise.resolve(Response.json(feature)));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(
+      await settle(makeService().getEvent('20190706_0000043', createMockContext())),
+    ).toMatchObject(malformed);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  /** A record carrying its position in properties too, as live EMSC records do. */
+  const positioned = (unid: string, geometry: unknown) => {
+    const feature = raw(unid);
+    return {
+      ...feature,
+      properties: { ...(feature.properties as object), lat: 38.41, lon: 28.21, depth: 9 },
+      geometry,
+    };
+  };
+  const { geometry: _unused, ...positionedNoGeometry } = positioned('20260601_0000001', null);
+
+  it.each([
+    ['no geometry', positionedNoGeometry],
+    ['a null geometry', positioned('20260601_0000001', null)],
+    [
+      'a non-point geometry',
+      positioned('20260601_0000001', { type: 'MultiPoint', coordinates: [[28.2, 38.4, 10]] }),
+    ],
+    [
+      'a string longitude',
+      positioned('20260601_0000001', { type: 'Point', coordinates: ['28.2', 38.4, -10] }),
+    ],
+    ['no depth', positioned('20260601_0000001', { type: 'Point', coordinates: [28.2, 38.4] })],
+  ])('reads the position from properties beside %s', async (_label, entry) => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(Response.json({ type: 'FeatureCollection', features: [entry] }))),
+    );
+    const { events } = await makeService().searchEvents({ limit: 15 }, createMockContext());
+    expect(events[0]).toMatchObject({ latitude: 38.41, longitude: 28.21, depth_km: 9 });
+  });
+
+  it('takes a coordinate properties lack from the point geometry', async () => {
+    const feature = raw('20260601_0000001');
+    const entry = {
+      ...feature,
+      properties: { ...(feature.properties as object), lat: 38.41 },
+      geometry: { type: 'Point', coordinates: [28.2, 38.4, -10] },
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(Response.json({ type: 'FeatureCollection', features: [entry] }))),
+    );
+    const { events } = await makeService().searchEvents({ limit: 15 }, createMockContext());
+    expect(events[0]).toMatchObject({ latitude: 38.41, longitude: 28.2, depth_km: -10 });
+  });
+
+  it('returns an event lookup whose Feature has a null geometry and its position in properties', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(Response.json(positioned('20190706_0000043', null)))),
+    );
+    const { event } = await makeService().getEvent('20190706_0000043', createMockContext());
+    expect(event).toMatchObject({ id: '20190706_0000043', latitude: 38.41, longitude: 28.21 });
+  });
+});
+
 describe('EmscService.searchEvents — totalCount count sub-call (issue #11)', () => {
   it('fetches the real total via countEvents when results are truncated at the limit', async () => {
     const features = Array.from({ length: 2 }, (_, i) => makeFeature(`20260601_000${i}`, 4.2));
@@ -322,6 +532,22 @@ describe('EmscService.searchEvents — 204 No Content is an empty match set', ()
     expect(result.count).toBe(0);
     vi.unstubAllGlobals();
   });
+
+  it('fails an empty count body as malformed_response in one request (issue #60)', async () => {
+    // Only search reads an empty body as zero matches; EMSC answers a zero count as {"count":0}.
+    const fetchMock = vi.fn().mockResolvedValue(new Response('', { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const err = await makeService()
+      .countEvents({}, createMockContext())
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      message: 'EMSC returned a response in an unexpected format.',
+      data: { reason: 'malformed_response' },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
 });
 
 describe('EmscService — event type normalization (issues #24, #35)', () => {
@@ -422,7 +648,7 @@ describe('EmscService — bounding-box forwarding (issue #37)', () => {
   });
 
   it('forwards a literal 0 edge and an extended-range antimeridian box', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([makeFeature('20260601_0001', 4)]));
+    const fetchMock = vi.fn().mockResolvedValue(Response.json({ count: 1 }));
     vi.stubGlobal('fetch', fetchMock);
 
     const service = makeService();

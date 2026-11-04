@@ -127,7 +127,7 @@ export const earthquakeGetFeed = tool('earthquake_get_feed', {
     {
       reason: 'feed_unavailable',
       code: JsonRpcErrorCode.ServiceUnavailable,
-      when: 'USGS feed endpoint returns a 5xx, HTML, or is unreachable.',
+      when: 'USGS feed endpoint returns a 5xx, serves HTML or an unreadable body, or is unreachable.',
       retryable: true,
       recovery: 'Try a smaller time_window, or use earthquake_search_events as a fallback.',
     },

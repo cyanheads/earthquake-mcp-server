@@ -36,9 +36,9 @@ Seismic data from USGS ComCat and the EMSC SeismicPortal. Fetch real-time earthq
 | Tool | Description |
 |:---|:---|
 | `earthquake_get_feed` | Fetch a USGS pre-computed real-time earthquake feed by magnitude tier and time window |
-| `earthquake_search_events` | Search earthquakes by time range, magnitude, depth, location radius, PAGER alert level, or felt reports |
+| `earthquake_search_events` | Search earthquakes by time range, magnitude, depth, location radius, PAGER alert level, felt reports, or ShakeMap and DYFI intensity |
 | `earthquake_count_events` | Count earthquakes matching filters without fetching full records |
-| `earthquake_get_event` | Fetch one earthquake by USGS or EMSC event ID, with USGS analysis products and opt-in origins, magnitudes, phase arrivals, and aftershock forecast |
+| `earthquake_get_event` | Fetch one earthquake by USGS or EMSC event ID, with USGS analysis products and opt-in origins, magnitudes, phase arrivals, aftershock forecast, and PAGER loss estimates |
 
 ### Resources
 
@@ -69,11 +69,13 @@ Seismic data from USGS ComCat and the EMSC SeismicPortal. Fetch real-time earthq
 
 - Search `usgs` or `emsc` by time, magnitude, depth, radius, or bounding box. A radius requires `latitude`, `longitude`, and `radius_km` together; box edges are independently optional, support antimeridian bounds up to ±360°, and intersect a supplied circle.
 - Returns normalized events with `event_type`, EMSC's `event_certainty`, and USGS's `associated_ids` (other network IDs merged into the event). `ignoredFilters` names unsupported filters; `queryEcho` reports the effective query.
-- Both search and count accept open `magnitude_type` values on either source. `product_type` (required product, e.g. `moment-tensor`) and `review_status` (`automatic` or `reviewed`) apply only to USGS; EMSC names them in `ignoredFilters`. Blank values mean omitted.
+- Both search and count accept open `magnitude_type` values on either source; EMSC matches its own lowercase types (`mb`, `mw`) exactly and has no `mww`. `product_type` (required product, e.g. `moment-tensor`) and `review_status` (`automatic` or `reviewed`) apply only to USGS; EMSC names them in `ignoredFilters`. Blank values mean omitted.
+- `event_type`, `magnitude_type`, and `product_type` stay open strings; USGS matches them case-insensitively, and `event_type` takes a comma-separated list. USGS answers a value outside its published vocabulary with zero events, so when a USGS search's first page or a USGS count comes back empty, `notice` names each unlisted value and the listed values it equals once case and `-`, `_`, and spaces are ignored: `product_type "moment_tensor"` suggests `"moment-tensor"`. The vocabulary read is one attempt within the call's deadline, cached for 24 hours; if it fails, the zero returns as it would without the check. EMSC publishes no vocabulary and is not checked.
+- `min_mmi` (ShakeMap intensity, Modified Mercalli) and `min_cdi` (DYFI community intensity), each 1–12, select events by how strongly they shook, which a magnitude floor or `alert_level` misses. Both apply only to USGS: an event without a ShakeMap or DYFI reports never matches, and EMSC names them in `ignoredFilters`.
 - Date-only bounds (including expanded year/year-month forms) mean midnight at the start of the named day on both sources: `2026-10-10` becomes `2026-10-10T00:00:00`. Explicit time and timezone suffixes are preserved; unpadded date components are padded. Offsetless times use UTC for the 30-day default. `queryEcho` shows the exact effective bounds.
 - Sort by time or magnitude in either direction. Each call requests `limit` events upstream (default 15, set by `DEFAULT_LIMIT`) and returns them all, fewer only on the last page. A `limit` above 1,000 returns 1,000 with a notice naming the requested and applied values; with `EARTHQUAKE_CLAMP_LIMITS=false` it is rejected instead. `queryEcho.limit` reports the applied limit. Continue with the returned `nextOffset` (offset plus the events returned, counting from 1) and the same filters, limit, and order. Search pages read the current catalog, so upstream edits can affect later pages.
 - Strictly inverted magnitude, depth, or explicit time bounds fail locally as `invalid_range`, naming both values and recovery. Equal and single bounds remain valid; time comparisons use UTC instants, including explicit offsets. Calendar-invalid values remain for upstream rejection.
-- A nonempty short page establishes `totalCount`; an empty first page establishes zero, while an empty later page leaves the total unknown. Full pages use a count lookup, with `countUnavailable` on failure. Feed, search, and event calls each share one 50-second deadline across their requests and retries; for search that includes the count lookup. Cancellation remains cancellation.
+- A nonempty short page establishes `totalCount`; an empty first page establishes zero, while an empty later page leaves the total unknown. Full pages use a count lookup, with `countUnavailable` on failure. Feed, search, count, and event calls each share one 50-second deadline across their requests and retries; for search that includes the count lookup. Cancellation remains cancellation.
 
 ---
 
@@ -81,6 +83,7 @@ Seismic data from USGS ComCat and the EMSC SeismicPortal. Fetch real-time earthq
 
 - Count matches using the same filters as `earthquake_search_events`, without fetching events. Omit `start_time` for the last 30 days; `queryEcho` reports the resolved window and applied filters.
 - `exceeds_limit` flags the 20,000-event single-request threshold, not a retrieval ceiling: search offset paging can retrieve larger match sets. `max_allowed` is 20,000 for USGS and null for EMSC; `ignoredFilters` names filters the source cannot apply.
+- A USGS count of zero carries `notice` when a supplied `event_type`, `magnitude_type`, or `product_type` value is not in the USGS vocabulary, as search's empty first page does.
 
 ---
 
@@ -97,8 +100,9 @@ Seismic data from USGS ComCat and the EMSC SeismicPortal. Fetch real-time earthq
   | `magnitudes` | Event-level magnitudes from the preferred `phase-data` product's QuakeML, with a station count where published | One, shared with `arrivals` |
   | `arrivals` | Every phase arrival of that document's preferred origin, joined to its pick and sorted nearest first | One, shared with `magnitudes` |
   | `aftershock_forecast` | The USGS Operational Aftershock Forecast: each window's probability of an aftershock at or above each magnitude, its expected-count range, and the chance of one as large as the mainshock | One |
+  | `pager` | The PAGER estimates behind the alert, from the preferred `losspager` product's JSON files: the fatality and economic-loss alert levels with every probability bracket (economic bounds in millions of USD), PAGER's impact statements, and the people exposed at each shaking intensity, in total and per country | Two, or three when the product publishes impact statements |
 
-- A requested group that is not returned is listed in `unavailable_includes`: `not_published` when the event has no such product (every group on an EMSC event), `fetch_failed` when the download failed, returned HTML, did not parse, pointed outside the configured USGS origin, or answered with a redirect. The event, `detail`, and other groups still return; cancellation propagates. The event request and its product downloads share one 50-second deadline.
+- A requested group that is not returned is listed in `unavailable_includes`: `not_published` when the event has no such product (every group on an EMSC event) or its product lacks the files the group reads (PAGER products published before the JSON files existed), `fetch_failed` when the download failed, returned HTML, did not parse, pointed outside the configured USGS origin, or answered with a redirect. The event, `detail`, and other groups still return; cancellation propagates. The event request and its product downloads share one 50-second deadline.
 - Blank IDs fail locally; canonical IDs and aliases match case-insensitively. ShakeMap includes the producer's `code_version` when published.
 
 ---
@@ -123,9 +127,9 @@ Built on [`@cyanheads/mcp-ts-core`](https://github.com/cyanheads/mcp-ts-core): s
 USGS/EMSC-specific:
 
 - Type-safe clients for the USGS FDSN/GeoJSON API and the EMSC FDSN-WS API, normalizing both into one shared earthquake domain schema
-- Automatic retry with backoff and per-request timeouts on every upstream call; detects USGS's rate-limited/CDN failure mode (HTML served instead of GeoJSON) and maps it to a typed service-unavailable error instead of parsing it as data
+- Automatic retry with backoff and per-request timeouts on every upstream call; detects USGS's rate-limited/CDN failure mode (HTML served instead of GeoJSON) and maps it to a typed service-unavailable error instead of parsing it as data. A body that is not the expected document fails the same way without a retry, and a connection dropped mid-body is retried; neither passes parser or runtime text to the caller
 - EMSC's two-character `evtype` code is decoded against the published event-type/certainty nomenclature into the same vocabulary USGS publishes, so `event_type` carries one meaning across both sources
-- USGS-only filters (`alert_level`, `min_felt`, `min_significance`, `event_type`, `product_type`, `review_status`) are named in `ignoredFilters` when `source=emsc`. On USGS, `event_type="earthquake"` excludes quarry blasts and other non-tectonic records.
+- USGS-only filters (`alert_level`, `min_felt`, `min_significance`, `min_mmi`, `min_cdi`, `event_type`, `product_type`, `review_status`) are named in `ignoredFilters` when `source=emsc`. On USGS, `event_type="earthquake"` excludes quarry blasts and other non-tectonic records.
 - No API key or rate-limit tier required — both USGS and EMSC are fully public, keyless APIs
 
 Agent-friendly output:
@@ -254,11 +258,11 @@ All configuration is validated at startup via Zod schemas in `src/config/server-
 | `LOG_TOOL_FAILURE_PAYLOADS` | Log failed tool arguments and results, redacted by key name. Secrets inside free-form values remain. | `false` |
 | `LOG_TOOL_FAILURE_PAYLOAD_MAX_BYTES` | UTF-8 byte cap per logged failure payload | `16384` |
 | `STORAGE_PROVIDER_TYPE` | Storage backend: `in-memory`, `filesystem`, `supabase`, `cloudflare-kv/r2/d1` | `in-memory` |
-| `USGS_BASE_URL` | USGS API base URL. Override for testing or mirroring. Product files (phase-data QuakeML, aftershock forecast) are fetched only on this origin, so a mirror must also serve them, with content URLs rewritten to its origin; otherwise those `include` groups report `fetch_failed`. | `https://earthquake.usgs.gov` |
+| `USGS_BASE_URL` | USGS API base URL. Override for testing or mirroring. Product files (phase-data QuakeML, aftershock forecast, PAGER JSON) are fetched only on this origin, so a mirror must also serve them, with content URLs rewritten to its origin; otherwise those `include` groups report `fetch_failed`. | `https://earthquake.usgs.gov` |
 | `EMSC_BASE_URL` | EMSC API base URL. Override for testing or mirroring. | `https://www.seismicportal.eu` |
 | `DEFAULT_LIMIT` | Events `earthquake_search_events` returns when a call omits `limit` (1–1,000) | `15` |
 | `EARTHQUAKE_CLAMP_LIMITS` | Clamp a search or feed `limit` above 1,000 to 1,000 with a notice. `false` advertises and enforces a schema maximum of 1,000 instead. | `true` |
-| `REQUEST_TIMEOUT_MS` | Per-attempt HTTP timeout in milliseconds (1,000–120,000). Feed, search, and event calls also share a 50-second total deadline across every request and retry; standalone count calls use this per-attempt value. | `10000` |
+| `REQUEST_TIMEOUT_MS` | Per-attempt HTTP timeout in milliseconds (1,000–120,000). Every feed, search, count, and event call also runs under one 50-second total deadline across its requests and retries. | `10000` |
 | `OTEL_ENABLED` | Enable OpenTelemetry | `false` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Base URL for traces (`/v1/traces`) and metrics (`/v1/metrics`); signal-specific endpoint variables override it | none |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | Opt-in OTLP log endpoint, used as-is; the base URL never enables logs | none |
@@ -303,7 +307,7 @@ The Dockerfile defaults to HTTP transport, stateless session mode, and logs to `
 | `src/mcp-server/tools` | Tool definitions (`*.tool.ts`). Four tools across USGS and EMSC. |
 | `src/mcp-server/resources` | Feed, feed continuation, and event resources. |
 | `src/services/feed-snapshots.ts` | Tenant-scoped serialized feed retention with bounded payload and metadata accounting. |
-| `src/services/usgs` | USGS ComCat service — GeoJSON feed fetcher, FDSN query API client, and the event `include` projections (origin products, phase-data QuakeML, aftershock forecast). |
+| `src/services/usgs` | USGS ComCat service — GeoJSON feed fetcher, FDSN query API client, and the event `include` projections (origin products, phase-data QuakeML, aftershock forecast, PAGER estimates). |
 | `src/services/emsc` | EMSC SeismicPortal service — FDSN event search, count, and by-ID lookup. |
 | `src/config` | Server-specific environment variable parsing and validation with Zod. |
 | `tests/` | Unit and integration tests, mirroring the `src/` structure. |

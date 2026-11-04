@@ -3,7 +3,7 @@
  * @module services/usgs/usgs-service
  */
 
-import type { Context } from '@cyanheads/mcp-ts-core';
+import { type Context, z } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
 import {
   JsonRpcErrorCode,
@@ -14,7 +14,18 @@ import {
 } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { fetchWithTimeout, withRetry } from '@cyanheads/mcp-ts-core/utils';
-import { CALL_DEADLINE_MS, HTML_BODY, isCancellation, makeReqCtx } from '../upstream-call.js';
+import {
+  CALL_DEADLINE_MS,
+  HTML_BODY,
+  isCancellation,
+  isJsonObject,
+  isPointFeature,
+  isTransientUpstream,
+  makeReqCtx,
+  malformedResponse,
+  parseJsonBody,
+  readResponseText,
+} from '../upstream-call.js';
 import { loadEventIncludes, normalizeIncludeGroups } from './event-includes.js';
 import { maybe, num } from './product-fields.js';
 import type {
@@ -35,22 +46,65 @@ import type {
   UsgsOriginProperties,
   UsgsProduct,
   UsgsShakeMapProperties,
+  UsgsVocabulary,
 } from './types.js';
 
-/** Convert a USGS epoch-millisecond timestamp to an ISO 8601 string. */
-function epochMsToIso(ms: number | null | undefined): string {
-  if (ms == null) return new Date(0).toISOString();
+/**
+ * Top-level shapes of the documents USGS answers with. Each guard checks what its caller
+ * reads next; the features inside a collection are checked as they are normalized.
+ */
+const isFeatureCollection = (value: unknown): value is UsgsFeatureCollection =>
+  isJsonObject(value) && Array.isArray(value.features);
+const isFeed = (value: unknown): value is UsgsFeatureCollection =>
+  isFeatureCollection(value) && isJsonObject(value.metadata);
+const isCountResponse = (value: unknown): value is UsgsCountResponse =>
+  isJsonObject(value) && typeof value.count === 'number';
+const isEventDocument = (value: unknown): value is UsgsFeature | UsgsFeatureCollection =>
+  isJsonObject(value);
+
+/** The three lists `application.json` must carry; its other keys go unread. */
+const VocabularySchema = z.object({
+  eventtypes: z.array(z.string()),
+  magnitudetypes: z.array(z.string()),
+  producttypes: z.array(z.string()),
+});
+const isVocabulary = (value: unknown): value is UsgsVocabulary =>
+  VocabularySchema.safeParse(value).success;
+
+/**
+ * How long one parsed vocabulary serves every caller. USGS regenerates the document per
+ * request (its `max-age=60` says nothing about how often the lists change), and the lists
+ * covered every type in sampled catalog pages; a value USGS adds is named unlisted on a zero
+ * result for at most this long, while it is still sent.
+ */
+const VOCABULARY_TTL_MS = 86_400_000;
+
+/** A record the normalizer can read. USGS publishes a null depth for many historical events. Collection entries reach the normalizer unchecked. */
+const isFeature = (value: unknown): value is UsgsFeature => isPointFeature(value);
+
+/**
+ * Convert a USGS epoch-millisecond timestamp to an ISO 8601 string. USGS publishes every
+ * timestamp this reads, so a missing one means its format changed: the response fails as
+ * malformed rather than reporting a time USGS never gave.
+ */
+function epochMsToIso(ms: unknown): string {
+  if (typeof ms !== 'number') throw malformedResponse('USGS');
   return new Date(ms).toISOString();
 }
 
-/** Normalize a USGS GeoJSON feature to the shared EarthquakeEvent domain type. */
+/**
+ * Normalize a USGS GeoJSON feature to the shared EarthquakeEvent domain type. A record that
+ * is not a readable feature, or lacks the ID USGS puts on every record, fails the response
+ * as malformed.
+ */
 function normalizeUsgsFeature(f: UsgsFeature): EarthquakeEvent {
+  if (!isFeature(f) || typeof f.id !== 'string') throw malformedResponse('USGS');
   const p = f.properties;
   const [lon, lat, depth] = f.geometry.coordinates;
 
-  const rawStatus = p.status ?? 'automatic';
-  const status: 'automatic' | 'reviewed' | 'deleted' =
-    rawStatus === 'reviewed' || rawStatus === 'deleted' ? rawStatus : 'automatic';
+  // USGS defines these three; an absent or other value stays unknown, as EMSC's does.
+  const status =
+    p.status === 'automatic' || p.status === 'reviewed' || p.status === 'deleted' ? p.status : null;
 
   const rawAlert = p.alert;
   const alert: 'green' | 'yellow' | 'orange' | 'red' | null =
@@ -76,7 +130,9 @@ function normalizeUsgsFeature(f: UsgsFeature): EarthquakeEvent {
     depth_km: depth,
     felt: p.felt ?? null,
     cdi: p.cdi ?? null,
-    mmi: p.mmi ?? null,
+    // USGS publishes 0 when the ShakeMap computed no maximum intensity (its `maxmmi` is
+    // "nan"); the Modified Mercalli scale starts at I, so 0 is no intensity at all.
+    mmi: p.mmi === 0 ? null : (p.mmi ?? null),
     alert,
     tsunami: p.tsunami ?? null,
     significance: p.sig ?? null,
@@ -243,6 +299,8 @@ function projectDetail(
 export class UsgsService {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
+  /** The last vocabulary parsed, shared by every caller of this service. */
+  private vocabulary: { value: UsgsVocabulary; fetchedAtMs: number } | undefined;
 
   constructor(
     _config: AppConfig,
@@ -277,7 +335,7 @@ export class UsgsService {
 
         // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
         // returning, so a Response here is always 2xx.
-        const text = await response.text();
+        const text = await readResponseText(response, 'USGS');
         if (HTML_BODY.test(text)) {
           throw serviceUnavailable(
             'USGS returned HTML instead of GeoJSON — likely rate-limited or a CDN error.',
@@ -285,7 +343,7 @@ export class UsgsService {
           );
         }
 
-        const data = JSON.parse(text) as UsgsFeatureCollection;
+        const data = parseJsonBody(text, 'USGS', isFeed);
         const events = data.features.map(normalizeUsgsFeature);
 
         return {
@@ -298,6 +356,7 @@ export class UsgsService {
       {
         operation: 'UsgsService.getFeed',
         deadlineMs: CALL_DEADLINE_MS,
+        isTransient: isTransientUpstream,
         context: reqCtx,
         baseDelayMs: 1000,
         signal: ctx.signal,
@@ -343,12 +402,12 @@ export class UsgsService {
 
         // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
         // returning, so a Response here is always 2xx.
-        const text = await response.text();
+        const text = await readResponseText(response, 'USGS');
         if (HTML_BODY.test(text)) {
           throw serviceUnavailable('USGS returned HTML instead of GeoJSON.', { url });
         }
 
-        const data = JSON.parse(text) as UsgsFeatureCollection;
+        const data = parseJsonBody(text, 'USGS', isFeatureCollection);
         const events = data.features.map(normalizeUsgsFeature);
 
         return {
@@ -359,6 +418,7 @@ export class UsgsService {
       {
         operation: 'UsgsService.searchEvents',
         deadlineMs: CALL_DEADLINE_MS,
+        isTransient: isTransientUpstream,
         context: reqCtx,
         baseDelayMs: 1000,
         signal: ctx.signal,
@@ -401,8 +461,8 @@ export class UsgsService {
    * so the caller gets more than a search result already holds, without a second
    * request. `detail` is absent when the event carries no projectable product.
    *
-   * `include` opts into product groups (see `loadEventIncludes`); only the phase-data
-   * and aftershock-forecast groups cost requests. One 50-second deadline covers the
+   * `include` opts into product groups (see `loadEventIncludes`); every group but
+   * `origins` costs requests. One 50-second deadline covers the
    * event request and every product request, retries included. A product failure
    * degrades its groups and never fails the lookup; cancellation propagates.
    */
@@ -442,7 +502,7 @@ export class UsgsService {
         // fetchWithTimeout throws McpError(NotFound) for 404 before we reach here.
         // Non-404 non-2xx responses are also thrown by fetchWithTimeout.
 
-        const text = await response.text();
+        const text = await readResponseText(response, 'USGS');
         if (HTML_BODY.test(text)) {
           throw serviceUnavailable('USGS returned HTML instead of GeoJSON.', { eventId });
         }
@@ -450,23 +510,29 @@ export class UsgsService {
         if (text.trim().length === 0) {
           throw notFound('USGS returned no event for the requested ID.', { eventId });
         }
-        const raw = JSON.parse(text) as UsgsFeature | UsgsFeatureCollection;
-        const requestedId = eventId.toLowerCase();
-        if (
-          raw.type !== 'Feature' ||
-          (raw.id.toLowerCase() !== requestedId &&
-            !raw.properties.ids?.split(',').some((id) => id.trim().toLowerCase() === requestedId))
-        ) {
-          throw notFound(
+        const raw = parseJsonBody(text, 'USGS', isEventDocument);
+        const notTheEvent = () =>
+          notFound(
             `No earthquake event found for ID "${eventId}". Verify the ID from a feed or search result.`,
             { eventId },
           );
+        if (raw.type !== 'Feature') throw notTheEvent();
+        // A Feature with no ID cannot be matched to the request, nor be the event it names, and
+        // one the normalizer cannot read fails before the match below reads its properties.
+        if (!isFeature(raw) || typeof raw.id !== 'string') throw malformedResponse('USGS');
+        const requestedId = eventId.toLowerCase();
+        if (
+          raw.id.toLowerCase() !== requestedId &&
+          !raw.properties.ids?.split(',').some((id) => id.trim().toLowerCase() === requestedId)
+        ) {
+          throw notTheEvent();
         }
         return raw;
       },
       {
         operation: 'UsgsService.getEvent',
         deadlineMs: CALL_DEADLINE_MS,
+        isTransient: isTransientUpstream,
         context: reqCtx,
         baseDelayMs: 1000,
         signal: ctx.signal,
@@ -536,11 +602,54 @@ export class UsgsService {
     );
   }
 
-  /** Count events matching a query. */
+  /**
+   * The type lists USGS matches its event, magnitude, and product type filters against,
+   * read to explain a zero result — so the read never sinks that result. One attempt, bounded
+   * by REQUEST_TIMEOUT_MS and by what remains of the call's `deadline` (epoch ms), skipped
+   * when nothing remains. Any failure logs and returns undefined; caller cancellation
+   * propagates. A parsed copy serves every caller for 24 hours, and a failure is not cached.
+   * Concurrent first calls each fetch on their own signal, so one caller's cancellation never
+   * fails another's lookup.
+   */
+  async getVocabulary(ctx: Context, deadline: number): Promise<UsgsVocabulary | undefined> {
+    const cached = this.vocabulary;
+    if (cached && Date.now() - cached.fetchedAtMs < VOCABULARY_TTL_MS) return cached.value;
+    const budgetMs = Math.min(this.timeoutMs, deadline - Date.now());
+    if (budgetMs <= 0) return;
+    const url = `${this.baseUrl}/fdsnws/event/1/application.json`;
+    try {
+      const response = await fetchWithTimeout(
+        url,
+        budgetMs,
+        makeReqCtx('UsgsService.getVocabulary', ctx),
+        { signal: ctx.signal, headers: { Accept: 'application/json' } },
+      );
+      const text = await readResponseText(response, 'USGS');
+      const { eventtypes, magnitudetypes, producttypes } = parseJsonBody(
+        text,
+        'USGS',
+        isVocabulary,
+      );
+      const value = { eventtypes, magnitudetypes, producttypes };
+      this.vocabulary = { value, fetchedAtMs: Date.now() };
+      return value;
+    } catch (err) {
+      if (isCancellation(err, ctx)) throw err;
+      ctx.log.warning('USGS vocabulary lookup failed — returning the result without the check', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return;
+    }
+  }
+
+  /**
+   * Count events matching a query. One deadline covers every attempt and backoff: the
+   * full call budget for a standalone count, or what remains of a search's.
+   */
   countEvents(
     params: EarthquakeQueryParams,
     ctx: Context,
-    deadlineMs?: number,
+    deadlineMs = CALL_DEADLINE_MS,
   ): Promise<{
     count: number;
     maxAllowed: number | null;
@@ -564,12 +673,12 @@ export class UsgsService {
 
         // fetchWithTimeout throws a status-mapped McpError on any non-2xx before
         // returning, so a Response here is always 2xx.
-        const text = await response.text();
+        const text = await readResponseText(response, 'USGS');
         if (HTML_BODY.test(text)) {
           throw serviceUnavailable('USGS returned HTML instead of JSON.', { url });
         }
 
-        const data = JSON.parse(text) as UsgsCountResponse;
+        const data = parseJsonBody(text, 'USGS', isCountResponse);
         const maxAllowed = data.maxAllowed ?? 20000;
         return {
           count: data.count,
@@ -579,7 +688,8 @@ export class UsgsService {
       },
       {
         operation: 'UsgsService.countEvents',
-        ...(deadlineMs != null ? { deadlineMs } : {}),
+        deadlineMs,
+        isTransient: isTransientUpstream,
         context: reqCtx,
         baseDelayMs: 1000,
         signal: ctx.signal,
@@ -614,6 +724,8 @@ export class UsgsService {
     if (params.alertLevel) q.set('minalertlevel', params.alertLevel);
     if (params.minFelt != null) q.set('minfelt', String(params.minFelt));
     if (params.minSignificance != null) q.set('minsig', String(params.minSignificance));
+    if (params.minMmi != null) q.set('minmmi', String(params.minMmi));
+    if (params.minCdi != null) q.set('mincdi', String(params.minCdi));
     if (params.eventType != null) q.set('eventtype', params.eventType);
     if (params.limit != null) q.set('limit', String(params.limit));
     // FDSN offset is 1-based — offset=1 is the first match, and 0 is rejected.

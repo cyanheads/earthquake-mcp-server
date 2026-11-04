@@ -43,7 +43,7 @@ const ServerConfigSchema = z.object({
     .max(120000)
     .default(10000)
     .describe(
-      'Per-attempt HTTP timeout in milliseconds. Feed, search, and event calls also share a 50-second total deadline across every request and retry; standalone count calls use this per-attempt value.',
+      'Per-attempt HTTP timeout in milliseconds. Every feed, search, count, and event call also runs under one 50-second total deadline across its requests and retries.',
     ),
 });
 

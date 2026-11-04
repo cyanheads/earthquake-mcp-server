@@ -9,6 +9,7 @@ import {
   defaultStartTime,
   earthquakeFilterFields,
   FDSN_TIMESTAMP_PATTERN,
+  filterQueryEcho,
   ignoredUsgsFilters,
   invertedRange,
   normalizeFdsnTimestamp,
@@ -103,6 +104,8 @@ describe('buildQueryParams', () => {
       alert_level: 'yellow',
       min_felt: 10,
       min_significance: 600,
+      min_mmi: 7,
+      min_cdi: 1,
       event_type: 'quarry blast',
     });
     expect(params).toEqual({
@@ -118,6 +121,8 @@ describe('buildQueryParams', () => {
       alertLevel: 'yellow',
       minFelt: 10,
       minSignificance: 600,
+      minMmi: 7,
+      minCdi: 1,
       eventType: 'quarry blast',
     });
   });
@@ -125,6 +130,18 @@ describe('buildQueryParams', () => {
   it('omits absent optional filters instead of sending undefined', () => {
     const params = buildQueryParams({ start_time: '2026-01-01' });
     expect(Object.keys(params)).toEqual(['startTime']);
+  });
+
+  it('trims each event_type list member, which USGS would read as another, unlisted type', () => {
+    expect(buildQueryParams({ event_type: 'earthquake, explosion' }).eventType).toBe(
+      'earthquake,explosion',
+    );
+    expect(buildQueryParams({ event_type: 'quarry blast ,  explosion' }).eventType).toBe(
+      'quarry blast,explosion',
+    );
+    expect(
+      filterQueryEcho(buildQueryParams({ event_type: 'earthquake , explosion' }), 'usgs'),
+    ).toEqual({ event_type: 'earthquake,explosion', start_time: expect.any(String) });
   });
 });
 
@@ -142,6 +159,16 @@ describe('ignoredUsgsFilters', () => {
         'emsc',
       ),
     ).toEqual(['alert_level', 'event_type', 'min_felt', 'min_significance']);
+  });
+
+  it('names min_mmi and min_cdi in alphabetical place for an EMSC query (issue #65)', () => {
+    expect(
+      ignoredUsgsFilters(
+        { min_mmi: 7, min_cdi: 6, min_felt: 5, product_type: 'shakemap', event_type: 'earthquake' },
+        'emsc',
+      ),
+    ).toEqual(['event_type', 'min_cdi', 'min_felt', 'min_mmi', 'product_type']);
+    expect(ignoredUsgsFilters({ min_mmi: 7, min_cdi: 6 }, 'usgs')).toEqual([]);
   });
 
   it('reports nothing for a USGS query, where every filter is sent', () => {

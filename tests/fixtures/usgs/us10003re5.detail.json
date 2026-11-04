@@ -1,0 +1,263 @@
+{
+  "type": "Feature",
+  "properties": {
+    "mag": 7.5,
+    "place": "Hindu Kush region, Afghanistan",
+    "time": 1445850582560,
+    "updated": 1745519451641,
+    "tz": null,
+    "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us10003re5",
+    "felt": 568,
+    "cdi": 7.9,
+    "mmi": 6.939,
+    "alert": "orange",
+    "status": "reviewed",
+    "tsunami": 0,
+    "sig": 1449,
+    "net": "us",
+    "code": "10003re5",
+    "ids": ",us10003re5,gcmt20151026090942,atlas20151026090942,",
+    "sources": ",us,gcmt,atlas,",
+    "types": ",cap,dyfi,finite-fault,general-text,impact-text,losspager,moment-tensor,origin,phase-data,poster,shakemap,",
+    "nst": null,
+    "dmin": 0.622,
+    "rms": 1.43,
+    "gap": 18,
+    "magType": "mww",
+    "type": "earthquake",
+    "title": "M 7.5 - Hindu Kush region, Afghanistan",
+    "products": {
+      "losspager": [
+        {
+          "indexid": 12014222,
+          "indexTime": 1610339720994,
+          "id": "urn:usgs-product:us:losspager:us10003re5:1453429070423",
+          "type": "losspager",
+          "code": "us10003re5",
+          "source": "us",
+          "updateTime": 1453429070423,
+          "status": "UPDATE",
+          "properties": {
+            "alertlevel": "orange",
+            "depth": "231.0",
+            "eventsource": "us",
+            "eventsourcecode": "10003re5",
+            "eventtime": "2015-10-26T09:09:42.000Z",
+            "latitude": "36.5244",
+            "longitude": "70.3676",
+            "magnitude": "7.5",
+            "maxmmi": "7.0",
+            "original-signature": "MCwCFFs5m0bI9dOliAI9Pj4sNWCkneTFAhRX0TKMmtplHZSusPnedbjEaKR4zA==",
+            "original-signature-version": "v1"
+          },
+          "preferredWeight": 158,
+          "contents": {
+            "onepager.pdf": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 704236,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/onepager.pdf"
+            },
+            "location.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 20249,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/location.png"
+            },
+            "empprob.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 32185,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/empprob.png"
+            },
+            "expolegend.pdf": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 124653,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/expolegend.pdf"
+            },
+            "semifat.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 88782,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/semifat.png"
+            },
+            "grid.xml": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 17115138,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/grid.xml"
+            },
+            "contents.xml": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 909,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/contents.xml"
+            },
+            "historical_events.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 191549,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/historical_events.png"
+            },
+            "deathsbystruct.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 57510,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/deathsbystruct.png"
+            },
+            "alertfatal.pdf": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 10607,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/alertfatal.pdf"
+            },
+            "temp.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 146665,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/temp.png"
+            },
+            "exposure.xml": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 170949,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/exposure.xml"
+            },
+            "empfat.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 48228,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/empfat.png"
+            },
+            "info.xml": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 8849,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/info.xml"
+            },
+            "alertfatal.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 16338,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/alertfatal.png"
+            },
+            "exposure_small.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 270856,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/exposure_small.png"
+            },
+            "alertecon.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 16404,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/alertecon.png"
+            },
+            "exposure.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 339636,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/exposure.png"
+            },
+            "alertfatal_small.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 8959,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/alertfatal_small.png"
+            },
+            "history.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 76053,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/history.png"
+            },
+            "emphist.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 59945,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/emphist.png"
+            },
+            "alertecon.pdf": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 10947,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/alertecon.pdf"
+            },
+            "exposure.pdf": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 360562,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/exposure.pdf"
+            },
+            "alertfatal_smaller.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 4916,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/alertfatal_smaller.png"
+            },
+            "semi_inventory.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 94365,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/semi_inventory.png"
+            },
+            "pagerexpo.kmz": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 4079845,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/pagerexpo.kmz"
+            },
+            "alertsponge.pdf": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 7723,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/alertsponge.pdf"
+            },
+            "pager.xml": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 113201,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/pager.xml"
+            },
+            "alertsponge.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 37839,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/alertsponge.png"
+            },
+            "alertecon_small.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 9217,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/alertecon_small.png"
+            },
+            "alertecon_smaller.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 5025,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/alertecon_smaller.png"
+            },
+            "alertsponge_small.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 6452,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/alertsponge_small.png"
+            },
+            "expolegend.png": {
+              "contentType": "application/octet-stream",
+              "lastModified": 1453429069000,
+              "length": 71248,
+              "url": "https://earthquake.usgs.gov/product/losspager/us10003re5/us/1453429070423/expolegend.png"
+            }
+          }
+        }
+      ]
+    }
+  },
+  "geometry": {
+    "type": "Point",
+    "coordinates": [70.3676, 36.5244, 231]
+  },
+  "id": "us10003re5"
+}

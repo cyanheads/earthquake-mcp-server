@@ -10,8 +10,10 @@ import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EarthquakeEventSchema, formatEvent } from '@/mcp-server/tools/schemas.js';
 import type { UsgsFeature } from '@/services/usgs/types.js';
 import { UsgsService } from '@/services/usgs/usgs-service.js';
+import { fixture, hang } from '../helpers/usgs-fetch-stub.js';
 
 function makeService(): UsgsService {
   return new UsgsService(
@@ -881,6 +883,50 @@ describe('UsgsService — no filter is dropped by a truthy check (issues #29, #3
   });
 });
 
+describe('UsgsService — intensity filters (issue #65)', () => {
+  /** Answer the FDSN query and count endpoints, record each URL, and reject any other request. */
+  function stubFdsn() {
+    const urls: URL[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        urls.push(url);
+        if (url.origin === 'https://earthquake.usgs.gov') {
+          if (url.pathname === '/fdsnws/event/1/count') return Response.json({ count: 9 });
+          if (url.pathname === '/fdsnws/event/1/query')
+            return geojsonResponse([makeFeature('us1', 5)]);
+        }
+        throw new Error(`unexpected fetch ${url.href}`);
+      }),
+    );
+    return urls;
+  }
+
+  it('sends minMmi and minCdi as minmmi and mincdi on the query and the count', async () => {
+    const urls = stubFdsn();
+    const service = makeService();
+    await service.searchEvents({ limit: 5, minMmi: 7, minCdi: 6.5 }, createMockContext());
+    await service.countEvents({ minMmi: 1, minCdi: 12 }, createMockContext());
+
+    expect(
+      urls.map((url) => [url.searchParams.get('minmmi'), url.searchParams.get('mincdi')]),
+    ).toEqual([
+      ['7', '6.5'],
+      ['1', '12'],
+    ]);
+  });
+
+  it('leaves both out of the request when neither was supplied', async () => {
+    const urls = stubFdsn();
+    await makeService().searchEvents({ limit: 5, minMagnitude: 5 }, createMockContext());
+
+    expect(urls).toHaveLength(1);
+    expect(urls[0]?.searchParams.has('minmmi')).toBe(false);
+    expect(urls[0]?.searchParams.has('mincdi')).toBe(false);
+  });
+});
+
 describe('UsgsService — associated network IDs (issue #53)', () => {
   /** Normalize one feature carrying `ids` through the list path. */
   async function normalized(id: string, ids: string | undefined) {
@@ -924,5 +970,499 @@ describe('UsgsService — associated network IDs (issue #53)', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([feature])));
     const { events } = await makeService().getFeed('all', 'day', createMockContext());
     expect(events[0]?.associated_ids).toStrictEqual(['us7000ttnj']);
+  });
+});
+
+describe('UsgsService — a 2xx body that cannot be read (issue #60)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('fails an unparseable body as malformed_response in one request', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"type":"FeatureCollection",'));
+    vi.stubGlobal('fetch', fetchMock);
+    const err = await makeService()
+      .searchEvents({ limit: 10 }, createMockContext())
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      message: 'USGS returned a response in an unexpected format.',
+      data: { reason: 'malformed_response' },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries a connection dropped mid-body, then reports the attempts it spent', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"count":'));
+              controller.error(new TypeError('terminated'));
+            },
+          }),
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const pending = makeService()
+      .countEvents({}, createMockContext())
+      .catch((e: unknown) => e);
+    await vi.runAllTimersAsync();
+    const err = await pending;
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(err).toMatchObject({
+      code: JsonRpcErrorCode.ServiceUnavailable,
+      message:
+        'USGS closed the connection before the response was complete. (failed after 4 attempts)',
+      data: { retryAttempts: 4, operation: 'UsgsService.countEvents' },
+    });
+    expect((err as { data?: object }).data).not.toHaveProperty('reason');
+  });
+});
+
+describe('UsgsService — a field USGS always publishes is never invented (issue #61)', () => {
+  const malformed = {
+    code: JsonRpcErrorCode.ServiceUnavailable,
+    message: 'USGS returned a response in an unexpected format.',
+    data: { reason: 'malformed_response' },
+  };
+
+  /** A feature as raw JSON, so a required key can be removed outright. */
+  function rawFeature(edit: (feature: Record<string, unknown>) => void) {
+    const feature = JSON.parse(JSON.stringify(makeFeature('us1', 4.5))) as Record<string, unknown>;
+    edit(feature);
+    return feature;
+  }
+  const props = (feature: Record<string, unknown>) => feature.properties as Record<string, unknown>;
+
+  function page(feature: object, metadata: object = { generated: 1748736000000, count: 1 }) {
+    return new Response(
+      JSON.stringify({ type: 'FeatureCollection', features: [feature], metadata }),
+    );
+  }
+
+  it.each([
+    ['no id', (f: Record<string, unknown>) => delete f.id],
+    ['a null origin time', (f: Record<string, unknown>) => (props(f).time = null)],
+    ['no origin time', (f: Record<string, unknown>) => delete props(f).time],
+    ['a null update time', (f: Record<string, unknown>) => (props(f).updated = null)],
+  ])('fails a search page holding a record with %s in one request', async (_label, edit) => {
+    const fetchMock = vi.fn().mockResolvedValue(page(rawFeature(edit)));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(
+      makeService().searchEvents({ limit: 10 }, createMockContext()),
+    ).rejects.toMatchObject(malformed);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['a record with a null origin time', page(rawFeature((f) => (props(f).time = null)))],
+    ['no generation time', page(makeFeature('us1', 4.5), { count: 1 })],
+  ])('fails a feed with %s in one request', async (_label, body) => {
+    const fetchMock = vi.fn().mockResolvedValue(body);
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(makeService().getFeed('all', 'day', createMockContext())).rejects.toMatchObject(
+      malformed,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['no id', (f: Record<string, unknown>) => delete f.id],
+    ['a null origin time', (f: Record<string, unknown>) => (props(f).time = null)],
+  ])('fails an event lookup whose Feature has %s in one request', async (_label, edit) => {
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(rawFeature(edit)));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(makeService().getEvent('us1', createMockContext())).rejects.toMatchObject(
+      malformed,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['an absent status', undefined, null],
+    ['an unrecognized status', 'manual', null],
+    ['automatic', 'automatic', 'automatic'],
+    ['reviewed', 'reviewed', 'reviewed'],
+    ['deleted', 'deleted', 'deleted'],
+  ])('normalizes %s (%s) to %s', async (_label, status, expected) => {
+    const feature = makeFeature('us1', 4.5);
+    if (status === undefined) delete feature.properties.status;
+    else feature.properties.status = status;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([feature])));
+    const { events } = await makeService().searchEvents({ limit: 10 }, createMockContext());
+    expect(events[0]?.status).toBe(expected);
+    const rendered = formatEvent(EarthquakeEventSchema.parse(events[0])).join('\n');
+    expect(rendered).toContain(`Status: ${expected ?? 'not published by source'}`);
+  });
+});
+
+describe('UsgsService — a record that is not a readable feature fails as malformed (issue #60)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const malformed = {
+    code: JsonRpcErrorCode.ServiceUnavailable,
+    message: 'USGS returned a response in an unexpected format.',
+    data: { reason: 'malformed_response' },
+  };
+
+  /** makeFeature as raw JSON, so any member can take a value its type rules out. */
+  const raw = () => JSON.parse(JSON.stringify(makeFeature('us1', 4.5))) as Record<string, unknown>;
+  const withGeometry = (geometry: unknown) => ({ ...raw(), geometry });
+  const withCoordinates = (coordinates: unknown) => withGeometry({ type: 'Point', coordinates });
+  const { geometry: _geometry, ...noGeometry } = raw();
+
+  /** Run a lookup to completion under fake timers, so a retried failure shows its attempts. */
+  async function settle(pending: Promise<unknown>) {
+    const settled = pending.catch((e: unknown) => e);
+    await vi.runAllTimersAsync();
+    return settled;
+  }
+
+  it.each([
+    ['a null entry', null],
+    ['null properties', { ...raw(), properties: null }],
+    ['no geometry', noGeometry],
+    ['a null geometry', withGeometry(null)],
+    ['a non-point geometry', withGeometry({ type: 'MultiPoint', coordinates: [[-178.5, 52, 33]] })],
+    ['no coordinates', withGeometry({ type: 'Point' })],
+    ['a string longitude', withCoordinates(['-178.5', 52, 33])],
+    ['a null latitude', withCoordinates([-178.5, null, 33])],
+    ['no depth', withCoordinates([-178.5, 52])],
+    ['a string depth', withCoordinates([-178.5, 52, '33'])],
+  ])('fails a search page holding %s in one request', async (_label, entry) => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        Response.json({
+          type: 'FeatureCollection',
+          features: [makeFeature('us0', 5.1), entry],
+          metadata: { generated: 1748736000000, count: 2 },
+        }),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    expect(
+      await settle(makeService().searchEvents({ limit: 10 }, createMockContext())),
+    ).toMatchObject(malformed);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    ['null properties', { ...raw(), properties: null }],
+    ['a null geometry', withGeometry(null)],
+  ])('fails an event lookup whose Feature has %s in one request', async (_label, feature) => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(() => Promise.resolve(Response.json(feature)));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await settle(makeService().getEvent('us1', createMockContext()))).toMatchObject(
+      malformed,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the null depth USGS publishes on historical records', async () => {
+    const feature = makeFeature('iscgem610325189', 7.4);
+    feature.geometry.coordinates = [-178.5, 52.0, null];
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([feature])));
+    const { events } = await makeService().searchEvents({ limit: 10 }, createMockContext());
+    expect(events[0]).toMatchObject({ latitude: 52.0, longitude: -178.5, depth_km: null });
+  });
+});
+
+describe("UsgsService — USGS's mmi 0 placeholder is not an intensity (issue #63)", () => {
+  /** us7000ttxz: USGS publishes `mmi: 0` because its ShakeMap's `maxmmi` is "nan". */
+  const placeholderPage = fixture('us7000ttxz.search.json');
+  const placeholder = (JSON.parse(placeholderPage) as { features: UsgsFeature[] })
+    .features[0] as UsgsFeature;
+
+  const impactLine = (event: unknown) =>
+    formatEvent(EarthquakeEventSchema.parse(event)).find((line) => line.startsWith('**Impact:**'));
+
+  it('reports a search record carrying mmi 0 as not reported', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(placeholderPage)));
+    const { events } = await makeService().searchEvents({ limit: 10 }, createMockContext());
+    expect(events[0]?.mmi).toBeNull();
+    expect(impactLine(events[0])).toBe(
+      '**Impact:** Significance: 630 | Not reported: DYFI felt reports, ShakeMap MMI, CDI',
+    );
+  });
+
+  it('reports a feed record carrying mmi 0 as not reported', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(placeholderPage)));
+    const { events } = await makeService().getFeed('significant', 'month', createMockContext());
+    expect(events[0]?.mmi).toBeNull();
+  });
+
+  it('agrees with the ShakeMap detail on an event lookup', async () => {
+    const event = {
+      ...placeholder,
+      properties: {
+        ...placeholder.properties,
+        // The ShakeMap product's maxima, verbatim from the event's detail record.
+        products: {
+          shakemap: [
+            {
+              properties: {
+                maxmmi: 'nan',
+                maxpga: 'nan',
+                maxpgv: 'nan',
+                'shakemap-code-version': '4.5.0',
+              },
+            },
+          ],
+        },
+      },
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(event)));
+    const result = await makeService().getEvent('us7000ttxz', createMockContext());
+    expect(result.event.mmi).toBeNull();
+    expect(result.detail?.shakemap).toStrictEqual({ code_version: '4.5.0' });
+  });
+
+  it.each([1, 3.4, 9.231, 12])('passes a nonzero mmi of %s through unchanged', async (mmi) => {
+    const feature = { ...placeholder, properties: { ...placeholder.properties, mmi } };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([feature])));
+    const { events } = await makeService().searchEvents({ limit: 10 }, createMockContext());
+    expect(events[0]?.mmi).toBe(mmi);
+    expect(impactLine(events[0])).toBe(
+      `**Impact:** ShakeMap MMI: ${mmi} | Significance: 630 | Not reported: DYFI felt reports, CDI`,
+    );
+  });
+
+  it('leaves an mmi USGS did not publish null', async () => {
+    const feature = { ...placeholder, properties: { ...placeholder.properties, mmi: null } };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(geojsonResponse([feature])));
+    const { events } = await makeService().searchEvents({ limit: 10 }, createMockContext());
+    expect(events[0]?.mmi).toBeNull();
+  });
+});
+
+describe('UsgsService.getVocabulary — the FDSN vocabulary behind a zero result (issue #66)', () => {
+  const VOCABULARY_URL = 'https://earthquake.usgs.gov/fdsnws/event/1/application.json';
+  const DAY_MS = 86_400_000;
+  type Responder = (url: URL, init?: RequestInit) => Response | Promise<Response>;
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /**
+   * Answer the n-th request with the n-th responder (the last one repeats) and record every
+   * URL requested. A responder that throws reads as a network failure to the code under
+   * test, so each test asserts the recorded URLs rather than trusting the fake to complain.
+   */
+  function stubVocabulary(...responders: Responder[]) {
+    const urls: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        urls.push(url.href);
+        const responder = responders[urls.length - 1] ?? responders.at(-1);
+        if (url.href !== VOCABULARY_URL || responder === undefined)
+          throw new Error(`unexpected fetch ${url.href}`);
+        return responder(url, init);
+      }),
+    );
+    return urls;
+  }
+  const capture: Responder = () => new Response(fixture('application.json'));
+  const status =
+    (code: number, headers: Record<string, string> = {}): Responder =>
+    () =>
+      new Response(`Error ${code}`, { status: code, headers });
+  const body =
+    (text: string): Responder =>
+    () =>
+      new Response(text);
+  /** Ample time left on the call's deadline. */
+  const ample = () => Date.now() + 50_000;
+
+  it('parses the three type lists USGS publishes, dropping the rest of the document', async () => {
+    const urls = stubVocabulary(capture);
+    const vocabulary = await makeService().getVocabulary(createMockContext(), ample());
+
+    expect(urls).toEqual([VOCABULARY_URL]);
+    expect(Object.keys(vocabulary ?? {})).toEqual(['eventtypes', 'magnitudetypes', 'producttypes']);
+    expect(vocabulary?.eventtypes).toHaveLength(46);
+    expect(vocabulary?.magnitudetypes).toHaveLength(41);
+    expect(vocabulary?.producttypes).toHaveLength(61);
+    expect(vocabulary?.eventtypes).toEqual(
+      expect.arrayContaining(['quarry blast', 'quarry_blast']),
+    );
+    expect(vocabulary?.producttypes).toContain('moment-tensor');
+  });
+
+  it('keeps one parsed copy per service and refetches it after 24 hours', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.UTC(2026, 10, 4));
+    const urls = stubVocabulary(capture);
+    const service = makeService();
+
+    const first = await service.getVocabulary(createMockContext(), ample());
+    vi.setSystemTime(Date.now() + DAY_MS - 1);
+    expect(await service.getVocabulary(createMockContext(), ample())).toBe(first);
+    expect(urls).toHaveLength(1);
+
+    vi.setSystemTime(Date.now() + 1);
+    const refreshed = await service.getVocabulary(createMockContext(), ample());
+    expect(refreshed).toEqual(first);
+    expect(refreshed).not.toBe(first);
+    expect(urls).toHaveLength(2);
+
+    // Another service — another configured USGS_BASE_URL — holds its own copy.
+    await makeService().getVocabulary(createMockContext(), ample());
+    expect(urls).toHaveLength(3);
+  });
+
+  it('caches no failure: the next call fetches again', async () => {
+    const urls = stubVocabulary(status(503), capture);
+    const service = makeService();
+
+    expect(await service.getVocabulary(createMockContext(), ample())).toBeUndefined();
+    expect(await service.getVocabulary(createMockContext(), ample())).toBeDefined();
+    expect(await service.getVocabulary(createMockContext(), ample())).toBeDefined();
+    expect(urls).toEqual([VOCABULARY_URL, VOCABULARY_URL]);
+  });
+
+  it.each([
+    ['404', status(404)],
+    ['403', status(403)],
+    ['429 with Retry-After', status(429, { 'Retry-After': '1' })],
+    ['500', status(500)],
+    ['501', status(501)],
+    ['502', status(502)],
+    ['503', status(503)],
+    ['504', status(504)],
+    ['an HTML page', body('<!DOCTYPE html><html><body>Rate limited</body></html>')],
+    ['unparseable JSON', body('{"eventtypes": ["earthquake",')],
+    ['a JSON array', body('[]')],
+    ['JSON null', body('null')],
+    ['no producttypes', body('{"eventtypes": [], "magnitudetypes": []}')],
+    [
+      'a string for a list',
+      body('{"eventtypes": "earthquake", "magnitudetypes": [], "producttypes": []}'),
+    ],
+    ['a number in a list', body('{"eventtypes": [1], "magnitudetypes": [], "producttypes": []}')],
+    [
+      'a network error',
+      () => {
+        throw new TypeError('fetch failed');
+      },
+    ],
+    [
+      'a body dropped mid-stream',
+      () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"eventtypes": ["earthquake",'));
+              controller.error(new TypeError('terminated'));
+            },
+          }),
+        ),
+    ],
+  ] satisfies [string, Responder][])(
+    'answers %s with no vocabulary after one attempt',
+    async (_label, responder) => {
+      const urls = stubVocabulary(responder);
+      const ctx = createMockContext();
+      const warning = vi.spyOn(ctx.log, 'warning');
+
+      expect(await makeService().getVocabulary(ctx, ample())).toBeUndefined();
+      expect(urls).toEqual([VOCABULARY_URL]);
+      expect(warning).toHaveBeenCalledOnce();
+    },
+  );
+
+  /** Settle state of a promise, readable synchronously between timer advances. */
+  function track<T>(promise: Promise<T>) {
+    const state: { settled: boolean; value?: T } = { settled: false };
+    void promise.then((value) => Object.assign(state, { settled: true, value }));
+    return state;
+  }
+
+  it('gives up at REQUEST_TIMEOUT_MS when the deadline leaves more', async () => {
+    vi.useFakeTimers();
+    const urls = stubVocabulary(hang);
+    const lookup = track(makeService().getVocabulary(createMockContext(), Date.now() + 50_000));
+
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(lookup.settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(lookup).toEqual({ settled: true, value: undefined });
+    expect(urls).toEqual([VOCABULARY_URL]);
+  });
+
+  it('gives up when the call deadline runs out before REQUEST_TIMEOUT_MS', async () => {
+    vi.useFakeTimers();
+    const urls = stubVocabulary(hang);
+    const lookup = track(makeService().getVocabulary(createMockContext(), Date.now() + 1_200));
+
+    await vi.advanceTimersByTimeAsync(1_199);
+    expect(lookup.settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(lookup).toEqual({ settled: true, value: undefined });
+    expect(urls).toEqual([VOCABULARY_URL]);
+  });
+
+  it.each([0, -1])('skips the lookup when %s ms of the deadline remain', async (remainingMs) => {
+    const urls = stubVocabulary(capture);
+    expect(
+      await makeService().getVocabulary(createMockContext(), Date.now() + remainingMs),
+    ).toBeUndefined();
+    expect(urls).toEqual([]);
+  });
+
+  it('propagates the caller cancelling while the lookup is in flight', async () => {
+    const controller = new AbortController();
+    const urls = stubVocabulary((url, init) => {
+      controller.abort();
+      return hang(url, init);
+    }, capture);
+    const service = makeService();
+
+    const err = await service
+      .getVocabulary(createMockContext({ signal: controller.signal }), ample())
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({
+      code: JsonRpcErrorCode.RequestCancelled,
+      message: expect.stringContaining('was aborted'),
+    });
+    // Nothing was cached: the next caller fetches.
+    expect(await service.getVocabulary(createMockContext(), ample())).toBeDefined();
+    expect(urls).toEqual([VOCABULARY_URL, VOCABULARY_URL]);
+  });
+
+  it("does not fail a concurrent first call when another caller's lookup is cancelled", async () => {
+    const first = new AbortController();
+    const secondInFlight = Promise.withResolvers<void>();
+    const secondResponse = Promise.withResolvers<Response>();
+    const urls = stubVocabulary(hang, () => {
+      secondInFlight.resolve();
+      return secondResponse.promise;
+    });
+    const service = makeService();
+
+    const firstLookup = service
+      .getVocabulary(createMockContext({ signal: first.signal }), ample())
+      .catch((e: unknown) => e);
+    const secondLookup = service.getVocabulary(createMockContext(), ample());
+    await secondInFlight.promise;
+
+    first.abort();
+    expect(await firstLookup).toMatchObject({ code: JsonRpcErrorCode.RequestCancelled });
+    secondResponse.resolve(new Response(fixture('application.json')));
+    expect((await secondLookup)?.producttypes).toContain('moment-tensor');
+
+    // The second caller's copy now serves everyone.
+    expect(await service.getVocabulary(createMockContext(), ample())).toBeDefined();
+    expect(urls).toEqual([VOCABULARY_URL, VOCABULARY_URL]);
   });
 });

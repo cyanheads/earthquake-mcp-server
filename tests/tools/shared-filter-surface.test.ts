@@ -1,26 +1,35 @@
 /**
  * @fileoverview Tests for the filter surface earthquake_search_events and earthquake_count_events share —
  * the extracted validators (issue #32), FDSN timestamp validation and normalization (#29),
- * the alert-level minimum (#31), the bounding box (#37), and the invariant tying every
- * queryEcho entry to a parameter the adapter actually sent.
+ * the alert-level minimum (#31), the bounding box (#37), the intensity filters (#65), the
+ * invariant tying every queryEcho entry to a parameter the adapter actually sent, and the
+ * notice naming a type value USGS does not list (#66).
  * @module tests/tools/shared-filter-surface.test
  */
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import { z } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
-import { createMockContext, getEnrichment } from '@cyanheads/mcp-ts-core/testing';
+import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
+import { escapeMarkdownInline } from '@cyanheads/mcp-ts-core/utils';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { earthquakeCountEvents } from '@/mcp-server/tools/definitions/earthquake-count-events.tool.js';
 import { earthquakeSearchEvents } from '@/mcp-server/tools/definitions/earthquake-search-events.tool.js';
 import { earthquakeFilterFields } from '@/mcp-server/tools/query-params.js';
 import type { EarthquakeEventOutput } from '@/mcp-server/tools/schemas.js';
+import {
+  renderNotice,
+  unlistedValueNotice,
+  unlistedValueSentences,
+} from '@/mcp-server/tools/vocabulary-notice.js';
 import * as emscModule from '@/services/emsc/emsc-service.js';
 import { EmscService } from '@/services/emsc/emsc-service.js';
-import type { EarthquakeQueryParams } from '@/services/usgs/types.js';
+import type { EarthquakeQueryParams, UsgsVocabulary } from '@/services/usgs/types.js';
 import * as usgsModule from '@/services/usgs/usgs-service.js';
 import { UsgsService } from '@/services/usgs/usgs-service.js';
+import { fixture } from '../helpers/usgs-fetch-stub.js';
 
 const SHARED_FIELDS = Object.keys(earthquakeFilterFields);
 
@@ -69,7 +78,7 @@ describe('shared filter surface — bounds are identical across both tools (issu
     expect(shapeOf(earthquakeSearchEvents)).toEqual(shapeOf(earthquakeCountEvents));
     // Guard the guard: a typo in SHARED_FIELDS would make the comparison vacuous.
     expect(SHARED_FIELDS).toContain('radius_km');
-    expect(Object.keys(shapeOf(earthquakeSearchEvents))).toHaveLength(20);
+    expect(Object.keys(shapeOf(earthquakeSearchEvents))).toHaveLength(22);
   });
 
   it('publishes a readable pattern for the date fields so a caller can self-correct', () => {
@@ -134,6 +143,20 @@ describe.each(tools)('$name — filter bounds (issue #32)', ({ tool }) => {
     expect(tool.input.parse({ radius_km: 20001.6 }).radius_km).toBe(20001.6);
     expect(() => tool.input.parse({ radius_km: 20001.7 })).toThrow();
   });
+
+  it.each(['min_mmi', 'min_cdi'] as const)(
+    'bounds %s to the 1–12 intensity scale (issue #65)',
+    (field) => {
+      for (const value of [1, 6.5, 12])
+        expect(tool.input.parse({ [field]: value })[field]).toBe(value);
+      // USGS reads 0 as "has a ShakeMap / DYFI" and answers -1, 12.5, and 13 with HTTP 400.
+      for (const value of [0, -1, 12.5, 13]) {
+        const result = tool.input.safeParse({ [field]: value });
+        expect(result.success, `${field}=${value}`).toBe(false);
+        expect(result.error?.issues[0]?.path).toEqual([field]);
+      }
+    },
+  );
 
   it('round-trips a literal zero on every filter that admits one', () => {
     const parsed = tool.input.parse({
@@ -430,6 +453,8 @@ describe('shared filter surface — handler behavior', () => {
     alert_level: 'minalertlevel',
     min_felt: 'minfelt',
     min_significance: 'minsig',
+    min_mmi: 'minmmi',
+    min_cdi: 'mincdi',
     event_type: 'eventtype',
     limit: 'limit',
     offset: 'offset',
@@ -455,6 +480,8 @@ describe('shared filter surface — handler behavior', () => {
     alert_level: 'green',
     min_felt: 10,
     min_significance: 600,
+    min_mmi: 6.5,
+    min_cdi: 5,
     event_type: 'earthquake',
   };
 
@@ -524,19 +551,76 @@ describe('shared filter surface — handler behavior', () => {
         const sent = await querystringFor('emsc', params);
         const echo = getEnrichment(ctx).queryEcho as Record<string, unknown>;
 
-        for (const key of ['alert_level', 'min_felt', 'min_significance', 'event_type']) {
+        for (const key of [
+          'alert_level',
+          'min_felt',
+          'min_significance',
+          'min_mmi',
+          'min_cdi',
+          'event_type',
+        ]) {
           expect(echo).not.toHaveProperty(key);
         }
-        for (const param of ['minalertlevel', 'alertlevel', 'minfelt', 'minsig', 'eventtype']) {
+        // EMSC answers minmmi and mincdi with HTTP 400 "Unknown request parameters(s)".
+        for (const param of [
+          'minalertlevel',
+          'alertlevel',
+          'minfelt',
+          'minsig',
+          'minmmi',
+          'mincdi',
+          'eventtype',
+        ]) {
           expect(sent.has(param)).toBe(false);
         }
         expect(getEnrichment(ctx).ignoredFilters).toEqual([
           'alert_level',
           'event_type',
+          'min_cdi',
           'min_felt',
+          'min_mmi',
           'min_significance',
         ]);
       });
+
+      it('sends min_mmi and min_cdi to USGS only when supplied (issue #65)', async () => {
+        const ctx = createMockContext({ errors: tool.errors });
+        await invoke[name]({ min_mmi: 7, min_cdi: 6.5 }, ctx as Context);
+        let params = spyFor[name].usgs().mock.calls[0]?.[0] as EarthquakeQueryParams;
+        let sent = await querystringFor('usgs', params);
+        expect(sent.get('minmmi')).toBe('7');
+        expect(sent.get('mincdi')).toBe('6.5');
+        expect(getEnrichment(ctx).queryEcho).toMatchObject({ min_mmi: 7, min_cdi: 6.5 });
+
+        const bareCtx = createMockContext({ errors: tool.errors });
+        await invoke[name]({ min_magnitude: 5 }, bareCtx as Context);
+        params = spyFor[name].usgs().mock.calls[1]?.[0] as EarthquakeQueryParams;
+        sent = await querystringFor('usgs', params);
+        expect(sent.has('minmmi')).toBe(false);
+        expect(sent.has('mincdi')).toBe(false);
+        expect(getEnrichment(bareCtx).queryEcho).not.toHaveProperty('min_mmi');
+        expect(getEnrichment(bareCtx).queryEcho).not.toHaveProperty('min_cdi');
+      });
+
+      it.each([
+        [0, '>=1'],
+        [12.5, '<=12'],
+      ])(
+        'rejects min_mmi=%s on both surfaces before any service is resolved (issue #65)',
+        async (value, bound) => {
+          const result = await runToolContract(tool, { min_mmi: value, min_cdi: value });
+          expect(result.isError).toBe(true);
+          expect(result.structuredContent).toMatchObject({
+            error: { code: JsonRpcErrorCode.InvalidParams },
+          });
+          const text = JSON.stringify(result.content);
+          expect(text).toContain(`min_mmi: Too ${value < 1 ? 'small' : 'big'}`);
+          expect(text).toContain(`min_cdi: Too ${value < 1 ? 'small' : 'big'}`);
+          expect(text).toContain(bound);
+          expect(usgsAccessor).not.toHaveBeenCalled();
+          expect(spyFor[name].usgs()).not.toHaveBeenCalled();
+        },
+      );
     },
   );
 
@@ -595,5 +679,163 @@ describe('shared filter surface — handler behavior', () => {
     const text = (earthquakeCountEvents.format!(result)[0] as { text: string }).text;
     expect(text).toContain('12');
     expect(text).toContain('USGS');
+  });
+});
+
+// --- Unlisted type values behind a zero result (issue #66) ------------------------------
+
+/** The vocabulary USGS published at /fdsnws/event/1/application.json, trimmed. */
+const vocabulary = JSON.parse(fixture('application.json')) as UsgsVocabulary;
+const CLOSING = 'USGS matches an unlisted value against no events.';
+
+describe('unlistedValueSentences — the vocabulary check both tools share (issue #66)', () => {
+  it.each([
+    ['a listed event type', { eventType: 'earthquake' }],
+    ['a listed type in another case', { eventType: 'Quarry Blast' }],
+    ['the underscore spelling USGS also lists', { eventType: 'quarry_blast' }],
+    ['a comma list of listed types', { eventType: 'earthquake,explosion' }],
+    ['a listed magnitude type in another case', { magnitudeType: 'MWW' }],
+    ['a listed product type in another case', { productType: 'Moment-Tensor' }],
+    ['no checked filter', { minMagnitude: 6 }],
+  ] satisfies [string, EarthquakeQueryParams][])('names nothing for %s', (_label, params) => {
+    expect(unlistedValueSentences(params, vocabulary)).toBeUndefined();
+  });
+
+  it.each([
+    [
+      'the detail-group spelling of a product type',
+      { productType: 'moment_tensor' },
+      `product_type "moment_tensor" is not a listed USGS product type; did you mean "moment-tensor"? ${CLOSING}`,
+    ],
+    [
+      'a type with no close match',
+      { eventType: 'quake' },
+      `event_type "quake" is not a listed USGS event type. ${CLOSING}`,
+    ],
+    [
+      'only the unlisted member of a comma list',
+      { eventType: 'earthquake,quake' },
+      `event_type "quake" is not a listed USGS event type. ${CLOSING}`,
+    ],
+    [
+      'a padded member, which USGS does not trim',
+      { eventType: 'earthquake, explosion' },
+      `event_type " explosion" is not a listed USGS event type; did you mean "explosion"? ${CLOSING}`,
+    ],
+    [
+      'a repeated member once',
+      { eventType: 'quake,quake' },
+      `event_type "quake" is not a listed USGS event type. ${CLOSING}`,
+    ],
+    [
+      'every close match, joined with or',
+      { eventType: 'Sonic-Boom' },
+      `event_type "Sonic-Boom" is not a listed USGS event type; did you mean "sonic boom" or "sonicboom" or "sonic_boom"? ${CLOSING}`,
+    ],
+    [
+      'a close match differing in case and spacing',
+      { eventType: 'rock-slide' },
+      `event_type "rock-slide" is not a listed USGS event type; did you mean "Rock Slide" or "rockslide"? ${CLOSING}`,
+    ],
+    [
+      'a magnitude list, which USGS reads as one value',
+      { magnitudeType: 'mb,mww' },
+      `magnitude_type "mb,mww" is not a listed USGS magnitude type. ${CLOSING}`,
+    ],
+    [
+      'quotes and backslashes in a value as a JSON string',
+      { productType: 'a"b\\c' },
+      `product_type "a\\"b\\\\c" is not a listed USGS product type. ${CLOSING}`,
+    ],
+    [
+      'all three fields in input order, closing once',
+      { productType: 'finite_fault', magnitudeType: 'm_ww', eventType: 'quake' },
+      `event_type "quake" is not a listed USGS event type. magnitude_type "m_ww" is not a listed USGS magnitude type; did you mean "mww"? product_type "finite_fault" is not a listed USGS product type; did you mean "finite-fault"? ${CLOSING}`,
+    ],
+  ] satisfies [string, EarthquakeQueryParams, string][])('names %s', (_label, params, expected) => {
+    expect(unlistedValueSentences(params, vocabulary)).toBe(expected);
+  });
+
+  it('runs no lookup for a query that sent none of the checked filters', async () => {
+    const getVocabulary = vi.fn();
+    const accessor = vi
+      .spyOn(usgsModule, 'getUsgsService')
+      .mockReturnValue({ getVocabulary } as unknown as usgsModule.UsgsService);
+    expect(
+      await unlistedValueNotice({ minMagnitude: 6 }, createMockContext(), Date.now() + 50_000),
+    ).toBeUndefined();
+    expect(accessor).not.toHaveBeenCalled();
+    expect(getVocabulary).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+});
+
+describe('renderNotice — caller text in a notice stays text on content[] (issue #66)', () => {
+  it.each([
+    'event_type "*quake* `x`" is not a listed USGS event type.',
+    'product_type "[a](https://x.test) <b> &amp; |c| ~d~" is not listed.',
+    'magnitude_type "_m_ \\w __x" and "a b\u000bc" are not listed.',
+  ])('reads back as the escaped whole line would: %s', (notice) => {
+    expect(renderNotice(notice)).toBe(`> ${escapeMarkdownInline(notice)}`);
+  });
+
+  it('escapes Markdown punctuation and leaves server text untouched', () => {
+    expect(renderNotice('event_type "*quake*" is not a listed USGS event type.')).toBe(
+      '> event_type "\\*quake\\*" is not a listed USGS event type.',
+    );
+    expect(renderNotice('Requested limit 5000; applied limit 1000, the per-call cap.')).toBe(
+      '> Requested limit 5000; applied limit 1000, the per-call cap.',
+    );
+  });
+
+  it('adds at most a redundant backslash before a block marker inside the line', () => {
+    expect(renderNotice('event_type "a - b" is not listed.')).toBe(
+      '> event_type "a \\- b" is not listed.',
+    );
+  });
+});
+
+describe('the unlisted-value notice stays linear in caller text (issue #66)', () => {
+  const sizes = [5_000, 10_000, 20_000, 40_000, 80_000, 160_000, 320_000];
+  const shapes: [string, (size: number) => string][] = [
+    ['one long line ending in a break', (size) => `${'§1 x'.repeat(size / 4)}\ny`],
+    ['breaks throughout', (size) => '  \r\n'.repeat(size / 4)],
+    ['one whitespace run inside the value', (size) => `a${' '.repeat(size)}b`],
+    ['commas throughout', (size) => ','.repeat(size)],
+    ['separators to fold', (size) => '-_ '.repeat(size / 3)],
+  ];
+
+  /**
+   * The path a caller value takes: split and fold into sentences, then the content[] render.
+   * event_type alone, the one field split on commas; the other two share every later step.
+   */
+  const notice = (value: string) =>
+    renderNotice(
+      `No events matched the query. ${unlistedValueSentences({ eventType: value }, vocabulary)}`,
+    );
+
+  /** Thread CPU µs per call: the least of several runs, each a batch so small inputs register. */
+  const cpuMicros = (value: string, batch: number) => {
+    let least = Number.POSITIVE_INFINITY;
+    for (let run = 0; run < 3; run++) {
+      const before = process.threadCpuUsage();
+      for (let call = 0; call < batch; call++) notice(value);
+      const spent = process.threadCpuUsage(before);
+      least = Math.min(least, (spent.user + spent.system) / batch);
+    }
+    return least;
+  };
+
+  it.each(shapes)('stays linear on %s', (_label, make) => {
+    // Unmeasured warm-up, so the smallest size — the ratio's denominator — is not timed cold.
+    cpuMicros(make(sizes[0] ?? 0), 4);
+    const times: number[] = [];
+    for (const size of sizes) {
+      times.push(cpuMicros(make(size), Math.max(1, 20_000 / size)));
+      // An absolute bound at each size before growing the input further.
+      expect(times.at(-1)).toBeLessThan(1_000_000);
+    }
+    const ratio = (times.at(-1) ?? 0) / Math.max(times[0] ?? 1, 1);
+    expect(ratio).toBeLessThan(256);
   });
 });

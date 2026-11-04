@@ -15,7 +15,13 @@ import { earthquakeGetEvent } from '@/mcp-server/tools/definitions/earthquake-ge
 import { earthquakeSearchEvents } from '@/mcp-server/tools/definitions/earthquake-search-events.tool.js';
 import { initEmscService } from '@/services/emsc/emsc-service.js';
 import { initUsgsService } from '@/services/usgs/usgs-service.js';
-import { emscFixture, hang, stubUsgsEvent } from '../helpers/usgs-fetch-stub.js';
+import {
+  emscFixture,
+  fixture,
+  hang,
+  pagerFiles,
+  stubUsgsEvent,
+} from '../helpers/usgs-fetch-stub.js';
 
 /** Serves only the event's detail capture; a product request would be unexpected. */
 const stubDetail = (eventId: string) => stubUsgsEvent(eventId).fetchMock;
@@ -150,7 +156,7 @@ describe('earthquake_get_event — default response (characterization)', () => {
           },
           "losspager": {
             "alert_level": "orange",
-            "report_url": "https://earthquake.usgs.gov/product/losspager/us6000u18k/us/1792203289601/onepager.pdf",
+            "report_url": "https://earthquake.usgs.gov/product/losspager/us6000u18k/us/1793723988986/onepager.pdf",
           },
           "moment_tensor": {
             "derived_depth_km": 13.5,
@@ -226,7 +232,7 @@ describe('earthquake_get_event — default response (characterization)', () => {
       **USGS page:** https://earthquake.usgs.gov/earthquakes/eventpage/us6000u18k
 
       ### Analysis products
-      **PAGER:** Alert level: orange | Report: https://earthquake.usgs.gov/product/losspager/us6000u18k/us/1792203289601/onepager.pdf
+      **PAGER:** Alert level: orange | Report: https://earthquake.usgs.gov/product/losspager/us6000u18k/us/1793723988986/onepager.pdf
       **ShakeMap:** Max MMI: 7.936 | Max PGA: 1.043 g | Max PGV: 72.998 cm/s | Code version: 4.5.0 | Intensity map: https://earthquake.usgs.gov/product/shakemap/us6000u18k/us/1792203153463/download/intensity.jpg
       **DYFI:** Responses: 2005 | Max CDI: 7.9 | Map: https://earthquake.usgs.gov/product/dyfi/us6000u18k/us/1793155236371/us6000u18k_ciim.jpg
       **Moment tensor:** Scalar moment: 377000000000000000000 N·m | Derived depth: 13.5 km | Nodal plane 1: strike 25.21°, dip 74.77°, rake -155.3° | Nodal plane 2: strike 288.32°, dip 66.22°, rake -16.68°
@@ -312,7 +318,7 @@ describe('earthquake_get_event — include on the wire', () => {
     const urls = stubFetch(seismicPortal);
     const result = await runToolContract(earthquakeGetEvent, {
       event_id: '20190706_0000043',
-      include: ['aftershock_forecast', 'origins'],
+      include: ['pager', 'aftershock_forecast', 'origins'],
     });
     expect(result.isError).not.toBe(true);
     expect(urls.map((url) => url.hostname)).toEqual(['www.seismicportal.eu']);
@@ -321,11 +327,136 @@ describe('earthquake_get_event — include on the wire', () => {
       unavailable_includes: [
         { group: 'origins', reason: 'not_published' },
         { group: 'aftershock_forecast', reason: 'not_published' },
+        { group: 'pager', reason: 'not_published' },
       ],
     });
     const text = JSON.stringify(result.content);
     expect(text).toContain('- origins: not_published');
     expect(text).toContain('- aftershock_forecast: not_published');
+    expect(text).toContain('- pager: not_published');
+  });
+
+  it('carries the pager group on both surfaces with three extra requests', async () => {
+    const { urls } = stubUsgsEvent('us6000u18k', { losspager: pagerFiles('us6000u18k') });
+    const result = await runToolContract(earthquakeGetEvent, {
+      event_id: 'us6000u18k',
+      include: ['pager'],
+    });
+    expect(result.isError).not.toBe(true);
+    expect(urls).toHaveLength(4);
+    expect(urls.slice(1).every((url) => /\/losspager\/.+\/json\/\w+\.json$/.test(url))).toBe(true);
+    expect(Object.keys(result.structuredContent ?? {})).toEqual(['event', 'detail', 'pager']);
+    const { pager } = result.structuredContent as {
+      pager: {
+        fatality: { level: string; bins: { min: number; max: number; probability: number }[] };
+        economic: { level: string; bins: { min: number; max: number; probability: number }[] };
+        impact: string[];
+        exposure: {
+          mmi: number[];
+          population: number[];
+          countries: { country_code: string; population: number[] }[];
+        };
+      };
+    };
+    expect([pager.fatality.level, pager.economic.level]).toEqual(['yellow', 'orange']);
+    expect(pager.fatality.bins).toHaveLength(7);
+    expect(pager.economic.bins).toHaveLength(7);
+    expect(pager.economic.bins[3]).toEqual({
+      min: 100,
+      max: 1000,
+      color: 'orange',
+      probability: 0.35322181682545284,
+    });
+    expect(pager.impact).toHaveLength(2);
+    expect(pager.exposure.population).toEqual([
+      0, 0, 3221021, 1877984, 2595241, 555396, 140964, 11406, 0, 0,
+    ]);
+    expect(pager.exposure.countries.map((row) => row.country_code)).toEqual([
+      'CO',
+      'CR',
+      'NI',
+      'PA',
+    ]);
+    expect(pager.exposure.countries[2]?.population.every((value) => value === 0)).toBe(true);
+
+    // content[] carries every bracket, the total row, and every country row.
+    const lines = (result.content as { text: string }[])
+      .map((block) => block.text)
+      .join('\n')
+      .split('\n');
+    for (const estimate of [pager.fatality, pager.economic]) {
+      for (const bin of estimate.bins) {
+        expect(lines.some((line) => line.startsWith(`| ${bin.min} | ${bin.max} | `))).toBe(true);
+      }
+    }
+    expect(lines.filter((line) => /^\| \d+ \| \d+ \| \w+ \| [\d.e-]+ \|$/.test(line))).toHaveLength(
+      14,
+    );
+    expect(lines).toContain(`| Total | ${pager.exposure.population.join(' | ')} |`);
+    for (const row of pager.exposure.countries) {
+      expect(lines).toContain(`| ${row.country_code} | ${row.population.join(' | ')} |`);
+    }
+    for (const statement of pager.impact) expect(lines).toContain(`- ${statement}`);
+  });
+
+  it('passes output validation when PAGER omits an alert level or a bracket color', async () => {
+    const alerts = JSON.parse(fixture('us6000u18k.pager.alerts.json'));
+    delete alerts.economic.level;
+    delete alerts.fatality.bins[0].color;
+    stubUsgsEvent('us6000u18k', {
+      losspager: { ...pagerFiles('us6000u18k'), 'json/alerts.json': () => Response.json(alerts) },
+    });
+    const result = await runToolContract(earthquakeGetEvent, {
+      event_id: 'us6000u18k',
+      include: ['pager'],
+    });
+    expect(result.isError).not.toBe(true);
+    const { pager } = result.structuredContent as {
+      pager: { economic: Record<string, unknown>; fatality: { bins: Record<string, unknown>[] } };
+    };
+    expect(pager.economic).not.toHaveProperty('level');
+    expect(pager.fatality.bins[0]).toEqual({ min: 0, max: 1, probability: 0.11227771547768949 });
+    const text = (result.content as { text: string }[]).map((block) => block.text).join('\n');
+    expect(text).toContain('Fatality alert: yellow | Economic alert: not published');
+    expect(text).toContain('| 0 | 1 |  | 0.11227771547768949 |');
+  });
+
+  it('reports pager not_published and fetch_failed on both surfaces, returning the event', async () => {
+    stubUsgsEvent('us10003re5');
+    const unpublished = await runToolContract(earthquakeGetEvent, {
+      event_id: 'us10003re5',
+      include: ['pager'],
+    });
+    expect(unpublished.structuredContent).toMatchObject({
+      detail: { losspager: { alert_level: 'orange' } },
+      unavailable_includes: [{ group: 'pager', reason: 'not_published' }],
+    });
+    expect(JSON.stringify(unpublished.content)).toContain(
+      '- pager: not_published — no product for this group is published for this event, or its product lacks the files this group reads',
+    );
+
+    stubUsgsEvent('us6000u18k', {
+      losspager: {
+        ...pagerFiles('us6000u18k'),
+        'json/exposures.json': () => new Response('', { status: 404 }),
+      },
+    });
+    const failed = await runToolContract(earthquakeGetEvent, {
+      event_id: 'us6000u18k',
+      include: ['pager'],
+    });
+    expect(failed.isError).not.toBe(true);
+    expect(Object.keys(failed.structuredContent ?? {})).toEqual([
+      'event',
+      'detail',
+      'unavailable_includes',
+    ]);
+    expect(failed.structuredContent).toMatchObject({
+      unavailable_includes: [{ group: 'pager', reason: 'fetch_failed' }],
+    });
+    const text = JSON.stringify(failed.content);
+    expect(text).toContain('- pager: fetch_failed');
+    expect(text).not.toContain('### PAGER loss estimates');
   });
 
   it('rejects an unknown include group without a request', async () => {

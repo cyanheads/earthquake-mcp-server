@@ -20,7 +20,9 @@ import {
   EarthquakeEventSchema,
   formatEvent,
 } from '@/mcp-server/tools/schemas.js';
+import { renderNotice, unlistedValueNotice } from '@/mcp-server/tools/vocabulary-notice.js';
 import { getEmscService } from '@/services/emsc/emsc-service.js';
+import { CALL_DEADLINE_MS } from '@/services/upstream-call.js';
 import type { EarthquakeQueryParams } from '@/services/usgs/types.js';
 import { getUsgsService, type UsgsService } from '@/services/usgs/usgs-service.js';
 
@@ -46,6 +48,7 @@ const searchTrailer = {
     render: (f: string[] | undefined) =>
       `**Ignored filters (not supported by EMSC, not sent upstream):** ${(f ?? []).join(', ')} — these results are NOT constrained by the listed filters. Re-run with source=usgs to apply them.`,
   },
+  notice: { render: renderNotice },
 };
 
 export const earthquakeSearchEvents = tool('earthquake_search_events', {
@@ -123,7 +126,7 @@ export const earthquakeSearchEvents = tool('earthquake_search_events', {
       .string()
       .optional()
       .describe(
-        'Guidance when limit was clamped to 1,000 (requested and applied values), when results are empty (how to broaden filters), or when more pages remain (the next offset). Absent when none applies.',
+        'Guidance when limit was clamped to 1,000 (requested and applied values), when results are empty (how to broaden filters, or on USGS each supplied event_type, magnitude_type, or product_type value USGS does not list, with the listed value it likely meant), or when more pages remain (the next offset). Absent when none applies.',
       ),
     ignoredFilters: z
       .array(z.string().describe('Name of an input filter that was not applied.'))
@@ -179,6 +182,14 @@ export const earthquakeSearchEvents = tool('earthquake_search_events', {
           .number()
           .optional()
           .describe('Applied minimum significance; absent for EMSC.'),
+        min_mmi: z
+          .number()
+          .optional()
+          .describe('Applied minimum ShakeMap intensity (MMI); absent for EMSC.'),
+        min_cdi: z
+          .number()
+          .optional()
+          .describe('Applied minimum DYFI community intensity (CDI); absent for EMSC.'),
         event_type: z.string().optional().describe('Applied event type; absent for EMSC.'),
         magnitude_type: z.string().optional().describe('Applied magnitude type.'),
         product_type: z.string().optional().describe('Applied required product; USGS only.'),
@@ -225,7 +236,7 @@ export const earthquakeSearchEvents = tool('earthquake_search_events', {
     {
       reason: 'source_unavailable',
       code: JsonRpcErrorCode.ServiceUnavailable,
-      when: 'Selected source API returns a 5xx or is unreachable.',
+      when: 'Selected source API returns a 5xx, serves HTML or an unreadable body, or is unreachable.',
       retryable: true,
       recovery: 'Try the other source (usgs or emsc) or retry after a short delay.',
     },
@@ -320,6 +331,8 @@ export const earthquakeSearchEvents = tool('earthquake_search_events', {
       ...(input.offset != null ? { offset: input.offset } : {}),
       orderBy: input.order_by,
     };
+    // The call's budget, armed before the search's own: the vocabulary lookup gets what remains.
+    const deadline = Date.now() + CALL_DEADLINE_MS;
 
     let result: Awaited<ReturnType<UsgsService['searchEvents']>>;
     try {
@@ -403,12 +416,15 @@ export const earthquakeSearchEvents = tool('earthquake_search_events', {
     const truncated =
       count === limit && (result.totalCount == null || nextOffset - 1 < result.totalCount);
     let pageNotice: string | undefined;
-    if (count === 0)
-      pageNotice =
-        offset > 1
-          ? `No events at offset ${offset} — the previous page was the last one. Lower offset or broaden the filters.`
-          : 'No events matched the query. Try broadening the time range, lowering min_magnitude, or expanding the radius.';
-    else if (truncated)
+    if (count === 0 && offset > 1)
+      pageNotice = `No events at offset ${offset} — the previous page was the last one. Lower offset or broaden the filters.`;
+    else if (count === 0) {
+      // USGS matches a type value outside its vocabulary against nothing; name that cause
+      // instead of suggesting a wider window.
+      const unlisted =
+        input.source === 'usgs' ? await unlistedValueNotice(params, ctx, deadline) : undefined;
+      pageNotice = `No events matched the query. ${unlisted ?? 'Try broadening the time range, lowering min_magnitude, or expanding the radius.'}`;
+    } else if (truncated)
       pageNotice =
         (result.totalCount != null
           ? `Showing events ${offset}–${nextOffset - 1} of ${result.totalCount} matches. `

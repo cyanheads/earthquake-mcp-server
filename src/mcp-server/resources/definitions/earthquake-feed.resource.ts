@@ -82,7 +82,7 @@ export const earthquakeFeedResource = resource('earthquake://feed/{magnitude_tie
     {
       reason: 'feed_unavailable',
       code: JsonRpcErrorCode.ServiceUnavailable,
-      when: 'USGS returns a 5xx, HTML, or is unreachable.',
+      when: 'USGS returns a 5xx, serves HTML or an unreadable body, or is unreachable.',
       retryable: true,
       recovery: 'Retry a smaller time_window or use earthquake_search_events as a fallback.',
     },

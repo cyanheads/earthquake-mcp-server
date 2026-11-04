@@ -220,6 +220,7 @@ export const EVENT_INCLUDE_GROUPS = [
   'magnitudes',
   'arrivals',
   'aftershock_forecast',
+  'pager',
 ] as const;
 
 export type EventIncludeGroup = (typeof EVENT_INCLUDE_GROUPS)[number];
@@ -300,6 +301,35 @@ export interface AftershockForecast {
   windows: AftershockForecastWindow[];
 }
 
+/** One probability bracket of a PAGER loss estimate, from `min` (inclusive) to `max` (exclusive). */
+interface PagerLossBin {
+  color?: string;
+  max: number;
+  min: number;
+  probability: number;
+}
+
+/** One PAGER loss estimate: fatalities in deaths, economic loss in millions of USD. */
+interface PagerLossEstimate {
+  bins: PagerLossBin[];
+  level?: string;
+}
+
+/**
+ * Projection of the preferred `losspager` product's `json/alerts.json`,
+ * `json/exposures.json`, and `json/comments.json`. Exposure arrays align with `mmi`.
+ */
+export interface PagerEstimates {
+  economic: PagerLossEstimate;
+  exposure: {
+    countries: { country_code: string; population: number[] }[];
+    mmi: number[];
+    population: number[];
+  };
+  fatality: PagerLossEstimate;
+  impact?: string[];
+}
+
 /** A requested include group the response does not carry, and why. */
 export interface UnavailableInclude {
   group: EventIncludeGroup;
@@ -312,6 +342,7 @@ export interface EventIncludes {
   arrivals?: EventArrival[];
   magnitudes?: EventMagnitude[];
   origins?: EventOrigin[];
+  pager?: PagerEstimates;
   unavailable_includes?: UnavailableInclude[];
 }
 
@@ -345,6 +376,17 @@ export interface UsgsFeatureCollection {
 export interface UsgsCountResponse {
   count: number;
   maxAllowed: number;
+}
+
+/**
+ * The type lists USGS publishes at `/fdsnws/event/1/application.json`, as published: the
+ * values its `eventtype`, `magnitudetype`, and `producttype` filters match. USGS matches them
+ * case-insensitively and returns zero events for a value outside them.
+ */
+export interface UsgsVocabulary {
+  eventtypes: string[];
+  magnitudetypes: string[];
+  producttypes: string[];
 }
 
 /** Raw EMSC event properties. */
@@ -401,6 +443,8 @@ export interface EarthquakeQueryParams {
   /** FDSN `maxlongitude` — eastern edge of a bounding box, in degrees. Extends past ±180 for an antimeridian box. */
   maxLongitude?: number;
   maxMagnitude?: number;
+  /** FDSN `mincdi` — minimum DYFI community intensity, 1–12. USGS-only — EMSC rejects the parameter. */
+  minCdi?: number;
   minDepthKm?: number;
   minFelt?: number;
   /** FDSN `minlatitude` — southern edge of a bounding box, in degrees. */
@@ -408,6 +452,8 @@ export interface EarthquakeQueryParams {
   /** FDSN `minlongitude` — western edge of a bounding box, in degrees. Extends past ±180 for an antimeridian box. */
   minLongitude?: number;
   minMagnitude?: number;
+  /** FDSN `minmmi` — minimum ShakeMap intensity (Modified Mercalli), 1–12. USGS-only — EMSC rejects the parameter. */
+  minMmi?: number;
   minSignificance?: number;
   /** 1-based index of the first event to return. Both FDSN upstreams reject 0. */
   offset?: number;

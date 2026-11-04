@@ -37,7 +37,7 @@ export const EarthquakeEventSchema = z.object({
     .number()
     .nullable()
     .describe(
-      'Maximum ShakeMap Modified Mercalli intensity (0–12); null without a ShakeMap or for EMSC.',
+      'Maximum ShakeMap Modified Mercalli intensity (1–12); null without a ShakeMap, when the ShakeMap computed no intensity, or for EMSC.',
     ),
   alert: z
     .enum(['green', 'yellow', 'orange', 'red'])
@@ -59,7 +59,7 @@ export const EarthquakeEventSchema = z.object({
     .enum(['automatic', 'reviewed', 'deleted'])
     .nullable()
     .describe(
-      'Review state: automatic (unverified), reviewed (analyst checked), or deleted. Null if unpublished (EMSC); such solutions remain unverified and subject to revision.',
+      'Review state: automatic (unverified), reviewed (analyst checked), or deleted. Null if unpublished (EMSC, or a USGS record without one of these values); such solutions remain unverified and subject to revision.',
     ),
   source_catalog: z
     .string()
@@ -125,7 +125,7 @@ export const EarthquakeDetailSchema = z.object({
     })
     .optional()
     .describe(
-      'PAGER assessment; fatality/economic-loss brackets are in report_url, not this projection. Absent without projected fields.',
+      'PAGER alert and report link. The fatality and economic-loss brackets behind the alert, and population exposure, come from the pager include group of earthquake_get_event. Absent without projected fields.',
     ),
   shakemap: z
     .object({
@@ -519,6 +519,72 @@ export const AftershockForecastSchema = z.object({
     .describe('Forecast windows in upstream order.'),
 });
 
+/** One PAGER loss estimate: its alert level and every probability bracket. */
+const pagerEstimateSchema = (unit: string) =>
+  z.object({
+    level: z
+      .string()
+      .optional()
+      .describe(
+        'Alert level this estimate sets — "green", "yellow", "orange", or "red"; the event alert is the higher of the two estimates. Absent when unpublished.',
+      ),
+    bins: z
+      .array(
+        z
+          .object({
+            min: z.number().describe(`Lower bound, inclusive, in ${unit}.`),
+            max: z.number().describe(`Upper bound, exclusive, in ${unit}.`),
+            color: z
+              .string()
+              .optional()
+              .describe('Alert color of this bracket. Absent when unpublished.'),
+            probability: z
+              .number()
+              .describe('Probability (0–1) that the outcome falls in this bracket.'),
+          })
+          .describe('One probability bracket.'),
+      )
+      .describe('Every bracket in upstream order.'),
+  });
+
+/** USGS PAGER loss estimates and population exposure. */
+export const PagerEstimatesSchema = z.object({
+  fatality: pagerEstimateSchema('deaths').describe('Estimated shaking-related fatalities.'),
+  economic: pagerEstimateSchema('millions of USD').describe('Estimated economic losses.'),
+  impact: z
+    .array(z.string())
+    .optional()
+    .describe('PAGER impact statements in published order; absent when none is published.'),
+  exposure: z
+    .object({
+      mmi: z
+        .array(z.number())
+        .describe('Modified Mercalli intensity of each column, in published order.'),
+      population: z
+        .array(z.number())
+        .describe('Estimated people exposed at each intensity, all areas combined.'),
+      countries: z
+        .array(
+          z
+            .object({
+              country_code: z
+                .string()
+                .describe(
+                  'Two-letter country code as PAGER publishes it; "UK" marks areas assigned to no country, not the United Kingdom (GB).',
+                ),
+              population: z
+                .array(z.number())
+                .describe('Estimated people exposed at each intensity in this country.'),
+            })
+            .describe('One country row.'),
+        )
+        .describe(
+          'Every country row in published order, all-zero rows included; empty when PAGER lists none.',
+        ),
+    })
+    .describe('Estimated population exposed to each shaking intensity.'),
+});
+
 /** A requested include group the response does not carry. */
 export const UnavailableIncludeSchema = z
   .object({
@@ -526,7 +592,7 @@ export const UnavailableIncludeSchema = z
     reason: z
       .enum(['not_published', 'fetch_failed'])
       .describe(
-        'not_published: the event has no product for it. fetch_failed: the product exists but could not be fetched or parsed.',
+        'not_published: the event has no product for it, or its product lacks the files the group reads. fetch_failed: the product exists but could not be fetched or parsed.',
       ),
   })
   .describe('One requested group that was not returned.');
@@ -535,6 +601,7 @@ type EventOrigin = z.infer<typeof EventOriginSchema>;
 type EventMagnitude = z.infer<typeof EventMagnitudeSchema>;
 type EventArrival = z.infer<typeof EventArrivalSchema>;
 type AftershockForecastOutput = z.infer<typeof AftershockForecastSchema>;
+type PagerEstimatesOutput = z.infer<typeof PagerEstimatesSchema>;
 type UnavailableInclude = z.infer<typeof UnavailableIncludeSchema>;
 
 /** The include groups of an event lookup, as `format()` receives them. */
@@ -543,6 +610,7 @@ interface EventIncludesOutput {
   arrivals?: EventArrival[] | undefined;
   magnitudes?: EventMagnitude[] | undefined;
   origins?: EventOrigin[] | undefined;
+  pager?: PagerEstimatesOutput | undefined;
   unavailable_includes?: UnavailableInclude[] | undefined;
 }
 
@@ -603,8 +671,23 @@ function formatMagnitude(magnitude: EventMagnitude): string {
   return body ? `${head}: ${body}` : head;
 }
 
+/** One PAGER estimate's brackets as a table, under a heading naming its unit. */
+function formatPagerBins(title: string, estimate: PagerEstimatesOutput['fatality']): string[] {
+  return [
+    '',
+    `**${title}**, each bracket from Min (inclusive) to Max (exclusive)`,
+    '',
+    '| Min | Max | Color | Probability |',
+    '|---|---|---|---|',
+    ...estimate.bins.map(
+      (bin) => `| ${[bin.min, bin.max, bin.color, bin.probability].map(cell).join(' | ')} |`,
+    ),
+  ];
+}
+
 const UNAVAILABLE_TEXT: Record<UnavailableInclude['reason'], string> = {
-  not_published: 'no product for this group is published for this event',
+  not_published:
+    'no product for this group is published for this event, or its product lacks the files this group reads',
   fetch_failed: 'the product exists but could not be fetched or parsed',
 };
 
@@ -667,6 +750,32 @@ export function formatEventIncludes(result: EventIncludesOutput): string[] {
             `| ${[bin.magnitude, bin.probability, bin.count_median, bin.count_p95_min, bin.count_p95_max].map(cell).join(' | ')} |`,
         ),
       );
+    }
+  }
+
+  const pager = result.pager;
+  if (pager) {
+    const { mmi, population, countries } = pager.exposure;
+    lines.push(
+      '',
+      '### PAGER loss estimates',
+      `Fatality alert: ${pager.fatality.level ?? 'not published'} | Economic alert: ${pager.economic.level ?? 'not published'}`,
+      ...(pager.impact ?? []).map((statement) => `- ${statement}`),
+      ...formatPagerBins('Fatalities (deaths)', pager.fatality),
+      ...formatPagerBins('Economic losses (millions of USD)', pager.economic),
+      '',
+      '**Population exposed by shaking intensity (MMI)**',
+      '',
+      `| Country | ${mmi.map((value) => `MMI ${value}`).join(' | ')} |`,
+      `|---|${mmi.map(() => '---|').join('')}`,
+      `| Total | ${population.map(cell).join(' | ')} |`,
+      ...countries.map(
+        (row) => `| ${[row.country_code, ...row.population].map(cell).join(' | ')} |`,
+      ),
+    );
+    if (countries.length === 0) lines.push('_PAGER lists no country rows._');
+    if (countries.some((row) => row.country_code === 'UK')) {
+      lines.push('_"UK" marks areas assigned to no country, not the United Kingdom._');
     }
   }
 

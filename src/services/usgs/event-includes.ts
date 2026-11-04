@@ -1,13 +1,14 @@
 /**
  * @fileoverview Resolves the opt-in include groups of an event lookup — alternative
- * origins, magnitudes, phase arrivals, and the aftershock forecast — from the products
- * on a USGS single-event response.
+ * origins, magnitudes, phase arrivals, the aftershock forecast, and PAGER loss
+ * estimates — from the products on a USGS single-event response.
  * @module services/usgs/event-includes
  */
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import { isCancellation } from '../upstream-call.js';
 import { projectAftershockForecast } from './aftershock-forecast.js';
+import { PAGER_FILES, projectPagerEstimates } from './pager-estimates.js';
 import { maybe, num } from './product-fields.js';
 import { parsePhaseData, projectArrivals, projectMagnitudes } from './quakeml.js';
 import {
@@ -15,6 +16,7 @@ import {
   type EventIncludeGroup,
   type EventIncludes,
   type EventOrigin,
+  type PagerEstimates,
   type UnavailableInclude,
   type UsgsOriginProperties,
   type UsgsProduct,
@@ -22,6 +24,33 @@ import {
 
 /** Fetches one product content file as text; throws on any failure. */
 type ProductTextFetcher = (url: string) => Promise<string>;
+
+/** The value of a settled download; a rejected one rethrows its reason. */
+function settledValue<T>(result: PromiseSettledResult<T>): T {
+  if (result.status === 'rejected') throw result.reason;
+  return result.value;
+}
+
+/**
+ * Download the PAGER files concurrently and project them. Every download settles
+ * before the group does, so a failed file leaves no request running; any failure
+ * fails the whole group.
+ */
+async function loadPager(
+  urls: { alerts: string; exposures: string; comments: string | undefined },
+  fetchText: ProductTextFetcher,
+): Promise<PagerEstimates> {
+  const [alerts, exposures, comments] = await Promise.allSettled([
+    fetchText(urls.alerts),
+    fetchText(urls.exposures),
+    urls.comments === undefined ? undefined : fetchText(urls.comments),
+  ]);
+  return projectPagerEstimates({
+    alerts: settledValue(alerts),
+    exposures: settledValue(exposures),
+    comments: settledValue(comments),
+  });
+}
 
 /** Requested groups deduplicated, in the canonical order responses report them. */
 export function normalizeIncludeGroups(
@@ -99,9 +128,12 @@ function attempt<T>(project: () => T, label: string, ctx: Context): T | undefine
  * Resolve the requested groups against an event's products. `origins` reads the
  * response already fetched; `magnitudes` and `arrivals` share one fetch of the
  * preferred `phase-data` product's `quakeml.xml`; `aftershock_forecast` fetches the
- * `oaf` product's `forecast.json`. The two fetches run concurrently. A group whose
- * product the event lacks is `not_published` with no request; a failed fetch or
- * projection is `fetch_failed`. Cancellation propagates.
+ * `oaf` product's `forecast.json`; `pager` fetches the preferred `losspager` product's
+ * `json/alerts.json`, `json/exposures.json`, and, when listed, `json/comments.json`.
+ * Every download runs concurrently. A group whose product the event lacks — for
+ * `pager`, a product that lists no alerts or no exposures file — is `not_published`
+ * with no request; a failed fetch or projection is `fetch_failed`. Cancellation
+ * propagates.
  */
 export async function loadEventIncludes(
   groups: readonly EventIncludeGroup[],
@@ -116,8 +148,19 @@ export async function loadEventIncludes(
   const phaseGroups = groups.filter((g) => g === 'magnitudes' || g === 'arrivals');
   const phaseUrl = products?.['phase-data']?.[0]?.contents?.['quakeml.xml']?.url;
   const forecastUrl = products?.oaf?.[0]?.contents?.['forecast.json']?.url;
+  const pagerContents = products?.losspager?.[0]?.contents;
+  const pagerAlertsUrl = pagerContents?.[PAGER_FILES.alerts]?.url;
+  const pagerExposuresUrl = pagerContents?.[PAGER_FILES.exposures]?.url;
+  const pagerUrls =
+    pagerAlertsUrl != null && pagerExposuresUrl != null
+      ? {
+          alerts: pagerAlertsUrl,
+          exposures: pagerExposuresUrl,
+          comments: pagerContents?.[PAGER_FILES.comments]?.url,
+        }
+      : undefined;
 
-  const [phaseEvent, forecast] = await Promise.all([
+  const [phaseEvent, forecast, pager] = await Promise.all([
     phaseGroups.length > 0 && phaseUrl != null
       ? settle(async () => parsePhaseData(await fetchText(phaseUrl)), 'Phase-data QuakeML', ctx)
       : undefined,
@@ -127,6 +170,9 @@ export async function loadEventIncludes(
           'Aftershock forecast',
           ctx,
         )
+      : undefined,
+    wants('pager') && pagerUrls != null
+      ? settle(() => loadPager(pagerUrls, fetchText), 'PAGER loss estimates', ctx)
       : undefined,
   ]);
 
@@ -158,6 +204,12 @@ export async function loadEventIncludes(
     if (forecastUrl == null) unavailable.set('aftershock_forecast', 'not_published');
     else if (forecast == null) unavailable.set('aftershock_forecast', 'fetch_failed');
     else includes.aftershock_forecast = forecast;
+  }
+
+  if (wants('pager')) {
+    if (pagerUrls == null) unavailable.set('pager', 'not_published');
+    else if (pager == null) unavailable.set('pager', 'fetch_failed');
+    else includes.pager = pager;
   }
 
   if (unavailable.size > 0) {

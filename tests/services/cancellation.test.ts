@@ -13,10 +13,12 @@
 
 import type { Context } from '@cyanheads/mcp-ts-core';
 import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
+import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EmscService } from '@/services/emsc/emsc-service.js';
+import { CALL_DEADLINE_MS } from '@/services/upstream-call.js';
 import type { UsgsFeature } from '@/services/usgs/types.js';
 import { UsgsService } from '@/services/usgs/usgs-service.js';
 
@@ -47,7 +49,7 @@ const feature = (id: string): UsgsFeature => ({
   },
 });
 
-/** A GeoJSON page of `n` events — the shape both providers' search paths parse. */
+/** A USGS GeoJSON page of `n` events. */
 const page = (n: number) =>
   new Response(
     JSON.stringify({
@@ -57,6 +59,23 @@ const page = (n: number) =>
     }),
     { status: 200, headers: { 'Content-Type': 'application/json' } },
   );
+
+/** An EMSC JSON page of `n` events, with the ISO times and unid EMSC publishes. */
+const emscPage = (n: number) =>
+  Response.json({
+    type: 'FeatureCollection',
+    features: Array.from({ length: n }, (_, i) => ({
+      type: 'Feature',
+      id: `20260601_000000${i}`,
+      geometry: { type: 'Point', coordinates: [28.2, 38.4, -10] },
+      properties: {
+        unid: `20260601_000000${i}`,
+        mag: 4.5,
+        time: '2026-06-01T00:00:00.000Z',
+        lastupdate: '2026-06-01T00:10:00.000Z',
+      },
+    })),
+  });
 
 /**
  * A fetch that honors the abort signal the way the platform does — rejecting an
@@ -129,6 +148,45 @@ describe.each(entryPoints)('$name — an aborted request', ({ run }) => {
   });
 });
 
+describe.each(entryPoints)('$name — a cancellation while the body streams', ({ run }) => {
+  it('propagates as RequestCancelled after one request, not as a dropped connection (issue #60)', async () => {
+    const controller = new AbortController();
+    const fetchSpy = vi.fn((_url: string, init?: RequestInit) =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream({
+            start(body) {
+              body.enqueue(new TextEncoder().encode('{"type":"FeatureCollection",'));
+              // Platform fetch errors an in-flight body with the abort reason.
+              init?.signal?.addEventListener('abort', () => body.error(init.signal?.reason), {
+                once: true,
+              });
+            },
+            pull() {
+              // The caller walks away once the body is streaming.
+              controller.abort();
+            },
+          }),
+          { status: 200 },
+        ),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchSpy);
+
+    const err = await run(createMockContext({ signal: controller.signal }) as Context).catch(
+      (e: unknown) => e,
+    );
+
+    expect(err).toMatchObject({
+      code: JsonRpcErrorCode.RequestCancelled,
+      message: expect.stringMatching(
+        /^fetch GET https:\/\/(usgs|emsc)\.test\/…(\?…)? was aborted\.$/,
+      ),
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('a live signal does not interfere', () => {
   it('completes a normal call when the signal was never aborted', async () => {
     // Guards the guard: if the stub rejected unconditionally, every assertion
@@ -161,7 +219,8 @@ describe('cancellation past the first upstream call', () => {
           (_url: string, init?: RequestInit) =>
             new Promise<Response>((resolve, reject) => {
               requests += 1;
-              if (source !== 'feed' && requests === 1) setTimeout(() => resolve(page(2)), 30_000);
+              if (source !== 'feed' && requests === 1)
+                setTimeout(() => resolve(source === 'emsc' ? emscPage(2) : page(2)), 30_000);
               const fail = () => reject(new DOMException('Aborted', 'AbortError'));
               if (init?.signal?.aborted) fail();
               else init?.signal?.addEventListener('abort', fail, { once: true });
@@ -182,29 +241,86 @@ describe('cancellation past the first upstream call', () => {
         (error: unknown) => error,
       );
       await vi.runAllTimersAsync();
-      expect(Date.now() - started).toBeLessThan(60_000);
+      // The count sub-call gets what remains of the search's deadline; a fresh one would
+      // carry the chain to 80 s.
+      expect(Date.now() - started).toBeLessThanOrEqual(CALL_DEADLINE_MS);
       expect(await observed).toMatchObject(
         source === 'feed' ? { code: -32004 } : { count: 2, countUnavailable: true },
       );
     },
   );
   it.each([
-    { name: 'UsgsService', search: (ctx: Context) => usgs().searchEvents({ limit: 2 }, ctx) },
-    { name: 'EmscService', search: (ctx: Context) => emsc().searchEvents({ limit: 2 }, ctx) },
-  ])('$name preserves cancellation when the count sub-call is aborted', async ({ search }) => {
-    // A page truncated at the limit triggers a second request for the match total.
-    // Aborting between the two exercises the failover branch, not the happy path.
-    const controller = new AbortController();
-    const fetchSpy = abortAwareFetch((call) => {
-      if (call !== 1) return;
-      controller.abort();
-      return page(2);
-    });
-    vi.stubGlobal('fetch', fetchSpy);
+    {
+      name: 'UsgsService',
+      service: () =>
+        new UsgsService({} as AppConfig, {} as StorageService, 'https://usgs.test', 30_000),
+    },
+    {
+      name: 'EmscService',
+      service: () =>
+        new EmscService({} as AppConfig, {} as StorageService, 'https://emsc.test', 30_000),
+    },
+  ])(
+    '$name standalone count settles within one 50 s deadline across retries (issue #59)',
+    async ({ service }) => {
+      vi.useFakeTimers();
+      const started = Date.now();
+      // Accepts every request and never answers, so only a timeout ends one.
+      const fetchSpy = vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            const fail = () =>
+              reject(init?.signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+            if (init?.signal?.aborted) fail();
+            else init?.signal?.addEventListener('abort', fail, { once: true });
+          }),
+      );
+      vi.stubGlobal('fetch', fetchSpy);
 
-    const pending = search(createMockContext({ signal: controller.signal }) as Context);
-    await expect(pending).rejects.toThrow(/abort/i);
+      const pending = service()
+        .countEvents({ minMagnitude: 5 }, createMockContext() as Context)
+        .catch((e: unknown) => e);
+      await vi.runAllTimersAsync();
+      const err = await pending;
 
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-  });
+      // Four 30 s attempts plus backoff would run to about 127 s.
+      expect(Date.now() - started).toBeLessThanOrEqual(CALL_DEADLINE_MS);
+      expect(err).toMatchObject({
+        code: JsonRpcErrorCode.Timeout,
+        data: { reason: 'retry_deadline_exceeded', deadlineMs: CALL_DEADLINE_MS },
+      });
+      // One 30 s attempt, a backoff, then a second attempt cut short by the deadline.
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    },
+  );
+  it.each([
+    {
+      name: 'UsgsService',
+      search: (ctx: Context) => usgs().searchEvents({ limit: 2 }, ctx),
+      firstPage: () => page(2),
+    },
+    {
+      name: 'EmscService',
+      search: (ctx: Context) => emsc().searchEvents({ limit: 2 }, ctx),
+      firstPage: () => emscPage(2),
+    },
+  ])(
+    '$name preserves cancellation when the count sub-call is aborted',
+    async ({ search, firstPage }) => {
+      // A page truncated at the limit triggers a second request for the match total.
+      // Aborting between the two exercises the failover branch, not the happy path.
+      const controller = new AbortController();
+      const fetchSpy = abortAwareFetch((call) => {
+        if (call !== 1) return;
+        controller.abort();
+        return firstPage();
+      });
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const pending = search(createMockContext({ signal: controller.signal }) as Context);
+      await expect(pending).rejects.toThrow(/abort/i);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    },
+  );
 });

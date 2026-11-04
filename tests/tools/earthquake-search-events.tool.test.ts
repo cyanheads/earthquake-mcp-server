@@ -3,13 +3,17 @@
  * @module tests/tools/earthquake-search-events.tool.test
  */
 
+import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
 import { JsonRpcErrorCode, McpError } from '@cyanheads/mcp-ts-core/errors';
+import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { createMockContext, getEnrichment, runToolContract } from '@cyanheads/mcp-ts-core/testing';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { earthquakeSearchEvents } from '@/mcp-server/tools/definitions/earthquake-search-events.tool.js';
 import type { EarthquakeEventOutput } from '@/mcp-server/tools/schemas.js';
 import * as emscModule from '@/services/emsc/emsc-service.js';
+import { CALL_DEADLINE_MS } from '@/services/upstream-call.js';
 import * as usgsModule from '@/services/usgs/usgs-service.js';
+import { fixture, hang } from '../helpers/usgs-fetch-stub.js';
 
 const sampleEvent: EarthquakeEventOutput = {
   id: 'us6000sznj',
@@ -988,5 +992,223 @@ describe('earthquakeSearchEvents — failed total-count leg is disclosed (issue 
       .join('\n');
     expect(text).not.toMatch(/count lookup failed/i);
     expect(text).toContain('4821');
+  });
+});
+
+/** Every text block of a tool result, joined. */
+const contentText = (result: { content?: unknown }) =>
+  ((result.content ?? []) as { text?: string }[]).map((block) => block.text ?? '').join('\n');
+
+describe('earthquakeSearchEvents — min_mmi and min_cdi (issue #65)', () => {
+  let mockUsgsSearch: ReturnType<typeof vi.fn>;
+  let mockEmscSearch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockUsgsSearch = vi.fn().mockResolvedValue({ events: [sampleEvent], count: 1 });
+    mockEmscSearch = vi.fn().mockResolvedValue({ events: [emscEvent], count: 1 });
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue({
+      searchEvents: mockUsgsSearch,
+    } as unknown as usgsModule.UsgsService);
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue({
+      searchEvents: mockEmscSearch,
+    } as unknown as emscModule.EmscService);
+  });
+
+  it('passes both to USGS and echoes them on both surfaces', async () => {
+    const result = await runToolContract(earthquakeSearchEvents, { min_mmi: 7, min_cdi: 6.5 });
+
+    expect(mockUsgsSearch.mock.calls[0]?.[0]).toMatchObject({ minMmi: 7, minCdi: 6.5 });
+    expect(result.structuredContent).toMatchObject({ queryEcho: { min_mmi: 7, min_cdi: 6.5 } });
+    expect(result.structuredContent).not.toHaveProperty('ignoredFilters');
+    expect(contentText(result)).toContain('min_mmi=7');
+    expect(contentText(result)).toContain('min_cdi=6.5');
+  });
+
+  it('names both as ignored on EMSC and keeps them out of the echo', async () => {
+    const result = await runToolContract(earthquakeSearchEvents, {
+      source: 'emsc',
+      min_mmi: 7,
+      min_cdi: 6.5,
+    });
+
+    expect(result.structuredContent).toMatchObject({ ignoredFilters: ['min_cdi', 'min_mmi'] });
+    const echo = (result.structuredContent as { queryEcho: object }).queryEcho;
+    expect(echo).not.toHaveProperty('min_mmi');
+    expect(echo).not.toHaveProperty('min_cdi');
+    expect(contentText(result)).toContain('min_cdi, min_mmi');
+    expect(contentText(result)).not.toContain('min_mmi=');
+  });
+});
+
+describe('earthquakeSearchEvents — an empty first page names the type value USGS does not list (issue #66)', () => {
+  const USGS = 'https://earthquake.usgs.gov';
+  const QUERY = '/fdsnws/event/1/query';
+  const VOCABULARY = '/fdsnws/event/1/application.json';
+  const BROADEN =
+    'No events matched the query. Try broadening the time range, lowering min_magnitude, or expanding the radius.';
+  let mockEmscSearch: ReturnType<typeof vi.fn>;
+
+  /** A raw USGS feature the real adapter normalizes. */
+  const rawFeature = {
+    type: 'Feature',
+    id: 'us1',
+    geometry: { type: 'Point', coordinates: [139.65, 35.68, 35] },
+    properties: {
+      mag: 5,
+      magType: 'mww',
+      place: 'Japan',
+      time: 1767225600000,
+      updated: 1767225600000,
+    },
+  };
+
+  /**
+   * Run the real USGS adapter against a fetch fake: the query endpoint answers `features`, the
+   * vocabulary endpoint `vocabulary` (the captured document by default), and any other URL
+   * rejects. Every path is recorded, so a test reads the upstream traffic rather than trusting
+   * the fake to complain.
+   */
+  function stubUsgs(
+    features: object[] = [],
+    vocabulary: () => Response = () => new Response(fixture('application.json')),
+  ) {
+    const paths: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        paths.push(url.origin === USGS ? url.pathname : url.href);
+        if (url.origin === USGS && url.pathname === QUERY)
+          return Response.json({ type: 'FeatureCollection', features, metadata: {} });
+        if (url.origin === USGS && url.pathname === VOCABULARY) return vocabulary();
+        throw new Error(`unexpected fetch ${url.href}`);
+      }),
+    );
+    return paths;
+  }
+
+  beforeEach(() => {
+    // A fresh service per test, so no vocabulary is cached from an earlier one.
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue(
+      new usgsModule.UsgsService({} as AppConfig, {} as StorageService, USGS, 5000),
+    );
+    mockEmscSearch = vi.fn().mockResolvedValue({ events: [], count: 0 });
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue({
+      searchEvents: mockEmscSearch,
+    } as unknown as emscModule.EmscService);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it('replaces the broadening advice with the unlisted value on both surfaces', async () => {
+    const paths = stubUsgs();
+    const result = await runToolContract(earthquakeSearchEvents, {
+      start_time: '2026-01-01',
+      end_time: '2026-11-01',
+      min_magnitude: 2,
+      event_type: 'quake',
+    });
+
+    const notice =
+      'No events matched the query. event_type "quake" is not a listed USGS event type. USGS matches an unlisted value against no events.';
+    expect(result.structuredContent).toMatchObject({ count: 0, totalCount: 0, notice });
+    expect(contentText(result)).toContain(`> ${notice}`);
+    expect(paths).toEqual([QUERY, VOCABULARY]);
+  });
+
+  it('sends the clamp and vocabulary sentences as one notice', async () => {
+    stubUsgs();
+    const result = await runToolContract(earthquakeSearchEvents, {
+      limit: 5000,
+      event_type: 'earthquake,quake',
+      magnitude_type: 'm_ww',
+      product_type: 'finite_fault',
+    });
+
+    const notice =
+      'Requested limit 5000; applied limit 1000, the per-call cap. No events matched the query. event_type "quake" is not a listed USGS event type. magnitude_type "m_ww" is not a listed USGS magnitude type; did you mean "mww"? product_type "finite_fault" is not a listed USGS product type; did you mean "finite-fault"? USGS matches an unlisted value against no events.';
+    expect((result.structuredContent as { notice: string }).notice).toBe(notice);
+    expect(contentText(result)).toContain(`> ${notice}`);
+  });
+
+  it('keeps the broadening advice when every supplied value is listed', async () => {
+    const paths = stubUsgs();
+    const result = await runToolContract(earthquakeSearchEvents, { event_type: 'Quarry Blast' });
+
+    expect((result.structuredContent as { notice: string }).notice).toBe(BROADEN);
+    expect(paths).toEqual([QUERY, VOCABULARY]);
+  });
+
+  it('returns the empty page as before when the lookup fails', async () => {
+    const paths = stubUsgs([], () => new Response('Error 503', { status: 503 }));
+    const result = await runToolContract(earthquakeSearchEvents, { event_type: 'quake' });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({ count: 0, totalCount: 0, notice: BROADEN });
+    expect(contentText(result)).not.toContain('not a listed');
+    expect(paths).toEqual([QUERY, VOCABULARY]);
+  });
+
+  it.each([
+    ['a nonempty page', [rawFeature], {}],
+    ['an empty later page', [], { offset: 21 }],
+  ])('makes no lookup for %s', async (_label, features, args) => {
+    const paths = stubUsgs(features);
+    const result = await runToolContract(earthquakeSearchEvents, { event_type: 'quake', ...args });
+
+    expect(paths).toEqual([QUERY]);
+    expect(JSON.stringify(result.structuredContent)).not.toContain('not a listed');
+  });
+
+  it('makes no lookup for an EMSC search', async () => {
+    const paths = stubUsgs();
+    const result = await runToolContract(earthquakeSearchEvents, {
+      source: 'emsc',
+      magnitude_type: 'mww',
+    });
+
+    expect(paths).toEqual([]);
+    expect((result.structuredContent as { notice: string }).notice).toBe(BROADEN);
+  });
+
+  it('gives the lookup only what remains of the search call deadline', async () => {
+    vi.useFakeTimers();
+    // A per-attempt timeout above what the deadline leaves, so only the shared deadline can
+    // end the lookup; a fresh budget would carry the call to 95 s.
+    vi.spyOn(usgsModule, 'getUsgsService').mockReturnValue(
+      new usgsModule.UsgsService({} as AppConfig, {} as StorageService, USGS, 50_000),
+    );
+    const paths: string[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        paths.push(url.origin === USGS ? url.pathname : url.href);
+        if (url.origin === USGS && url.pathname === QUERY)
+          return new Promise<Response>((resolve) =>
+            setTimeout(
+              () =>
+                resolve(Response.json({ type: 'FeatureCollection', features: [], metadata: {} })),
+              45_000,
+            ),
+          );
+        if (url.origin === USGS && url.pathname === VOCABULARY) return hang(url, init);
+        return Promise.reject(new Error(`unexpected fetch ${url.href}`));
+      }),
+    );
+    const started = Date.now();
+
+    const pending = runToolContract(earthquakeSearchEvents, { event_type: 'quake' });
+    await vi.runAllTimersAsync();
+    const result = await pending;
+
+    expect(paths).toEqual([QUERY, VOCABULARY]);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(45_000);
+    expect(Date.now() - started).toBeLessThanOrEqual(CALL_DEADLINE_MS);
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({ count: 0, notice: BROADEN });
   });
 });

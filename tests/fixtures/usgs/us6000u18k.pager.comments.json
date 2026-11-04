@@ -1,0 +1,7 @@
+{
+  "impact1": "Orange alert for economic losses. Significant damage is likely and the disaster is potentially widespread. Estimated economic losses are 0-2% GDP of Panama. Past events with this alert level have required a regional or national level response.",
+  "impact2": "Yellow alert for shaking-related fatalities. Some casualties are possible.",
+  "struct_comment": "Overall, the population in this region resides in structures that are a mix of vulnerable and earthquake resistant construction.  The predominant vulnerable building types are unreinforced brick masonry and adobe block construction.",
+  "historical_comment": "A magnitude 7.6 earthquake 342 km s of this event struck Valle de la Estrella, Costa Rica on April 22, 1991 (UTC), with estimated population exposures of 1,810,000 at intensity VI and 213,000 at intensity VII, resulting in a reported 75 fatalities.",
+  "secondary_comment": "Recent earthquakes in this area have caused secondary hazards such as tsunamis, landslides and liquefaction that might have contributed to losses."
+}

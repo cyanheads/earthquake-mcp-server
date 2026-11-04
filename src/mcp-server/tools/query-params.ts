@@ -178,27 +178,44 @@ export const earthquakeFilterFields = {
         'Combines magnitude, felt reports, and PAGER estimates. ' +
         'Significant events typically score 600+. Only available from USGS.',
     ),
+  min_mmi: z
+    .number()
+    .min(1)
+    .max(12)
+    .optional()
+    .describe(
+      'Minimum ShakeMap intensity on the Modified Mercalli scale (1–12): the strongest shaking USGS modeled for the event, e.g. 7 for very strong shaking. Finds shaking a magnitude floor or alert_level misses. An event without a ShakeMap never matches; product_type "shakemap" requires one at any intensity. Only available from USGS.',
+    ),
+  min_cdi: z
+    .number()
+    .min(1)
+    .max(12)
+    .optional()
+    .describe(
+      'Minimum DYFI (Did You Feel It?) community intensity (1–12): the strongest shaking people reported for the event. An event without DYFI reports never matches. Only available from USGS.',
+    ),
   event_type: z
     .string()
     .trim()
     .min(1)
     .optional()
     .describe(
-      'Filter by upstream event classification, e.g. "earthquake" to exclude quarry blasts and ' +
-        'explosions, or "quarry blast" to see only those. Matched verbatim against the USGS ' +
-        'catalog, which accepts any string and returns zero matches for an unrecognized one. ' +
-        'Only available from USGS.',
+      'Filter by upstream event classification, e.g. "earthquake" to exclude quarry blasts and explosions, or "quarry blast" to see only those; a comma-separated list such as "earthquake,explosion" matches any of them. USGS matches case-insensitively and returns zero matches for a value it does not list, which the notice then names. Only available from USGS.',
     ),
   magnitude_type: z
     .string()
     .trim()
     .optional()
-    .describe('Magnitude type, e.g. "mb" or "mww"; both sources. Blank means omitted.'),
+    .describe(
+      'Magnitude type, e.g. "mb" or "mww"; both sources. USGS matches case-insensitively; EMSC matches its own lowercase types ("mb", "mw") case-sensitively and has no "mww". Blank means omitted.',
+    ),
   product_type: z
     .string()
     .trim()
     .optional()
-    .describe('Required product type, e.g. "moment-tensor"; USGS only. Blank means omitted.'),
+    .describe(
+      'Required product type, e.g. "moment-tensor" (hyphenated, unlike the moment_tensor detail group); USGS only, matched case-insensitively. Blank means omitted.',
+    ),
   review_status: z
     .string()
     .trim()
@@ -216,15 +233,17 @@ export type EarthquakeFilterInput = z.infer<typeof earthquakeFilterSchema>;
 
 /**
  * Filters only the USGS FDSN API implements — EMSC has no equivalent parameter.
- * `event_type` is here because EMSC's endpoint rejects an `eventtype` parameter
- * outright with HTTP 400, so forwarding it would fail the query rather than
- * merely go unapplied. The bounding box is deliberately absent: both providers
+ * EMSC's endpoint rejects `eventtype`, `minmmi`, and `mincdi` outright with HTTP 400,
+ * so forwarding one would fail the query rather than merely go unapplied.
+ * The bounding box is deliberately absent: both providers
  * implement the FDSN rectangle parameters identically.
  */
 const USGS_ONLY_FILTERS = [
   'alert_level',
   'event_type',
+  'min_cdi',
   'min_felt',
+  'min_mmi',
   'min_significance',
   'product_type',
   'review_status',
@@ -326,7 +345,18 @@ export function buildQueryParams(input: EarthquakeFilterInput): EarthquakeQueryP
     ...(input.alert_level != null ? { alertLevel: input.alert_level } : {}),
     ...(input.min_felt != null ? { minFelt: input.min_felt } : {}),
     ...(input.min_significance != null ? { minSignificance: input.min_significance } : {}),
-    ...(input.event_type != null ? { eventType: input.event_type } : {}),
+    ...(input.min_mmi != null ? { minMmi: input.min_mmi } : {}),
+    ...(input.min_cdi != null ? { minCdi: input.min_cdi } : {}),
+    // USGS does not trim list members, so "earthquake, explosion" would match " explosion"
+    // against nothing while the earthquakes keep the result nonzero and unexplained.
+    ...(input.event_type != null
+      ? {
+          eventType: input.event_type
+            .split(',')
+            .map((member) => member.trim())
+            .join(','),
+        }
+      : {}),
     ...(input.magnitude_type ? { magnitudeType: input.magnitude_type } : {}),
     ...(input.product_type ? { productType: input.product_type } : {}),
     ...(input.review_status ? { reviewStatus: input.review_status } : {}),
@@ -361,6 +391,8 @@ export function filterQueryEcho(params: EarthquakeQueryParams, source: 'usgs' | 
     ...(isUsgs && params.minSignificance != null
       ? { min_significance: params.minSignificance }
       : {}),
+    ...(isUsgs && params.minMmi != null ? { min_mmi: params.minMmi } : {}),
+    ...(isUsgs && params.minCdi != null ? { min_cdi: params.minCdi } : {}),
     ...(isUsgs && params.eventType != null ? { event_type: params.eventType } : {}),
     ...(params.magnitudeType != null ? { magnitude_type: params.magnitudeType } : {}),
     ...(isUsgs && params.productType != null ? { product_type: params.productType } : {}),

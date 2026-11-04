@@ -9,7 +9,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { earthquakeGetEvent } from '@/mcp-server/tools/definitions/earthquake-get-event.tool.js';
 import type { EarthquakeDetailOutput, EarthquakeEventOutput } from '@/mcp-server/tools/schemas.js';
 import * as emscModule from '@/services/emsc/emsc-service.js';
+import { projectPagerEstimates } from '@/services/usgs/pager-estimates.js';
 import * as usgsModule from '@/services/usgs/usgs-service.js';
+import { fixture } from '../helpers/usgs-fetch-stub.js';
 
 const sampleEvent: EarthquakeEventOutput = {
   id: 'us6000sznj',
@@ -342,7 +344,7 @@ describe('earthquakeGetEvent — routes by ID shape (issue #53)', () => {
     const ctx = createMockContext({ errors: earthquakeGetEvent.errors });
     const input = earthquakeGetEvent.input.parse({
       event_id: '20190706_0000043',
-      include: ['arrivals', 'origins', 'arrivals'],
+      include: ['pager', 'arrivals', 'origins', 'arrivals'],
     });
     const result = await earthquakeGetEvent.handler(input, ctx);
 
@@ -353,6 +355,7 @@ describe('earthquakeGetEvent — routes by ID shape (issue #53)', () => {
       unavailable_includes: [
         { group: 'origins', reason: 'not_published' },
         { group: 'arrivals', reason: 'not_published' },
+        { group: 'pager', reason: 'not_published' },
       ],
     });
   });
@@ -504,6 +507,155 @@ describe('earthquakeGetEvent — include rendering', () => {
 
   it('adds nothing for groups that were not requested', () => {
     const output = text({ event: sampleEvent, detail: sampleDetail });
-    expect(output).not.toMatch(/### (Origins|Magnitudes|Arrivals|Aftershock|Unavailable)/);
+    expect(output).not.toMatch(/### (Origins|Magnitudes|Arrivals|Aftershock|PAGER|Unavailable)/);
+  });
+
+  const u18kPager = () =>
+    projectPagerEstimates({
+      alerts: fixture('us6000u18k.pager.alerts.json'),
+      exposures: fixture('us6000u18k.pager.exposures.json'),
+      comments: fixture('us6000u18k.pager.comments.json'),
+    });
+
+  it('renders both alerts, every PAGER bracket, the total row, and every country row', () => {
+    const lines = text({ event: sampleEvent, pager: u18kPager() }).split('\n');
+    const at = lines.indexOf('### PAGER loss estimates');
+    expect(at).toBeGreaterThan(0);
+    expect(lines.slice(at + 1, at + 4)).toEqual([
+      'Fatality alert: yellow | Economic alert: orange',
+      '- Orange alert for economic losses. Significant damage is likely and the disaster is potentially widespread. Estimated economic losses are 0-2% GDP of Panama. Past events with this alert level have required a regional or national level response.',
+      '- Yellow alert for shaking-related fatalities. Some casualties are possible.',
+    ]);
+    expect(lines).toContain(
+      '**Fatalities (deaths)**, each bracket from Min (inclusive) to Max (exclusive)',
+    );
+    expect(lines).toContain(
+      '**Economic losses (millions of USD)**, each bracket from Min (inclusive) to Max (exclusive)',
+    );
+    const bracketRows = lines.filter((line) => /^\| \d+ \| \d+ \| \w+ \| [\d.e-]+ \|$/.test(line));
+    expect(bracketRows).toHaveLength(14);
+    expect(bracketRows.slice(0, 2)).toEqual([
+      '| 0 | 1 | green | 0.11227771547768949 |',
+      '| 1 | 10 | yellow | 0.33828893378760094 |',
+    ]);
+    expect(lines).toContain('| 100000 | 10000000 | red | 0.000011332245432704724 |');
+    expect(lines).toContain('| 100 | 1000 | orange | 0.35322181682545284 |');
+    expect(lines).toContain(
+      '| Country | MMI 1 | MMI 2 | MMI 3 | MMI 4 | MMI 5 | MMI 6 | MMI 7 | MMI 8 | MMI 9 | MMI 10 |',
+    );
+    expect(lines).toContain(
+      '| Total | 0 | 0 | 3221021 | 1877984 | 2595241 | 555396 | 140964 | 11406 | 0 | 0 |',
+    );
+    expect(lines.filter((line) => /^\| (CO|CR|NI|PA) \|/.test(line))).toEqual([
+      '| CO | 0 | 0 | 3084 | 1125 | 0 | 0 | 0 | 0 | 0 | 0 |',
+      '| CR | 0 | 0 | 3180784 | 488153 | 59824 | 0 | 0 | 0 | 0 | 0 |',
+      '| NI | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |',
+      '| PA | 0 | 0 | 37153 | 1388706 | 2535417 | 555396 | 140964 | 11406 | 0 | 0 |',
+    ]);
+    expect(lines).not.toContain('_PAGER lists no country rows._');
+  });
+
+  it('renders sparse PAGER fields without inventing them', () => {
+    const pager = u18kPager();
+    const { level: _level, ...fatality } = pager.fatality;
+    const output = text({
+      event: sampleEvent,
+      pager: {
+        fatality,
+        economic: { ...pager.economic, bins: [{ min: 0, max: 1, probability: 0.5 }] },
+        exposure: { mmi: [5, 6], population: [10, 2], countries: [] },
+      },
+    });
+    expect(output).toContain('Fatality alert: not published | Economic alert: orange\n\n');
+    expect(output).toContain('| 0 | 1 |  | 0.5 |');
+    expect(output).toContain('| Country | MMI 5 | MMI 6 |\n|---|---|---|\n| Total | 10 | 2 |');
+    expect(output).toContain('_PAGER lists no country rows._');
+    expect(output).not.toContain('United Kingdom');
+  });
+
+  it('says what PAGER country code UK means, and escapes a pipe in a code', () => {
+    const output = text({
+      event: sampleEvent,
+      pager: {
+        ...u18kPager(),
+        exposure: {
+          mmi: [7],
+          population: [5],
+          countries: [
+            { country_code: 'UK', population: [3] },
+            { country_code: 'M|X', population: [2] },
+          ],
+        },
+      },
+    });
+    expect(output).toContain('| UK | 3 |');
+    expect(output).toContain('| M\\|X | 2 |');
+    expect(output).toContain('_"UK" marks areas assigned to no country, not the United Kingdom._');
+  });
+
+  it('explains not_published as a missing product or missing files', () => {
+    const output = text({
+      event: sampleEvent,
+      unavailable_includes: [{ group: 'pager', reason: 'not_published' }],
+    });
+    expect(output.split('\n')).toContain(
+      '- pager: not_published — no product for this group is published for this event, or its product lacks the files this group reads',
+    );
+  });
+});
+
+describe('earthquakeGetEvent — PAGER rendering cost (timing)', () => {
+  const sizes = [5_000, 10_000, 20_000, 40_000, 80_000, 160_000, 320_000];
+  const shapes: [string, (size: number) => string][] = [
+    ['one long line ending in a break', (size) => `${'§1 x'.repeat(size / 4)}\ny`],
+    ['breaks throughout', (size) => '  \r\n'.repeat(size / 4)],
+    ['escapable cell characters', (size) => '|\\'.repeat(size / 2)],
+    // escapeMarkdownInline is quadratic on an interior whitespace run (cyanheads/mcp-ts-core#809).
+    ['one whitespace run inside a value', (size) => `a${' '.repeat(size)}b`],
+  ];
+
+  /** Upstream text in every string the PAGER path parses or renders, and padding on a bound. */
+  const files = (filler: string) => {
+    const alerts = JSON.parse(fixture('us6000u18k.pager.alerts.json'));
+    alerts.fatality.level = filler;
+    alerts.fatality.bins[0].color = filler;
+    alerts.fatality.bins[0].min = `${filler.replace(/\S/g, ' ')}0`;
+    const exposures = JSON.parse(fixture('us6000u18k.pager.exposures.json'));
+    exposures.population_exposure.country_exposures[0].country_code = filler;
+    return {
+      alerts: JSON.stringify(alerts),
+      exposures: JSON.stringify(exposures),
+      comments: JSON.stringify({ impact1: filler, impact2: filler }),
+    };
+  };
+
+  /**
+   * Thread CPU time, in µs per call, of parse + render over one input: the least of
+   * several measurements, each over a batch of calls so small inputs measure above
+   * the clock's resolution.
+   */
+  const cpuMicros = (input: ReturnType<typeof files>, batch: number) => {
+    let least = Number.POSITIVE_INFINITY;
+    for (let run = 0; run < 5; run++) {
+      const before = process.threadCpuUsage();
+      for (let call = 0; call < batch; call++) {
+        earthquakeGetEvent.format!({ event: sampleEvent, pager: projectPagerEstimates(input) });
+      }
+      const spent = process.threadCpuUsage(before);
+      least = Math.min(least, (spent.user + spent.system) / batch);
+    }
+    return least;
+  };
+
+  it.each(shapes)('stays linear on %s', (_label, make) => {
+    const times: number[] = [];
+    for (const size of sizes) {
+      const input = files(make(size));
+      times.push(cpuMicros(input, Math.max(1, 80_000 / size)));
+      // An absolute bound at each size before growing the input further.
+      expect(times.at(-1)).toBeLessThan(2_000_000);
+    }
+    const ratio = (times.at(-1) ?? 0) / Math.max(times[0] ?? 1, 1);
+    expect(ratio).toBeLessThan(256);
   });
 });

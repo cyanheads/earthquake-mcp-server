@@ -105,6 +105,8 @@ describe('event and FDSN regressions — real service wire path', () => {
       geometry: { type: 'Point', coordinates: [142, 38, 29] },
       properties: {
         mag: 9.1,
+        time: 1299822384120,
+        updated: 1299822384120,
         ids: ',usc0001xgp,',
         products: {
           shakemap: [

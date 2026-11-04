@@ -1,0 +1,42 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "generated": 1793762969000,
+    "url": "https://earthquake.usgs.gov/fdsnws/event/1/query?format=geojson&starttime=2026-07-01&endtime=2026-11-03&minmagnitude=5&producttype=shakemap&limit=1000&orderby=time-asc",
+    "title": "USGS Earthquakes",
+    "status": 200,
+    "api": "2.8.4",
+    "limit": 1000,
+    "offset": 1
+  },
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "mag": 6.4,
+        "place": "southeast of Easter Island",
+        "time": 1793260190928,
+        "updated": 1793356727040,
+        "url": "https://earthquake.usgs.gov/earthquakes/eventpage/us7000ttxz",
+        "detail": "https://earthquake.usgs.gov/fdsnws/event/1/query?eventid=us7000ttxz&format=geojson",
+        "felt": null,
+        "cdi": null,
+        "mmi": 0,
+        "alert": "green",
+        "status": "reviewed",
+        "tsunami": 0,
+        "sig": 630,
+        "net": "us",
+        "ids": ",usauto7000ttxz,us7000ttxz,",
+        "magType": "mww",
+        "type": "earthquake",
+        "title": "M 6.4 - southeast of Easter Island"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [-98.0489, -36.4058, 10]
+      },
+      "id": "us7000ttxz"
+    }
+  ]
+}

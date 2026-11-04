@@ -61,7 +61,7 @@ export const earthquakeEventResource = resource('earthquake://event/{event_id}',
     {
       reason: 'source_unavailable',
       code: JsonRpcErrorCode.ServiceUnavailable,
-      when: 'The USGS or EMSC event API returns a 5xx, serves HTML, or is unreachable.',
+      when: 'The USGS or EMSC event API returns a 5xx, serves HTML or an unreadable body, or is unreachable.',
       retryable: true,
       recovery:
         'Retry after a short delay. The same event also appears in earthquake_search_events results (source=emsc for an EMSC ID), and a recent USGS event in earthquake_get_feed results, which carry the normalized record without the products.',

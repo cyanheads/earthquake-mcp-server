@@ -11,6 +11,7 @@ import { createInMemoryStorage, createMockContext } from '@cyanheads/mcp-ts-core
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { earthquakeFeedResource } from '@/mcp-server/resources/definitions/earthquake-feed.resource.js';
 import { initUsgsService } from '@/services/usgs/usgs-service.js';
+import { fixture } from '../helpers/usgs-fetch-stub.js';
 
 type Event = { id: string; title?: string };
 type Output = {
@@ -66,6 +67,7 @@ const feature = (index: number, emsc = false) => ({
     flynn_region: '東京\\"\n'.repeat(10),
     time: emsc ? '2026-01-01T00:00:00Z' : 1767225600000,
     updated: 1767225600000,
+    lastupdate: '2026-01-01T00:00:00Z',
     title: oversize ? 'x'.repeat(30000) : `Event ${index} 東京`,
     status: 'reviewed',
   },
@@ -103,6 +105,10 @@ beforeAll(async () => {
     }
     if (mode === 'timeout' || mode === 'cancel') return;
     res.setHeader('Content-Type', 'application/json');
+    if (url.pathname === '/usgs/fdsnws/event/1/application.json') {
+      res.end(fixture('application.json'));
+      return;
+    }
     if (url.pathname.endsWith('/count')) {
       res.end(JSON.stringify({ count: mode === 'empty' ? 0 : 140 }));
       return;
@@ -330,6 +336,7 @@ describe('paging wire', () => {
         expect(blank.result.structuredContent).not.toHaveProperty('ignoredFilters');
         mode = 'empty';
         try {
+          requests = [];
           const zero = await tool(name, { source, magnitude_type: 'future-scale' });
           expect(zero.result.isError).not.toBe(true);
           expect(zero.result.structuredContent).toMatchObject({
@@ -338,6 +345,23 @@ describe('paging wire', () => {
           });
           expect(JSON.stringify(zero.result.content)).toContain('magnitude_type=future-scale');
           expect(JSON.stringify(zero.result.content)).toContain('0');
+          // USGS lists no "future-scale", so its zero names the value; EMSC publishes no
+          // vocabulary and is never checked. Search, run first, leaves the list cached for count.
+          const unlisted =
+            'magnitude_type "future-scale" is not a listed USGS magnitude type. USGS matches an unlisted value against no events.';
+          const lookups = requests.filter((request) =>
+            request.pathname.endsWith('/application.json'),
+          );
+          if (source === 'usgs') {
+            expect(zero.result.structuredContent!.notice).toContain(unlisted);
+            expect(JSON.stringify(zero.result.content)).toContain(
+              JSON.stringify(unlisted).slice(1, -1),
+            );
+            expect(lookups).toHaveLength(name === 'earthquake_search_events' ? 1 : 0);
+          } else {
+            expect(JSON.stringify(zero.result.structuredContent)).not.toContain('not a listed');
+            expect(lookups).toHaveLength(0);
+          }
         } finally {
           mode = 'normal';
         }

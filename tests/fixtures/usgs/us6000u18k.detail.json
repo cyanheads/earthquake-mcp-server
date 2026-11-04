@@ -325,20 +325,20 @@
       ],
       "losspager": [
         {
-          "id": "urn:usgs-product:us:losspager:us6000u18k:1792203289601",
+          "id": "urn:usgs-product:us:losspager:us6000u18k:1793723988986",
           "type": "losspager",
           "code": "us6000u18k",
           "source": "us",
-          "updateTime": 1792203289601,
+          "updateTime": 1793723988986,
           "status": "UPDATE",
           "properties": {
             "alertlevel": "orange",
-            "depth": "12.6",
+            "depth": "10.0",
             "eventsource": "us",
             "eventsourcecode": "6000u18k",
-            "eventtime": "2026-10-09T23:56:06.000Z",
-            "latitude": "7.5868",
-            "longitude": "-80.769",
+            "eventtime": "2026-10-09T23:56:05.000Z",
+            "latitude": "7.6069",
+            "longitude": "-80.7566",
             "magnitude": "7.7",
             "maxmmi": "8",
             "pdl-client-version": "Version 3.5.4 2026-01-22",
@@ -347,11 +347,53 @@
           },
           "preferredWeight": 158,
           "contents": {
+            "alerts.json": {
+              "contentType": "application/json",
+              "lastModified": 1793723988000,
+              "length": 1437,
+              "url": "https://earthquake.usgs.gov/product/losspager/us6000u18k/us/1793723988986/alerts.json"
+            },
+            "comments.json": {
+              "contentType": "application/json",
+              "lastModified": 1793723988000,
+              "length": 1046,
+              "url": "https://earthquake.usgs.gov/product/losspager/us6000u18k/us/1793723988986/comments.json"
+            },
+            "exposures.json": {
+              "contentType": "application/json",
+              "lastModified": 1793723988000,
+              "length": 1293,
+              "url": "https://earthquake.usgs.gov/product/losspager/us6000u18k/us/1793723988986/exposures.json"
+            },
+            "json/alerts.json": {
+              "contentType": "application/json",
+              "lastModified": 1793723987000,
+              "length": 1437,
+              "url": "https://earthquake.usgs.gov/product/losspager/us6000u18k/us/1793723988986/json/alerts.json"
+            },
+            "json/comments.json": {
+              "contentType": "application/json",
+              "lastModified": 1793723987000,
+              "length": 1046,
+              "url": "https://earthquake.usgs.gov/product/losspager/us6000u18k/us/1793723988986/json/comments.json"
+            },
+            "json/exposures.json": {
+              "contentType": "application/json",
+              "lastModified": 1793723987000,
+              "length": 1293,
+              "url": "https://earthquake.usgs.gov/product/losspager/us6000u18k/us/1793723988986/json/exposures.json"
+            },
             "onepager.pdf": {
               "contentType": "application/pdf",
-              "lastModified": 1792203289000,
-              "length": 1930353,
-              "url": "https://earthquake.usgs.gov/product/losspager/us6000u18k/us/1792203289601/onepager.pdf"
+              "lastModified": 1793723988000,
+              "length": 1952930,
+              "url": "https://earthquake.usgs.gov/product/losspager/us6000u18k/us/1793723988986/onepager.pdf"
+            },
+            "pager.xml": {
+              "contentType": "application/xml",
+              "lastModified": 1793723988000,
+              "length": 31020,
+              "url": "https://earthquake.usgs.gov/product/losspager/us6000u18k/us/1793723988986/pager.xml"
             }
           }
         }

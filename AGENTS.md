@@ -51,7 +51,7 @@ Use the existing definitions as the server-specific examples:
 - [earthquake-get-event.tool.ts](src/mcp-server/tools/definitions/earthquake-get-event.tool.ts) routes an EMSC unid (`^\d{8}_\d{7}$`) to EMSC and every other ID to USGS, and returns the normalized event, optional analysis products, and the opt-in `include` groups ([event-includes.ts](src/services/usgs/event-includes.ts)); its formatter renders all of them.
 - [earthquake-event.resource.ts](src/mcp-server/resources/definitions/earthquake-event.resource.ts) exposes the same event projection through a resource URI, without `include`.
 
-Service clients use `fetchWithTimeout` and `withRetry` with `ctx.signal`. When mapping upstream failures onto a declared reason, retain an explicit `retryable: false` and provide matching recovery text. Never forward captured upstream bodies wholesale.
+Service clients use `fetchWithTimeout` and `withRetry` with `ctx.signal`. When mapping upstream failures onto a declared reason, retain an explicit `retryable: false` and provide matching recovery text. Never forward captured upstream bodies wholesale. A 2xx JSON body goes through [src/services/upstream-call.ts](src/services/upstream-call.ts): `readResponseText` turns a connection dropped mid-body into a retryable `ServiceUnavailable`, and `parseJsonBody` with a shape guard fails a body that is not the expected document as `malformedResponse` (`data.reason: 'malformed_response'`), which `withRetry` skips retrying when given `isTransientUpstream`. A normalizer missing a field the source always publishes throws `malformedResponse` too, never a stand-in value.
 
 ### Server config
 
@@ -59,7 +59,7 @@ Service clients use `fetchWithTimeout` and `withRetry` with `ctx.signal`. When m
 
 Search and feed `limit` share one cap, `MAX_LIMIT` (1,000), through [src/mcp-server/tools/limit-clamp.ts](src/mcp-server/tools/limit-clamp.ts): `limitSchema(describe)` advertises no maximum and `clampLimit()` reduces a larger value to the cap with a notice, a log line, and an `earthquake.limit.clamps` count. `EARTHQUAKE_CLAMP_LIMITS=false` makes the schema advertise and enforce `maximum: 1000` instead. The bounds are `z.lazy` and the description is a getter that passes the active mode's cap clause to `describe`, so both read the setting after `createApp()` loads `.env`; never read `getServerConfig()` at module load.
 
-Event lookups, feeds, and searches each run under one 50-second deadline across every request and retry, inside the MCP SDK clients' 60-second default timeout; an event's product downloads share the lookup's deadline.
+Event lookups, feeds, searches, and counts each run under one 50-second deadline across every request and retry, inside the MCP SDK clients' 60-second default timeout; an event's product downloads share the lookup's deadline, and a search's count lookup gets what remains of the search's. The vocabulary read behind a zero USGS search or count ([vocabulary-notice.ts](src/mcp-server/tools/vocabulary-notice.ts), `UsgsService.getVocabulary`) is one attempt bounded by `REQUEST_TIMEOUT_MS` and what remains of the call's deadline; any failure leaves the zero unexplained, and the parsed list is cached on the service for 24 hours.
 
 ### Session mode
 
@@ -142,7 +142,7 @@ src/
   services/
     usgs/
       usgs-service.ts                    # USGS feeds, queries, counts, event detail
-      event-includes.ts                  # Event include groups (origins, QuakeML, aftershock forecast)
+      event-includes.ts                  # Event include groups (origins, QuakeML, aftershock forecast, PAGER)
       types.ts                           # Shared seismic domain types
     emsc/
       emsc-service.ts                    # EMSC queries, counts, and by-ID lookup

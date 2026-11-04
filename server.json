@@ -51,7 +51,7 @@
         },
         {
           "name": "REQUEST_TIMEOUT_MS",
-          "description": "Per-attempt HTTP timeout in milliseconds (1000-120000). Feed, search, and event calls also share a 50-second total deadline across every request and retry; standalone count calls use this per-attempt value.",
+          "description": "Per-attempt HTTP timeout in milliseconds (1000-120000). Every feed, search, count, and event call also runs under one 50-second total deadline across its requests and retries.",
           "format": "string",
           "isRequired": false,
           "default": "10000"
