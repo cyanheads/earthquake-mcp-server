@@ -4,7 +4,7 @@ description: Gates and workflows for the earthquake_* tools (USGS ComCat and EMS
 license: Apache-2.0
 metadata:
   author: cyanheads
-  version: "1.0"
+  version: "1.1"
 ---
 
 ## Scope
@@ -14,7 +14,7 @@ Catalog records of past seismic events from two independent global catalogs, plu
 - **Not a forecast service.** The only forward-looking numbers are the USGS aftershock forecasts attached to some events. **Not a tsunami warning service:** the `tsunami` field flags a large oceanic event; tsunami.gov has warning status.
 - **No geocoding, no place filter.** The tools take coordinates. `place` ("12 km NE of …") is display text that no input matches against. Resolve "near X" to latitude/longitude with a geocoding tool first, then search or count within a radius.
 - **The feed can't be scoped by area.** `earthquake_get_feed` returns one global USGS tier for a rolling window ("Past Week" means the 7 days before generation, not the calendar week). For a place-scoped question, use `earthquake_search_events` with a radius and an explicit start.
-- **Which catalog holds small events depends on the region.** M2.5+ over the 30 days to 2026-10-28: an Italy box returned 6 USGS events and 162 EMSC; a Japan box 40 and 92; a California box 66 and 72. At M4+ the Italy box converged (5 vs 7). For small events outside the US, query EMSC, and always say which catalog a count came from.
+- **Which catalog holds small events depends on the region.** M2.5+ in 2025 (`start_time` 2025-01-01, `end_time` 2026-01-01): a box over Italy (latitude 36 to 47, longitude 6 to 19) returned 41 USGS events and 633 EMSC; one over Japan (latitude 30 to 46, longitude 128 to 146) 806 and 1,120; one over California (latitude 32 to 42, longitude −125 to −114) 1,224 and 1,221. At M4+ the Italy box converged (25 vs 30). For small events outside the US, query EMSC, and always say which catalog a count came from.
 
 ## Identifiers
 
@@ -30,20 +30,20 @@ Catalog records of past seismic events from two independent global catalogs, plu
 
 - **Set both time bounds for any period other than the last 30 days.** Search and count fall back to the 30 days before `end_time` (or now) when `start_time` is omitted, so "how many since 2015" asked without a start gets a 30-day answer. A date-only `end_time` means midnight at the start of that day: to include all of 2024, end at `2025-01-01`. Read `queryEcho` before reporting a count. Times in and out are UTC, so convert the user's local times both ways.
 - **Pin the window before paging.** With both bounds omitted, the default start is recomputed from the current time on every call, and with the default newest-first order an open `end_time` lets new events push every later offset back by one. Either way pages skip or repeat events. Set both bounds on the first page, repeat every input unchanged, and dedupe by `id`.
-- **"M5+" is not one scale.** `magnitude` is each catalog's preferred value, and its type varies by event: in the 30 days to 2026-10-28, mb was the preferred type for 111 of 201 USGS M5+ events and 125 of 221 EMSC ones. The same threshold gives different counts in the two catalogs. mb saturates near M6: the Panama M7.7 `us6000u18k` has mb 6.7, Ms_20 7.4, and Mww 7.7 (preferred). To compare magnitudes across catalogs, networks, or years, filter or compare within one `magnitude_type`. Report the type with every magnitude.
-- **Missing means not assessed, not zero.** A null `felt`, `alert`, or `mmi`, an absent `detail` group, or a `not_published` entry in `unavailable_includes` means USGS published nothing for that event. It does not mean the event was unfelt, caused no damage, or carries no aftershock risk. `fetch_failed` means the product exists but couldn't be read; retry before reporting it missing. An `automatic` USGS solution can still move or be deleted, and EMSC's real-time `EMSC-RTS` solutions carry no status and get revised, so report the status and catalog with the numbers.
-- **A depth with an error bar can still be fixed.** Analysts assign a depth when the data can't constrain one. The M6.9 `us6000u4j2` sits at exactly 10 km with `depth_type` "operator assigned" and a `depth_error_km` of 1.856. Ridgecrest's preferred 8 km is also operator-assigned, with a 31.61 km error. Before calling a depth measured, read `depth_type` on `detail.origin` or on each entry of `origins`.
+- **"M5+" is not one scale.** `magnitude` is each catalog's preferred value, and its type varies by event: in 2025 (`start_time` 2025-01-01, `end_time` 2026-01-01), mb was the preferred type for about half of M5+ events in both catalogs. The same threshold gives different counts in the two catalogs. mb saturates near M6: the 2024 Noto M7.5 `us6000m0xl` has mb 6.9, Ms_20 7.2, and Mww 7.5 (preferred). To compare magnitudes across catalogs, networks, or years, filter or compare within one `magnitude_type`. Report the type with every magnitude.
+- **Missing means not assessed, not zero.** A null `felt`, `alert`, or `mmi`, or an absent `detail` group, means USGS published nothing for that event (for `mmi`, also a ShakeMap that computed no maximum intensity, common offshore). A `not_published` entry in `unavailable_includes` means USGS published no product for that group, or, for `pager`, a PAGER product older than the files the group reads; its alert still shows in `detail.losspager`. None of these means the event was unfelt, caused no damage, or carries no aftershock risk. `fetch_failed` means the product exists but couldn't be read; retry before reporting it missing. An `automatic` USGS solution can still move or be deleted, and EMSC's real-time `EMSC-RTS` solutions carry no status and get revised, so report the status and catalog with the numbers.
+- **A depth with an error bar can still be fixed.** Analysts assign a depth when the data can't constrain one. Ridgecrest's `us` origin (the `us70004bn0` entry in `origins` for `ci38457511`) sits at exactly 8 km with `depth_type` "operator assigned" and a `depth_error_km` of 1.8. Its preferred `ci` origin is also an operator-assigned 8 km, with a 31.61 km error. Before calling a depth measured, read `depth_type` on `detail.origin` or on each entry of `origins`.
 
 ## Workflows
 
 **How bad was it.** Find the event (search within a radius and an explicit window, or take it from the feed), then call `earthquake_get_event`.
-- **PAGER alert:** an *estimate* from modeled shaking and exposed population. The color is whichever is higher of the fatality alert and the economic-loss alert: green 0 deaths / under $1M, yellow 1–99 / $1M–$100M, orange 100–999 / $100M–$1B, red 1,000+ / $1B+. The report PDF at `report_url` says which one drove it.
+- **PAGER alert:** an *estimate* from modeled shaking and exposed population. The color is whichever is higher of the fatality alert and the economic-loss alert: green 0 deaths / under $1M, yellow 1–99 / $1M–$100M, orange 100–999 / $100M–$1B, red 1,000+ / $1B+. Add `include: ['pager']` to see which one drove it: both alert levels, the probability of each fatality and loss bracket (economic bounds in millions of USD), and the people exposed at each shaking intensity, per country (`UK` marks areas assigned to no country). Report a bracket with its probability, never as a single figure; PAGER revises them as data arrive.
 - **ShakeMap intensity:** modeled. **DYFI:** public reports.
 - **Tsunami:** a `tsunami` of 1 sends the reader to tsunami.gov; it is not a warning in itself.
 
 **Aftershock odds.** Call `earthquake_get_event` with the `aftershock_forecast` group. USGS publishes these for few events: fewer than 1 in 20 M5+ events carried one in the year to October 2026, and most of those were in the US and its Pacific territories.
 - **No forecast:** `not_published` means USGS issued none. Say so; don't present a rule of thumb as the USGS figure.
-- **Timing:** each window runs from its own `start` to `end`, fixed when USGS issued the forecast, not from your call. The forecast for `us6000u18k` was created 2026-10-26, and its 1 Day window ended 2026-10-27. Compare `end` to the current time before calling a window "the next day" or "the next week". `next_update` says when USGS plans a fresh forecast.
+- **Timing:** each window runs from its own `start` to `end`, fixed when USGS issued the forecast, not from your call, and each re-issue moves every window. Compare `end` to the current time before calling a window "the next day" or "the next week". `next_update` says when USGS plans a fresh forecast.
 - **Reporting:** give each probability with its window label and bin magnitude. `above_mainshock` is the chance of an event at least as large as the mainshock.
 
 **Does the solution hold up.** On `earthquake_get_event`:
