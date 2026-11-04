@@ -4,7 +4,7 @@ All notable changes to this project. Each entry links to its full per-version fi
 
 ## [0.5.1](changelog/0.5.x/0.5.1.md) — 2026-11-03
 
-Opt-in PAGER loss estimates on earthquake_get_event, min_mmi and min_cdi intensity filters, and a notice naming unlisted type values on zero results; malformed or incomplete upstream records now fail as source_unavailable instead of retrying or returning invented values.
+Opt-in PAGER loss estimates on earthquake_get_event, min_mmi and min_cdi intensity filters, and a notice naming unlisted type values on zero results; malformed or incomplete upstream records now fail in one request as source_unavailable or feed_unavailable, without parser text or invented values.
 
 ## [0.5.0](changelog/0.5.x/0.5.0.md) — 2026-10-28
 
