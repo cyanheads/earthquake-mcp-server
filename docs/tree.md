@@ -1,6 +1,6 @@
 # earthquake-mcp-server - Directory Structure
 
-Generated on: 2026-10-28 15:00:23
+Generated on: 2026-11-04 04:52:30
 
 ```text
 earthquake-mcp-server/
@@ -163,13 +163,15 @@ earthquake-mcp-server/
 │   │       ├── fdsn-error.ts
 │   │       ├── limit-clamp.ts
 │   │       ├── query-params.ts
-│   │       └── schemas.ts
+│   │       ├── schemas.ts
+│   │       └── vocabulary-notice.ts
 │   ├── services/
 │   │   ├── emsc/
 │   │   │   └── emsc-service.ts
 │   │   ├── usgs/
 │   │   │   ├── aftershock-forecast.ts
 │   │   │   ├── event-includes.ts
+│   │   │   ├── pager-estimates.ts
 │   │   │   ├── product-fields.ts
 │   │   │   ├── quakeml.ts
 │   │   │   ├── types.ts
@@ -188,19 +190,29 @@ earthquake-mcp-server/
 │   │   └── usgs/
 │   │       ├── ak20419010.phase-data.xml
 │   │       ├── aka2026viylbm.phase-data.xml
+│   │       ├── application.json
 │   │       ├── ci38457511.detail.json
 │   │       ├── ci38457511.phase-data.xml
 │   │       ├── ci41567984.detail.json
 │   │       ├── ci41567984.phase-data.xml
 │   │       ├── nc75458907.detail.json
 │   │       ├── nc75458907.forecast.json
+│   │       ├── us10003re5.detail.json
 │   │       ├── us6000m0xl.phase-data.xml
 │   │       ├── us6000m0yg.detail.json
 │   │       ├── us6000m0yg.phase-data.xml
 │   │       ├── us6000qw60.detail.json
 │   │       ├── us6000qw60.forecast.json
 │   │       ├── us6000u18k.detail.json
-│   │       └── us6000u18k.forecast.json
+│   │       ├── us6000u18k.forecast.json
+│   │       ├── us6000u18k.pager.alerts.json
+│   │       ├── us6000u18k.pager.comments.json
+│   │       ├── us6000u18k.pager.exposures.json
+│   │       ├── us6000u214.pager.alerts.json
+│   │       ├── us6000u214.pager.comments.json
+│   │       ├── us6000u214.pager.exposures.json
+│   │       ├── us7000ttxz.search.json
+│   │       └── us7000tumt.detail.json
 │   ├── helpers/
 │   │   └── usgs-fetch-stub.ts
 │   ├── prompts/
@@ -216,6 +228,7 @@ earthquake-mcp-server/
 │   │   ├── emsc-service.test.ts
 │   │   ├── event-includes.test.ts
 │   │   ├── feed-snapshots.test.ts
+│   │   ├── upstream-call.test.ts
 │   │   └── usgs-service.test.ts
 │   └── tools/
 │       ├── advertised-wire-contract.test.ts
