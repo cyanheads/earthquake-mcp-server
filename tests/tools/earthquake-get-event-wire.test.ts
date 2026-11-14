@@ -9,9 +9,11 @@ import type { AppConfig } from '@cyanheads/mcp-ts-core/config';
 import { JsonRpcErrorCode } from '@cyanheads/mcp-ts-core/errors';
 import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { createMockContext, runToolContract } from '@cyanheads/mcp-ts-core/testing';
+import { marked, type Tokens } from 'marked';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { earthquakeEventResource } from '@/mcp-server/resources/definitions/earthquake-event.resource.js';
 import { earthquakeGetEvent } from '@/mcp-server/tools/definitions/earthquake-get-event.tool.js';
+import { earthquakeGetFeed } from '@/mcp-server/tools/definitions/earthquake-get-feed.tool.js';
 import { earthquakeSearchEvents } from '@/mcp-server/tools/definitions/earthquake-search-events.tool.js';
 import { initEmscService } from '@/services/emsc/emsc-service.js';
 import { initUsgsService } from '@/services/usgs/usgs-service.js';
@@ -64,6 +66,139 @@ function seismicPortal(url: URL): Response {
 const recovery = (reason: string) =>
   earthquakeGetEvent.errors?.find((entry) => entry.reason === reason)?.recovery;
 
+describe('literal event text on the wire', () => {
+  const eventId = 'us6000u18k';
+  const title = 'M 5.1 - Ridge ###';
+  const place = '5 km N of *Ridge* [A](https://example.test)';
+  const url = 'https://example.test/a_(b)?q=%2A&x=2';
+  const detailUrl = 'https://example.test/detail_(b)?q=%2A&x=2';
+  const markdown = (result: { content?: unknown }) =>
+    (result.content as { text: string }[]).map((block) => block.text).join('\n');
+
+  function eventResponse(changes: object) {
+    const event = JSON.parse(fixture(`${eventId}.detail.json`));
+    Object.assign(event.properties, { title, place, url, ...changes });
+    return event;
+  }
+
+  it.each(['get', 'search', 'feed'])('preserves literal text and the link in %s', async (mode) => {
+    const event = eventResponse({});
+    const body = {
+      type: 'FeatureCollection',
+      features: [event],
+      metadata: { count: 1, generated: 1791549366036 },
+    };
+    stubFetch((request) => Response.json(request.searchParams.has('eventid') ? event : body));
+    const result =
+      mode === 'get'
+        ? await runToolContract(earthquakeGetEvent, { event_id: eventId })
+        : mode === 'search'
+          ? await runToolContract(earthquakeSearchEvents, {})
+          : await runToolContract(earthquakeGetFeed, {});
+    expect(result.structuredContent).toMatchObject(
+      mode === 'get'
+        ? { event: { title, place, event_url: url } }
+        : { events: [{ title, place, event_url: url }] },
+    );
+    const html = marked.parse(markdown(result), { async: false, gfm: false });
+    expect(html).toContain(`<h2>${title}</h2>`);
+    expect(html).toContain(place);
+    expect(html).toContain('href="https://example.test/a_(b)?q=%2A&amp;x=2"');
+  });
+
+  it('preserves multiline titles and table fields in parsed JSON blocks', async () => {
+    const multilineTitle = `${title}\r\n\nAnother line`;
+    const color = '*red* | \\code\n\nsecond line';
+    const impact = '# Severe\n1. Further details\n\nFinal line';
+    const event = eventResponse({ title: multilineTitle, detail: detailUrl });
+    const alerts = JSON.parse(fixture(`${eventId}.pager.alerts.json`));
+    alerts.fatality.bins[0].color = color;
+    stubUsgsEvent(
+      eventId,
+      {
+        losspager: {
+          ...pagerFiles(eventId),
+          'json/alerts.json': () => Response.json(alerts),
+          'json/comments.json': () => Response.json({ impact1: impact }),
+        },
+      },
+      () => Response.json(event),
+    );
+    const result = await runToolContract(earthquakeGetEvent, {
+      event_id: eventId,
+      include: ['pager'],
+    });
+    const structured = result.structuredContent as { pager: object };
+    expect(structured).toMatchObject({
+      event: { title: multilineTitle, event_url: url, detail_url: detailUrl },
+      pager: { impact: [impact] },
+    });
+    expect(structured.pager).toHaveProperty('fatality.bins.0.color', color);
+    const blocks = marked
+      .lexer(markdown(result))
+      .filter((token): token is Tokens.Code => token.type === 'code');
+    expect(blocks.map(({ lang }) => lang)).toEqual(['json', 'json']);
+    expect(blocks.map(({ text }) => JSON.parse(text))).toEqual([
+      { title: multilineTitle },
+      structured.pager,
+    ]);
+    const html = marked.parse(markdown(result), { async: false });
+    expect(html).toContain('href="https://example.test/a_(b)?q=%2A&amp;x=2"');
+    expect(html).toContain('href="https://example.test/detail_(b)?q=%2A&amp;x=2"');
+  });
+
+  it.each(['#######', '  A ridge ###  '])(
+    'round-trips a heading containing %j',
+    async (edgeTitle) => {
+      stubUsgsEvent(eventId, {}, () => Response.json(eventResponse({ title: edgeTitle })));
+      const result = await runToolContract(earthquakeGetEvent, { event_id: eventId });
+      expect(result.structuredContent).toMatchObject({ event: { title: edgeTitle } });
+      const html = marked.parse(markdown(result), { async: false, gfm: false });
+      expect(html).toContain(`<h2>${edgeTitle}</h2>`);
+    },
+  );
+
+  it('preserves every line break in ordinary PAGER impact prose', async () => {
+    const impact = '# Severe\n1. Further details\n\nFinal line';
+    stubUsgsEvent(eventId, {
+      losspager: {
+        ...pagerFiles(eventId),
+        'json/comments.json': () => Response.json({ impact1: impact }),
+      },
+    });
+    const result = await runToolContract(earthquakeGetEvent, {
+      event_id: eventId,
+      include: ['pager'],
+    });
+    expect(result.structuredContent).toMatchObject({ pager: { impact: [impact] } });
+    const html = marked.parse(markdown(result), { async: false });
+    expect(html.replaceAll('<br>', '\n')).toContain(`<li>${impact}</li>`);
+  });
+
+  it('keeps the PAGER total and every populated country in the exposure table', async () => {
+    stubUsgsEvent(eventId, { losspager: pagerFiles(eventId) });
+    const result = await runToolContract(earthquakeGetEvent, {
+      event_id: eventId,
+      include: ['pager'],
+    });
+    const table = marked
+      .lexer(markdown(result))
+      .findLast((token): token is Tokens.Table => token.type === 'table');
+    expect(table?.rows.map((row) => row[0]?.text)).toEqual(['Total', 'CO', 'CR', 'NI', 'PA']);
+  });
+
+  it('renders the PAGER no-country note outside the exposure table', async () => {
+    stubUsgsEvent(eventId, { losspager: pagerFiles('us6000u214') });
+    const result = await runToolContract(earthquakeGetEvent, {
+      event_id: eventId,
+      include: ['pager'],
+    });
+    expect(result.structuredContent).toMatchObject({ pager: { exposure: { countries: [] } } });
+    const html = marked.parse(markdown(result), { async: false });
+    expect(html).toMatch(/<\/table>\s*<p><em>PAGER lists no country rows\.<\/em><\/p>/);
+  });
+});
+
 describe('earthquake_get_event — default response (characterization)', () => {
   it('returns event + detail for a product-poor event in one request', async () => {
     const fetchMock = stubDetail('us6000m0yg');
@@ -114,13 +249,14 @@ describe('earthquake_get_event — default response (characterization)', () => {
           "text": "## M 5.1 - 73 km WSW of Sado, Japan
       **ID:** us6000m0yg | **Magnitude:** 5.1 (mb) | **Depth:** 10 km
       **Place:** 73 km WSW of Sado, Japan
+      **Event type:** earthquake
       **Time:** 2024-01-01T09:45:26.217Z | **Updated:** 2024-03-09T21:38:23.040Z
       **Location:** 37.8107°, 137.5664°
       **Provenance:** Status: reviewed | Agency: us
       **PAGER Alert:** Not computed
       **Tsunami flag:** 0
       **Impact:** Significance: 400 | Not reported: DYFI felt reports, ShakeMap MMI, CDI
-      **USGS page:** https://earthquake.usgs.gov/earthquakes/eventpage/us6000m0yg
+      **USGS page:** [https://earthquake.usgs.gov/earthquakes/eventpage/us6000m0yg](<https://earthquake.usgs.gov/earthquakes/eventpage/us6000m0yg>)
 
       ### Analysis products
       **Origin quality:** Azimuthal gap: 90° | Stations used: 65 | Horizontal error: 5.23 km | Depth error: 1.835 km | Depth type: operator assigned | Review status: reviewed",
@@ -160,6 +296,8 @@ describe('earthquake_get_event — default response (characterization)', () => {
           },
           "moment_tensor": {
             "derived_depth_km": 13.5,
+            "magnitude": 7.7,
+            "magnitude_type": "Mww",
             "nodal_plane_1": {
               "dip": 74.77,
               "rake": -155.3,
@@ -170,7 +308,14 @@ describe('earthquake_get_event — default response (characterization)', () => {
               "rake": -16.68,
               "strike": 288.32,
             },
+            "nodal_planes_from": {
+              "code": "us_6000u18k_mww",
+              "product": "moment-tensor",
+              "source": "us",
+            },
+            "percent_double_couple": 0.7789,
             "scalar_moment_nm": 377000000000000000000,
+            "source": "us",
           },
           "origin": {
             "azimuthal_gap_deg": 45,
@@ -223,22 +368,23 @@ describe('earthquake_get_event — default response (characterization)', () => {
       **ID:** us6000u18k | **Magnitude:** 7.7 (mww) | **Depth:** 12.647 km
       **Associated IDs:** pt26282000, usauto6000u18k
       **Place:** 12 km WSW of Pitaloza Arriba, Panama
+      **Event type:** earthquake
       **Time:** 2026-10-09T17:56:06.036Z | **Updated:** 2026-10-28T02:40:36.371Z
-      **Location:** 7.5868°, -80.7690°
+      **Location:** 7.5868°, -80.769°
       **Provenance:** Status: reviewed | Agency: us
       **PAGER Alert:** ORANGE
       **Tsunami flag:** 0
       **Impact:** Felt by 2005 (DYFI) | ShakeMap MMI: 7.936 | CDI: 7.9 | Significance: 1790
-      **USGS page:** https://earthquake.usgs.gov/earthquakes/eventpage/us6000u18k
+      **USGS page:** [https://earthquake.usgs.gov/earthquakes/eventpage/us6000u18k](<https://earthquake.usgs.gov/earthquakes/eventpage/us6000u18k>)
 
       ### Analysis products
-      **PAGER:** Alert level: orange | Report: https://earthquake.usgs.gov/product/losspager/us6000u18k/us/1793723988986/onepager.pdf
-      **ShakeMap:** Max MMI: 7.936 | Max PGA: 1.043 g | Max PGV: 72.998 cm/s | Code version: 4.5.0 | Intensity map: https://earthquake.usgs.gov/product/shakemap/us6000u18k/us/1792203153463/download/intensity.jpg
-      **DYFI:** Responses: 2005 | Max CDI: 7.9 | Map: https://earthquake.usgs.gov/product/dyfi/us6000u18k/us/1793155236371/us6000u18k_ciim.jpg
-      **Moment tensor:** Scalar moment: 377000000000000000000 N·m | Derived depth: 13.5 km | Nodal plane 1: strike 25.21°, dip 74.77°, rake -155.3° | Nodal plane 2: strike 288.32°, dip 66.22°, rake -16.68°
+      **PAGER:** Alert level: orange | Report: [https://earthquake.usgs.gov/product/losspager/us6000u18k/us/1793723988986/onepager.pdf](<https://earthquake.usgs.gov/product/losspager/us6000u18k/us/1793723988986/onepager.pdf>)
+      **ShakeMap:** Max MMI: 7.936 | Max PGA: 1.043 g | Max PGV: 72.998 cm/s | Code version: 4.5.0 | Intensity map: [https://earthquake.usgs.gov/product/shakemap/us6000u18k/us/1792203153463/download/intensity.jpg](<https://earthquake.usgs.gov/product/shakemap/us6000u18k/us/1792203153463/download/intensity.jpg>)
+      **DYFI:** Responses: 2005 | Max CDI: 7.9 | Map: [https://earthquake.usgs.gov/product/dyfi/us6000u18k/us/1793155236371/us6000u18k_ciim.jpg](<https://earthquake.usgs.gov/product/dyfi/us6000u18k/us/1793155236371/us6000u18k_ciim.jpg>)
+      **Moment tensor:** Scalar moment: 377000000000000000000 N·m | Derived depth: 13.5 km | Magnitude: 7.7 | Magnitude type: Mww | Double-couple fraction: 0.7789 | Tensor source: us | Nodal plane 1: strike 25.21°, dip 74.77°, rake -155.3° | Nodal plane 2: strike 288.32°, dip 66.22°, rake -16.68° | Nodal planes from: moment-tensor / source: us / code: us_6000u18k_mww
       **Ground failure:** Landslide alert: orange | Liquefaction alert: orange
       **Origin quality:** Azimuthal gap: 45° | Stations used: 108 | Horizontal error: 6.48 km | Depth error: 3.947 km | Depth type: from location | Review status: reviewed
-      **Finite fault:** Rupture length: 55 km | Rupture width: 33.6 km | Model: https://earthquake.usgs.gov/product/finite-fault/us6000u18k_1/us/1792710177789/FFM.geojson",
+      **Finite fault:** Rupture length: 55 km | Rupture width: 33.6 km | Model: [https://earthquake.usgs.gov/product/finite-fault/us6000u18k_1/us/1792710177789/FFM.geojson](<https://earthquake.usgs.gov/product/finite-fault/us6000u18k_1/us/1792710177789/FFM.geojson>)",
           "type": "text",
         },
       ]
@@ -378,6 +524,7 @@ describe('earthquake_get_event — include on the wire', () => {
       'PA',
     ]);
     expect(pager.exposure.countries[2]?.population.every((value) => value === 0)).toBe(true);
+    for (const row of pager.exposure.countries) expect(row).not.toHaveProperty('country_name');
 
     // content[] carries every bracket, the total row, and every country row.
     const lines = (result.content as { text: string }[])
@@ -397,6 +544,52 @@ describe('earthquake_get_event — include on the wire', () => {
       expect(lines).toContain(`| ${row.country_code} | ${row.population.join(' | ')} |`);
     }
     for (const statement of pager.impact) expect(lines).toContain(`- ${statement}`);
+  });
+
+  it('explains PAGER region codes on both surfaces without rewriting the rows', async () => {
+    stubUsgsEvent('us6000u18k', {
+      losspager: {
+        ...pagerFiles('us6000u18k'),
+        'json/exposures.json': () =>
+          Response.json({
+            population_exposure: {
+              mmi: [7],
+              aggregated_exposure: [15],
+              country_exposures: [
+                { country_code: 'XF', exposure: [1] },
+                { country_code: 'EU', exposure: [2] },
+                { country_code: 'WU', exposure: [3] },
+                { country_code: 'UK', exposure: [4] },
+                { country_code: 'GB', exposure: [5] },
+                { country_code: '__proto__', exposure: [0] },
+              ],
+            },
+          }),
+      },
+    });
+    const result = await runToolContract(earthquakeGetEvent, {
+      event_id: 'us6000u18k',
+      include: ['pager'],
+    });
+    expect(result.isError).not.toBe(true);
+    const structured = result.structuredContent as {
+      pager: { exposure: { countries: unknown[] } };
+    };
+    expect(structured.pager.exposure.countries).toEqual([
+      { country_code: 'XF', country_name: 'California', population: [1] },
+      { country_code: 'EU', country_name: 'Central/Eastern United States', population: [2] },
+      { country_code: 'WU', country_name: 'Western United States', population: [3] },
+      { country_code: 'UK', country_name: 'Areas assigned to no country', population: [4] },
+      { country_code: 'GB', population: [5] },
+      { country_code: '__proto__', population: [0] },
+    ]);
+    const text = (result.content as { text: string }[]).map((block) => block.text).join('\n');
+    expect(text).toContain('| Country or region | MMI 7 |');
+    expect(text).toContain('| XF (California) | 1 |');
+    expect(text).toContain('| EU (Central/Eastern United States) | 2 |');
+    expect(text).toContain('| WU (Western United States) | 3 |');
+    expect(text).toContain('| UK (Areas assigned to no country) | 4 |');
+    expect(text).toContain('| GB | 5 |');
   });
 
   it('passes output validation when PAGER omits an alert level or a bracket color', async () => {
@@ -499,8 +692,9 @@ describe('earthquake_get_event — EMSC unids (issue #53)', () => {
           "text": "## M 7.1 - SOUTHERN CALIFORNIA
       **ID:** 20190706_0000043 | **Magnitude:** 7.1 (mw) | **Depth:** 10 km
       **Place:** SOUTHERN CALIFORNIA
+      **Event type:** earthquake (certainty: known)
       **Time:** 2019-07-06T03:19:57.8Z | **Updated:** 2019-07-06T03:39:00.0Z
-      **Location:** 35.7900°, -117.5800°
+      **Location:** 35.79°, -117.58°
       **Provenance:** Status: not published by source | Catalog: EMSC-RTS | Agency: EMSC
       **PAGER Alert:** Not computed
       **Tsunami flag:** not published by source

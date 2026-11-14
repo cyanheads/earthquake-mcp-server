@@ -26,6 +26,7 @@ import { earthquakeGetFeed } from '@/mcp-server/tools/definitions/earthquake-get
 import { earthquakeSearchEvents } from '@/mcp-server/tools/definitions/earthquake-search-events.tool.js';
 import { initEmscService } from '@/services/emsc/emsc-service.js';
 import { initUsgsService } from '@/services/usgs/usgs-service.js';
+import { fixture, stubUsgsEvent } from '../helpers/usgs-fetch-stub.js';
 
 describe('event and FDSN regressions — real service wire path', () => {
   beforeEach(() => {
@@ -146,6 +147,45 @@ describe('event and FDSN regressions — real service wire path', () => {
     expect(earthquakeEventResource.output!.parse(resource).detail?.shakemap?.code_version).toBe(
       '4.0.2+335.gcbad862',
     );
+  });
+
+  it('carries normalized legacy PGA and focal-only provenance on both outputs and the resource', async () => {
+    const event_id = 'ci41567984';
+    const feature = JSON.parse(fixture('ci41567984.detail.json'));
+    feature.properties.products.shakemap = [
+      {
+        properties: { maxpga: '18.86', maxpgv: '10.94' },
+        contents: { 'download/grid.xyz.zip': {} },
+      },
+    ];
+    const { urls } = stubUsgsEvent(event_id, {}, () => Response.json(feature));
+
+    const result = await runToolContract(earthquakeGetEvent, { event_id });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      detail: {
+        shakemap: { max_pga: expect.closeTo(0.1886, 10), max_pgv: 10.94 },
+        moment_tensor: {
+          nodal_plane_1: { strike: 265, dip: 40, rake: 113 },
+          nodal_plane_2: { strike: 56, dip: 54, rake: 72 },
+          nodal_planes_from: { product: 'focal-mechanism', source: 'ci', code: 'ci41567984_fm1' },
+        },
+      },
+    });
+    const text = JSON.stringify(result.content);
+    expect(text).toContain('Max PGA: 0.1886 g');
+    expect(text).toContain('Max PGV: 10.94 cm/s');
+    expect(text).toContain('**Focal mechanism:** Nodal plane 1: strike 265°');
+    expect(text).toContain(
+      'Nodal planes from: focal-mechanism / source: ci / code: ci41567984_fm1',
+    );
+    expect(text).not.toContain('**Moment tensor:**');
+    const resource = await earthquakeEventResource.handler(
+      { event_id },
+      createMockContext({ errors: earthquakeEventResource.errors }),
+    );
+    expect(earthquakeEventResource.output!.parse(resource)).toEqual(result.structuredContent);
+    expect(urls).toHaveLength(2);
   });
 
   it.each([earthquakeSearchEvents, earthquakeCountEvents])(

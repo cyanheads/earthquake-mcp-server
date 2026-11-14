@@ -112,15 +112,22 @@ export interface UsgsDyfiProperties {
   'num-responses'?: string;
 }
 
-/** `moment-tensor` properties read by the detail projection. */
-export interface UsgsMomentTensorProperties {
-  'derived-depth'?: string;
+/** Nodal angles shared by `moment-tensor` and `focal-mechanism` products. */
+export interface UsgsNodalPlaneProperties {
   'nodal-plane-1-dip'?: string;
   'nodal-plane-1-rake'?: string;
   'nodal-plane-1-strike'?: string;
   'nodal-plane-2-dip'?: string;
   'nodal-plane-2-rake'?: string;
   'nodal-plane-2-strike'?: string;
+}
+
+/** `moment-tensor` properties read by the detail projection. */
+export interface UsgsMomentTensorProperties extends UsgsNodalPlaneProperties {
+  'derived-depth'?: string;
+  'derived-magnitude'?: string;
+  'derived-magnitude-type'?: string;
+  'percent-double-couple'?: string;
   'scalar-moment'?: string;
 }
 
@@ -193,9 +200,18 @@ export interface EarthquakeEventDetail {
   };
   moment_tensor?: {
     derived_depth_km?: number;
+    magnitude?: number;
+    magnitude_type?: string;
     nodal_plane_1?: NodalPlane;
     nodal_plane_2?: NodalPlane;
+    nodal_planes_from?: {
+      code?: string;
+      product: 'moment-tensor' | 'focal-mechanism';
+      source?: string;
+    };
+    percent_double_couple?: number;
     scalar_moment_nm?: number;
+    source?: string;
   };
   origin?: {
     azimuthal_gap_deg?: number;
@@ -322,7 +338,7 @@ interface PagerLossEstimate {
 export interface PagerEstimates {
   economic: PagerLossEstimate;
   exposure: {
-    countries: { country_code: string; population: number[] }[];
+    countries: { country_code: string; country_name?: string; population: number[] }[];
     mmi: number[];
     population: number[];
   };

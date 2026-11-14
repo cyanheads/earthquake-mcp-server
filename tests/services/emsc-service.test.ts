@@ -843,8 +843,10 @@ describe('EMSC event_type reaches content[] the same way it reaches structuredCo
     return formatEvent(event).join('\n');
   }
 
-  it('leaves an ordinary EMSC earthquake out of the rendered text, as USGS already is', async () => {
-    await expect(renderedEventFor('ke')).resolves.not.toContain('**Event type:**');
+  it('renders an ordinary EMSC earthquake with its published certainty', async () => {
+    await expect(renderedEventFor('ke')).resolves.toContain(
+      '**Event type:** earthquake (certainty: known)',
+    );
   });
 
   it('renders a suspected EMSC earthquake, in the normalized vocabulary and not as a raw code', async () => {

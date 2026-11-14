@@ -27,14 +27,15 @@ import {
   readResponseText,
 } from '../upstream-call.js';
 import { loadEventIncludes, normalizeIncludeGroups } from './event-includes.js';
+import { projectMomentTensor } from './moment-tensor.js';
 import { maybe, num } from './product-fields.js';
+import { shakeMapMaxima } from './shakemap-maxima.js';
 import type {
   EarthquakeEvent,
   EarthquakeEventDetail,
   EarthquakeQueryParams,
   EventIncludeGroup,
   EventIncludes,
-  NodalPlane,
   UsgsCountResponse,
   UsgsDyfiProperties,
   UsgsFeature,
@@ -42,7 +43,6 @@ import type {
   UsgsFiniteFaultProperties,
   UsgsGroundFailureProperties,
   UsgsLossPagerProperties,
-  UsgsMomentTensorProperties,
   UsgsOriginProperties,
   UsgsProduct,
   UsgsShakeMapProperties,
@@ -174,16 +174,6 @@ function group<T extends object>(fields: T): T | undefined {
   return Object.keys(fields).length > 0 ? fields : undefined;
 }
 
-/** A nodal plane is only meaningful with all three angles — drop a partial one. */
-function nodalPlane(
-  strike: number | undefined,
-  dip: number | undefined,
-  rake: number | undefined,
-): NodalPlane | undefined {
-  if (strike == null || dip == null || rake == null) return;
-  return { strike, dip, rake };
-}
-
 /**
  * Project the `products` blob USGS attaches to a single-event response into flat,
  * named fields. Groups the event does not carry are omitted, never nulled — a bare
@@ -199,21 +189,11 @@ function projectDetail(
   const shakemap = products.shakemap?.[0] as UsgsProduct<UsgsShakeMapProperties> | undefined;
   const dyfi = products.dyfi?.[0] as UsgsProduct<UsgsDyfiProperties> | undefined;
   const fault = products['finite-fault']?.[0] as UsgsProduct<UsgsFiniteFaultProperties> | undefined;
-  const tensorProps = products['moment-tensor']?.[0]?.properties as
-    | UsgsMomentTensorProperties
-    | undefined;
   const failureProps = products['ground-failure']?.[0]?.properties as
     | UsgsGroundFailureProperties
     | undefined;
   const originProps = products.origin?.[0]?.properties as UsgsOriginProperties | undefined;
   const codeVersion = shakemap?.properties?.['shakemap-code-version'];
-  const rawPgv = num(shakemap?.properties?.maxpgv);
-  // This producer revision exported ln(cm/s); later 4.0.2 revisions publish linear PGV.
-  const maxPgv =
-    rawPgv !== undefined &&
-    (codeVersion === '4.0.2+335.gcbad862' || codeVersion === '4.0.2+335.gcbad862.dirty')
-      ? Math.exp(rawPgv)
-      : rawPgv;
 
   return group({
     ...maybe(
@@ -227,8 +207,7 @@ function projectDetail(
       'shakemap',
       group({
         ...maybe('max_mmi', num(shakemap?.properties?.maxmmi)),
-        ...maybe('max_pga', num(shakemap?.properties?.maxpga)),
-        ...maybe('max_pgv', Number.isFinite(maxPgv) ? maxPgv : undefined),
+        ...shakeMapMaxima(shakemap),
         ...maybe('code_version', codeVersion),
         ...maybe(
           'intensity_map_url',
@@ -244,29 +223,7 @@ function projectDetail(
         ...maybe('map_url', contentUrl(dyfi, '_ciim.jpg', '_ciim.pdf')),
       }),
     ),
-    ...maybe(
-      'moment_tensor',
-      group({
-        ...maybe('scalar_moment_nm', num(tensorProps?.['scalar-moment'])),
-        ...maybe('derived_depth_km', num(tensorProps?.['derived-depth'])),
-        ...maybe(
-          'nodal_plane_1',
-          nodalPlane(
-            num(tensorProps?.['nodal-plane-1-strike']),
-            num(tensorProps?.['nodal-plane-1-dip']),
-            num(tensorProps?.['nodal-plane-1-rake']),
-          ),
-        ),
-        ...maybe(
-          'nodal_plane_2',
-          nodalPlane(
-            num(tensorProps?.['nodal-plane-2-strike']),
-            num(tensorProps?.['nodal-plane-2-dip']),
-            num(tensorProps?.['nodal-plane-2-rake']),
-          ),
-        ),
-      }),
-    ),
+    ...maybe('moment_tensor', group(projectMomentTensor(products))),
     ...maybe(
       'ground_failure',
       group({

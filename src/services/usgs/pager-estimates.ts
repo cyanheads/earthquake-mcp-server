@@ -56,6 +56,14 @@ const RawCommentsSchema = z.object({
   impact2: z.string().nullish(),
 });
 
+// PAGER's country table assigns its own codes to US seismic regions and unassigned areas.
+const countryNames = new Map([
+  ['XF', 'California'],
+  ['EU', 'Central/Eastern United States'],
+  ['WU', 'Western United States'],
+  ['UK', 'Areas assigned to no country'],
+]);
+
 /** A bracket bound as a number; an unparseable one fails the group. */
 function bound(value: string): number {
   const parsed = num(value);
@@ -102,6 +110,7 @@ export function projectPagerEstimates(files: {
       population: exposure.aggregated_exposure,
       countries: exposure.country_exposures.map((row) => ({
         country_code: row.country_code,
+        ...maybe('country_name', countryNames.get(row.country_code)),
         population: row.exposure,
       })),
     },

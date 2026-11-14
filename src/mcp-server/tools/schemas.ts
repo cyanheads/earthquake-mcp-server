@@ -4,6 +4,7 @@
  */
 
 import { z } from '@cyanheads/mcp-ts-core';
+import { escapeMarkdownInline, markdownLink } from '@cyanheads/mcp-ts-core/utils';
 import { EVENT_INCLUDE_GROUPS } from '@/services/usgs/types.js';
 
 /** Zod schema for a normalized earthquake event returned by feeds and search results. */
@@ -166,12 +167,30 @@ export const EarthquakeDetailSchema = z.object({
     .object({
       scalar_moment_nm: z.number().optional().describe('Scalar seismic moment, newton-metres.'),
       derived_depth_km: z.number().optional().describe('Moment-tensor centroid depth, km.'),
+      magnitude: z.number().optional().describe('Magnitude from the preferred moment tensor.'),
+      magnitude_type: z.string().optional().describe('Preferred moment-tensor magnitude type.'),
+      percent_double_couple: z
+        .number()
+        .optional()
+        .describe('Double-couple fraction of the preferred tensor, as published (0–1).'),
+      source: z
+        .string()
+        .optional()
+        .describe('Network that contributed the preferred moment tensor.'),
       nodal_plane_1: NodalPlaneSchema.optional().describe(
         'First nodal plane; either plane may be the fault.',
       ),
       nodal_plane_2: NodalPlaneSchema.optional().describe(
         'Auxiliary nodal plane; seismic data alone cannot distinguish the true fault.',
       ),
+      nodal_planes_from: z
+        .object({
+          product: z.enum(['moment-tensor', 'focal-mechanism']).describe('USGS product type.'),
+          source: z.string().optional().describe('Network that contributed the nodal planes.'),
+          code: z.string().optional().describe('Code of the product supplying the nodal planes.'),
+        })
+        .optional()
+        .describe('Product supplying the returned nodal plane or planes.'),
     })
     .optional()
     .describe('Focal mechanism; absent without projected fields.'),
@@ -241,7 +260,27 @@ export type EarthquakeDetailOutput = z.infer<typeof EarthquakeDetailSchema>;
 
 /** Render a projected field with its unit, or say the product omitted it. Never implies zero. */
 function detailValue(value: number | string | undefined, unit = ''): string {
-  return value == null ? 'not published' : `${value}${unit}`;
+  return value == null ? 'not published' : `${literalText(value)}${unit}`;
+}
+
+/** CommonMark normalizes CR and NUL. Keep those values recoverable as quoted JSON. */
+function literalText(value: string | number): string {
+  if (typeof value === 'number') return String(value);
+  return escapeMarkdownInline(/[\r\0]/.test(value) ? JSON.stringify(value) : value);
+}
+
+/** Headings and tables cannot contain a physical line break in one value. */
+function needsJson(value: string | number | undefined): boolean {
+  return typeof value === 'string' && /[\r\n\0]/.test(value);
+}
+
+/** Pretty JSON retains its complete value, including line breaks. */
+function jsonBlock(value: object): string[] {
+  return ['', '```json', JSON.stringify(value, null, 2), '```', ''];
+}
+
+function link(url: string): string {
+  return /[\r\n\0]/.test(url) ? literalText(JSON.stringify(url)) : markdownLink(url, url);
 }
 
 /**
@@ -261,7 +300,7 @@ export function formatEventDetail(detail: EarthquakeDetailOutput | undefined): s
   if (pager) {
     lines.push(
       `**PAGER:** Alert level: ${detailValue(pager.alert_level)}` +
-        (pager.report_url ? ` | Report: ${pager.report_url}` : ''),
+        (pager.report_url ? ` | Report: ${link(pager.report_url)}` : ''),
     );
   }
 
@@ -271,8 +310,8 @@ export function formatEventDetail(detail: EarthquakeDetailOutput | undefined): s
       `**ShakeMap:** Max MMI: ${detailValue(shakemap.max_mmi)} | ` +
         `Max PGA: ${detailValue(shakemap.max_pga, ' g')} | ` +
         `Max PGV: ${detailValue(shakemap.max_pgv, ' cm/s')}` +
-        (shakemap.code_version ? ` | Code version: ${shakemap.code_version}` : '') +
-        (shakemap.intensity_map_url ? ` | Intensity map: ${shakemap.intensity_map_url}` : ''),
+        (shakemap.code_version ? ` | Code version: ${literalText(shakemap.code_version)}` : '') +
+        (shakemap.intensity_map_url ? ` | Intensity map: ${link(shakemap.intensity_map_url)}` : ''),
     );
   }
 
@@ -281,7 +320,7 @@ export function formatEventDetail(detail: EarthquakeDetailOutput | undefined): s
     lines.push(
       `**DYFI:** Responses: ${detailValue(dyfi.responses)} | ` +
         `Max CDI: ${detailValue(dyfi.max_cdi)}` +
-        (dyfi.map_url ? ` | Map: ${dyfi.map_url}` : ''),
+        (dyfi.map_url ? ` | Map: ${link(dyfi.map_url)}` : ''),
     );
   }
 
@@ -294,11 +333,38 @@ export function formatEventDetail(detail: EarthquakeDetailOutput | undefined): s
           : undefined,
       )
       .filter((text) => text != null);
-    lines.push(
-      `**Moment tensor:** Scalar moment: ${detailValue(tensor.scalar_moment_nm, ' N·m')} | ` +
-        `Derived depth: ${detailValue(tensor.derived_depth_km, ' km')}` +
-        (planes.length > 0 ? ` | ${planes.join(' | ')}` : ''),
-    );
+    const provenance = tensor.nodal_planes_from;
+    if (provenance) {
+      const attribution: string[] = [provenance.product];
+      if (provenance.source !== undefined)
+        attribution.push(`source: ${literalText(provenance.source)}`);
+      if (provenance.code !== undefined) attribution.push(`code: ${literalText(provenance.code)}`);
+      planes.push(`Nodal planes from: ${attribution.join(' / ')}`);
+    }
+    const hasTensorMetadata =
+      tensor.scalar_moment_nm !== undefined ||
+      tensor.derived_depth_km !== undefined ||
+      tensor.magnitude !== undefined ||
+      tensor.magnitude_type !== undefined ||
+      tensor.percent_double_couple !== undefined ||
+      tensor.source !== undefined;
+    if (hasTensorMetadata || provenance?.product !== 'focal-mechanism') {
+      const metadata = [
+        `Scalar moment: ${detailValue(tensor.scalar_moment_nm, ' N·m')}`,
+        `Derived depth: ${detailValue(tensor.derived_depth_km, ' km')}`,
+      ];
+      if (tensor.magnitude !== undefined) metadata.push(`Magnitude: ${tensor.magnitude}`);
+      if (tensor.magnitude_type !== undefined)
+        metadata.push(`Magnitude type: ${literalText(tensor.magnitude_type)}`);
+      if (tensor.percent_double_couple !== undefined) {
+        metadata.push(`Double-couple fraction: ${tensor.percent_double_couple}`);
+      }
+      if (tensor.source !== undefined)
+        metadata.push(`Tensor source: ${literalText(tensor.source)}`);
+      lines.push(`**Moment tensor:** ${[...metadata, ...planes].join(' | ')}`);
+    } else {
+      lines.push(`**Focal mechanism:** ${planes.join(' | ')}`);
+    }
   }
 
   const failure = detail.ground_failure;
@@ -316,7 +382,7 @@ export function formatEventDetail(detail: EarthquakeDetailOutput | undefined): s
         `Stations used: ${detailValue(origin.num_stations_used)} | ` +
         `Horizontal error: ${detailValue(origin.horizontal_error_km, ' km')} | ` +
         `Depth error: ${detailValue(origin.depth_error_km, ' km')} | ` +
-        (origin.depth_type ? `Depth type: ${origin.depth_type} | ` : '') +
+        (origin.depth_type ? `Depth type: ${literalText(origin.depth_type)} | ` : '') +
         `Review status: ${detailValue(origin.review_status)}`,
     );
   }
@@ -326,7 +392,7 @@ export function formatEventDetail(detail: EarthquakeDetailOutput | undefined): s
     lines.push(
       `**Finite fault:** Rupture length: ${detailValue(fault.rupture_length_km, ' km')} | ` +
         `Rupture width: ${detailValue(fault.rupture_width_km, ' km')}` +
-        (fault.model_url ? ` | Model: ${fault.model_url}` : ''),
+        (fault.model_url ? ` | Model: ${link(fault.model_url)}` : ''),
     );
   }
 
@@ -335,36 +401,35 @@ export function formatEventDetail(detail: EarthquakeDetailOutput | undefined): s
 
 /** Format a single earthquake event as markdown lines. Renders all schema fields for format-parity. */
 export function formatEvent(event: EarthquakeEventOutput): string[] {
-  const lines: string[] = [];
-  lines.push(`## ${event.title}`);
+  const { title } = event;
+  // An all-hash title would be parsed as the heading's closing sequence.
+  const lines = needsJson(title)
+    ? ['## Earthquake event', ...jsonBlock({ title })]
+    : [`## ${/^#+$/.test(title) ? `\\${title}` : literalText(title)}`];
   lines.push(
-    `**ID:** ${event.id} | **Magnitude:** ${event.magnitude !== null ? event.magnitude : 'unknown'} (${event.magnitude_type}) | **Depth:** ${event.depth_km !== null ? `${event.depth_km} km` : 'unknown'}`,
+    `**ID:** ${literalText(event.id)} | **Magnitude:** ${event.magnitude !== null ? event.magnitude : 'unknown'} (${literalText(event.magnitude_type)}) | **Depth:** ${event.depth_km !== null ? `${event.depth_km} km` : 'unknown'}`,
   );
-  if (event.associated_ids) lines.push(`**Associated IDs:** ${event.associated_ids.join(', ')}`);
-  lines.push(`**Place:** ${event.place}`);
-  // USGS titles carry the classification for non-earthquakes, EMSC titles never do.
-  // Rendering anything other than a plain "earthquake" keeps quarry blasts and
-  // explosions from reading as seismicity in the text-only surface. An asserted
-  // certainty is the unremarkable case and stays out on its own, but anything less
-  // than "known" makes even a plain earthquake worth a line — and once the line is
-  // rendered the certainty travels with it, so a suspected explosion in content[]
-  // can never read as a confirmed one.
-  const unusualType = event.event_type != null && event.event_type !== 'earthquake';
-  const unusualCertainty = event.event_certainty != null && event.event_certainty !== 'known';
-  if (unusualType || unusualCertainty) {
+  if (event.associated_ids)
+    lines.push(`**Associated IDs:** ${event.associated_ids.map(literalText).join(', ')}`);
+  lines.push(`**Place:** ${literalText(event.place)}`);
+  if (event.event_type != null) {
     lines.push(
-      `**Event type:** ${event.event_type ?? 'not published by source'}` +
-        (event.event_certainty != null ? ` (certainty: ${event.event_certainty})` : ''),
+      `**Event type:** ${literalText(event.event_type)}` +
+        (event.event_certainty != null
+          ? ` (certainty: ${literalText(event.event_certainty)})`
+          : ''),
     );
+  } else if (event.event_certainty != null) {
+    lines.push(`**Event certainty:** ${literalText(event.event_certainty)}`);
   }
-  lines.push(`**Time:** ${event.time} | **Updated:** ${event.updated}`);
-  lines.push(`**Location:** ${event.latitude.toFixed(4)}°, ${event.longitude.toFixed(4)}°`);
+  lines.push(`**Time:** ${literalText(event.time)} | **Updated:** ${literalText(event.updated)}`);
+  lines.push(`**Location:** ${event.latitude}°, ${event.longitude}°`);
 
   // Provenance — review state plus whatever catalog/agency the source named.
   // A null status is rendered, never dropped: it means the source publishes none.
   const provenance = [`Status: ${event.status ?? 'not published by source'}`];
-  if (event.source_catalog) provenance.push(`Catalog: ${event.source_catalog}`);
-  if (event.auth) provenance.push(`Agency: ${event.auth}`);
+  if (event.source_catalog) provenance.push(`Catalog: ${literalText(event.source_catalog)}`);
+  if (event.auth) provenance.push(`Agency: ${literalText(event.auth)}`);
   lines.push(`**Provenance:** ${provenance.join(' | ')}`);
 
   lines.push(
@@ -395,8 +460,8 @@ export function formatEvent(event: EarthquakeEventOutput): string[] {
   if (notReported.length > 0) impactParts.push(`Not reported: ${notReported.join(', ')}`);
   lines.push(`**Impact:** ${impactParts.join(' | ')}`);
 
-  if (event.event_url) lines.push(`**USGS page:** ${event.event_url}`);
-  if (event.detail_url) lines.push(`**Detail URL:** ${event.detail_url}`);
+  if (event.event_url) lines.push(`**USGS page:** ${link(event.event_url)}`);
+  if (event.detail_url) lines.push(`**Detail URL:** ${link(event.detail_url)}`);
 
   return lines;
 }
@@ -570,16 +635,20 @@ export const PagerEstimatesSchema = z.object({
               country_code: z
                 .string()
                 .describe(
-                  'Two-letter country code as PAGER publishes it; "UK" marks areas assigned to no country, not the United Kingdom (GB).',
+                  'Country or region code as PAGER publishes it. XF means California, EU means Central/Eastern United States, WU means Western United States, and UK marks areas assigned to no country. The United Kingdom is GB.',
                 ),
+              country_name: z
+                .string()
+                .optional()
+                .describe('Meaning of a PAGER-specific code. Present for XF, EU, WU, and UK.'),
               population: z
                 .array(z.number())
-                .describe('Estimated people exposed at each intensity in this country.'),
+                .describe('Estimated people exposed at each intensity in this country or region.'),
             })
-            .describe('One country row.'),
+            .describe('One country or region row.'),
         )
         .describe(
-          'Every country row in published order, all-zero rows included; empty when PAGER lists none.',
+          'Every country or region row in published order, all-zero rows included; empty when PAGER lists none.',
         ),
     })
     .describe('Estimated population exposed to each shaking intensity.'),
@@ -616,22 +685,37 @@ interface EventIncludesOutput {
 
 /** Escape what would end or split a Markdown table cell. */
 function cell(value: string | number | undefined): string {
-  if (value === undefined) return '';
-  return typeof value === 'number' ? String(value) : value.replace(/[\\|]/g, '\\$&');
+  return value === undefined ? '' : literalText(value);
+}
+
+function arrivalCells(arrival: EventArrival): (string | number | undefined)[] {
+  return [
+    arrival.network,
+    arrival.station,
+    arrival.location,
+    arrival.channel,
+    arrival.phase,
+    arrival.time,
+    arrival.time_residual_s,
+    arrival.distance_deg,
+    arrival.azimuth_deg,
+    arrival.time_weight,
+  ];
 }
 
 /** `label: value` segments for the values present, joined into one line. */
 function segments(parts: [string, string | number | undefined, string?][]): string {
   return parts
-    .filter(([, value]) => value !== undefined)
-    .map(([label, value, unit = '']) => `${label}: ${value}${unit}`)
+    .flatMap(([label, value, unit = '']) =>
+      value === undefined ? [] : [`${label}: ${literalText(value)}${unit}`],
+    )
     .join(' | ');
 }
 
 function formatOrigin(origin: EventOrigin): string {
-  const name = origin.event_id ?? 'origin';
+  const name = literalText(origin.event_id ?? 'origin');
   const tags = [
-    origin.source ? `source ${origin.source}` : undefined,
+    origin.source ? `source ${literalText(origin.source)}` : undefined,
     origin.is_preferred ? 'preferred' : undefined,
   ].filter((tag) => tag != null);
   const head = `- **${name}**${tags.length > 0 ? ` (${tags.join(', ')})` : ''}`;
@@ -660,7 +744,10 @@ function formatOrigin(origin: EventOrigin): string {
 }
 
 function formatMagnitude(magnitude: EventMagnitude): string {
-  const name = [magnitude.type, magnitude.value].filter((part) => part !== undefined).join(' ');
+  const name = [magnitude.type, magnitude.value]
+    .filter((part) => part !== undefined)
+    .map(literalText)
+    .join(' ');
   const head = `- **${name || 'magnitude'}**${magnitude.is_preferred ? ' (preferred)' : ''}`;
   const body = segments([
     ['Stations', magnitude.station_count],
@@ -710,14 +797,13 @@ export function formatEventIncludes(result: EventIncludesOutput): string[] {
     lines.push('', `### Arrivals (${result.arrivals.length}, preferred origin, nearest first)`);
     if (result.arrivals.length === 0) {
       lines.push('_The preferred origin lists no arrivals._');
+    } else if (result.arrivals.some((arrival) => arrivalCells(arrival).some(needsJson))) {
+      lines.push(...jsonBlock(result.arrivals));
     } else {
       lines.push(
         '| Network | Station | Location | Channel | Phase | Time (UTC) | Residual (s) | Distance (°) | Azimuth (°) | Time weight |',
         '|---|---|---|---|---|---|---|---|---|---|',
-        ...result.arrivals.map(
-          (a) =>
-            `| ${[a.network, a.station, a.location, a.channel, a.phase, a.time, a.time_residual_s, a.distance_deg, a.azimuth_deg, a.time_weight].map(cell).join(' | ')} |`,
-        ),
+        ...result.arrivals.map((arrival) => `| ${arrivalCells(arrival).map(cell).join(' | ')} |`),
       );
     }
   }
@@ -738,7 +824,7 @@ export function formatEventIncludes(result: EventIncludesOutput): string[] {
       const above = window.above_mainshock;
       lines.push(
         '',
-        `**${window.label}** (${window.start} → ${window.end})` +
+        `**${literalText(window.label)}** (${literalText(window.start)} → ${literalText(window.end)})` +
           (above
             ? ` | Above mainshock (≥ M${above.magnitude}): probability ${above.probability}`
             : ''),
@@ -755,27 +841,33 @@ export function formatEventIncludes(result: EventIncludesOutput): string[] {
 
   const pager = result.pager;
   if (pager) {
-    const { mmi, population, countries } = pager.exposure;
-    lines.push(
-      '',
-      '### PAGER loss estimates',
-      `Fatality alert: ${pager.fatality.level ?? 'not published'} | Economic alert: ${pager.economic.level ?? 'not published'}`,
-      ...(pager.impact ?? []).map((statement) => `- ${statement}`),
-      ...formatPagerBins('Fatalities (deaths)', pager.fatality),
-      ...formatPagerBins('Economic losses (millions of USD)', pager.economic),
-      '',
-      '**Population exposed by shaking intensity (MMI)**',
-      '',
-      `| Country | ${mmi.map((value) => `MMI ${value}`).join(' | ')} |`,
-      `|---|${mmi.map(() => '---|').join('')}`,
-      `| Total | ${population.map(cell).join(' | ')} |`,
-      ...countries.map(
-        (row) => `| ${[row.country_code, ...row.population].map(cell).join(' | ')} |`,
-      ),
-    );
-    if (countries.length === 0) lines.push('_PAGER lists no country rows._');
-    if (countries.some((row) => row.country_code === 'UK')) {
-      lines.push('_"UK" marks areas assigned to no country, not the United Kingdom._');
+    lines.push('', '### PAGER loss estimates');
+    if (
+      pager.fatality.bins.some((bin) => needsJson(bin.color)) ||
+      pager.economic.bins.some((bin) => needsJson(bin.color)) ||
+      pager.exposure.countries.some((row) => needsJson(row.country_code))
+    ) {
+      lines.push(...jsonBlock(pager));
+    } else {
+      const { mmi, population, countries } = pager.exposure;
+      lines.push(
+        `Fatality alert: ${detailValue(pager.fatality.level)} | Economic alert: ${detailValue(pager.economic.level)}`,
+        ...(pager.impact ?? []).map((statement) => `- ${literalText(statement)}`),
+        ...formatPagerBins('Fatalities (deaths)', pager.fatality),
+        ...formatPagerBins('Economic losses (millions of USD)', pager.economic),
+        '',
+        '**Population exposed by shaking intensity (MMI)**',
+        '',
+        `| Country or region | ${mmi.map((value) => `MMI ${value}`).join(' | ')} |`,
+        `|---|${mmi.map(() => '---|').join('')}`,
+        `| Total | ${population.map(cell).join(' | ')} |`,
+        ...countries.map(({ country_code, country_name, population }) => {
+          const label =
+            country_name === undefined ? country_code : `${country_code} (${country_name})`;
+          return `| ${[label, ...population].map(cell).join(' | ')} |`;
+        }),
+      );
+      if (countries.length === 0) lines.push('', '_PAGER lists no country rows._');
     }
   }
 

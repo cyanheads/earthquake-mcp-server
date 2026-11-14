@@ -11,6 +11,7 @@ import type { StorageService } from '@cyanheads/mcp-ts-core/storage';
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EarthquakeEventSchema, formatEvent } from '@/mcp-server/tools/schemas.js';
+import { shakeMapMaxima } from '@/services/usgs/shakemap-maxima.js';
 import type { UsgsFeature } from '@/services/usgs/types.js';
 import { UsgsService } from '@/services/usgs/usgs-service.js';
 import { fixture, hang } from '../helpers/usgs-fetch-stub.js';
@@ -169,6 +170,20 @@ describe('UsgsService.getEvent — lookup regressions', () => {
   it.each([
     ['4.0.2+335.gcbad862', '4.43', 83.93141691026881],
     ['4.0.2+335.gcbad862.dirty', '4.639', 103.4408549906185],
+    ['4.0.2+431.g3c0d2d0', '3.894', 49.10692187915726],
+    ['4.0.2+431.g3c0d2d0', '-0.359', 0.6983743513515736],
+    ['4.0.1+668.gabcdef0', '1', Math.E],
+    ['4.0.1+669.g8a58dbe8', '1', 1],
+    ['4.0.2+478.g03fa4602', '1', Math.E],
+    ['4.0.2+479.g8a58dbe8', '1', 1],
+    ['4.0.3+20.gabcdef0', '1', Math.E],
+    ['4.0.3+21.g8a58dbe8', '1', 1],
+    ['4.0.4+14.gabcdef0', '1', Math.E],
+    ['4.0.4+15.g8a58dbe8', '1', 1],
+    ['4.0.2+611.ga196957.dirty', '70.055', 70.055],
+    ['4.0.2+0.g7c7cfcf.dirty', '1', Math.E],
+    ['4.0.0+1.gabcdef0', '1', 1],
+    ['4.0.2+335.gcbad862\n', '1', 1],
   ])('normalizes defective producer %s', async (version, maxpgv, expected) => {
     const feature = makeFeature('us1', 7);
     feature.properties.products = {
@@ -208,6 +223,44 @@ describe('UsgsService.getEvent — lookup regressions', () => {
       expect(result.detail?.shakemap).toEqual({ code_version: '4.0.2+335.gcbad862' });
     },
   );
+});
+
+describe('ShakeMap version parsing (timing)', () => {
+  const shapes = [
+    ['long build number', (size: number) => `4.0.2+${'9'.repeat(size)}.gabcdef0`],
+    ['single trailing line break', (size: number) => `4.0.2+${'9'.repeat(size)}\n`],
+    ['repeated line breaks', (size: number) => `4.0.2+${'9\r\n'.repeat(size / 3)}`],
+  ] as const;
+
+  function leastCpuMicros(version: string, batch: number): number {
+    const product = { properties: { 'shakemap-code-version': version, maxpgv: '1' } };
+    let least = Number.POSITIVE_INFINITY;
+    for (let run = 0; run < 3; run++) {
+      const before = process.threadCpuUsage();
+      for (let call = 0; call < batch; call++) shakeMapMaxima(product);
+      const spent = process.threadCpuUsage(before);
+      least = Math.min(least, (spent.user + spent.system) / batch);
+    }
+    return least;
+  }
+
+  it.each(shapes)('bounds CPU on %s', { timeout: 0 }, (_shape, make) => {
+    const baseline = make(5_000);
+    leastCpuMicros(baseline, 20);
+    for (let size = 10_000; size <= 320_000; size *= 2) {
+      const input = make(size);
+      const baselineCpu = leastCpuMicros(baseline, 100);
+      const cpu = leastCpuMicros(input, 10);
+      expect(cpu).toBeLessThan(100_000);
+      if (size === 320_000) {
+        const pairedBaseline = leastCpuMicros(baseline, 100);
+        const pairedCpu = leastCpuMicros(input, 10);
+        expect(
+          Math.min(cpu / Math.max(baselineCpu, 1), pairedCpu / Math.max(pairedBaseline, 1)),
+        ).toBeLessThan(256);
+      }
+    }
+  });
 });
 
 describe('UsgsService.searchEvents — null magnitude normalization (issue #13)', () => {
@@ -575,6 +628,118 @@ function bareFeature(): UsgsFeature {
 }
 
 describe('UsgsService.getEvent — product projection (issue #25)', () => {
+  it('keeps a complete preferred plane even without its counterpart', async () => {
+    const feature = makeFeature('us1', 7);
+    feature.properties.products = {
+      'moment-tensor': [
+        {
+          properties: {
+            'nodal-plane-1-strike': '0',
+            'nodal-plane-1-dip': '84',
+            'nodal-plane-1-rake': '-6',
+          },
+        },
+        {
+          properties: {
+            'nodal-plane-2-strike': '10',
+            'nodal-plane-2-dip': '20',
+            'nodal-plane-2-rake': '30',
+          },
+        },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(feature)));
+
+    const { detail } = await makeService().getEvent('us1', createMockContext());
+    expect(detail?.moment_tensor?.nodal_plane_1).toEqual({ strike: 0, dip: 84, rake: -6 });
+    expect(detail?.moment_tensor).not.toHaveProperty('nodal_plane_2');
+    expect(detail?.moment_tensor?.nodal_planes_from).toEqual({ product: 'moment-tensor' });
+  });
+
+  it('takes planes from the first complete tensor and metadata from the preferred tensor', async () => {
+    const feature = productRichFeature();
+    const complete = feature.properties.products?.['moment-tensor']?.[0];
+    feature.properties.products = {
+      'moment-tensor': [
+        {
+          source: 'ci',
+          properties: {
+            'scalar-moment': '2.711E+19',
+            'derived-depth': '8',
+            'percent-double-couple': '0.97',
+          },
+        },
+        { code: 'incomplete', properties: { 'nodal-plane-2-strike': '10' } },
+        {
+          ...complete,
+          source: 'us',
+          code: 'us_70004bn0_mww',
+          properties: { ...complete?.properties, 'derived-magnitude': '7.1' },
+        },
+      ],
+      'focal-mechanism': [complete ?? {}],
+    };
+    const fetchMock = vi.fn().mockResolvedValue(Response.json(feature));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { detail } = await makeService().getEvent(feature.id, createMockContext());
+    expect(detail?.moment_tensor).toEqual({
+      scalar_moment_nm: 2.711e19,
+      derived_depth_km: 8,
+      percent_double_couple: 0.97,
+      source: 'ci',
+      nodal_plane_1: { strike: 49.23, dip: 41.32, rake: 102.5 },
+      nodal_plane_2: { strike: 212.78, dip: 49.86, rake: 79.22 },
+      nodal_planes_from: { product: 'moment-tensor', source: 'us', code: 'us_70004bn0_mww' },
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('projects focal-only planes with only the identifiers the product publishes', async () => {
+    const feature = productRichFeature();
+    const complete = feature.properties.products?.['moment-tensor']?.[0];
+    feature.properties.products = {
+      'focal-mechanism': [
+        { properties: { 'nodal-plane-1-strike': '0', 'nodal-plane-1-rake': 'Infinity' } },
+        { properties: { ...complete?.properties } },
+      ],
+    };
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(feature)));
+
+    const { detail } = await makeService().getEvent(feature.id, createMockContext());
+    expect(detail?.moment_tensor).toEqual({
+      nodal_plane_1: { strike: 49.23, dip: 41.32, rake: 102.5 },
+      nodal_plane_2: { strike: 212.78, dip: 49.86, rake: 79.22 },
+      nodal_planes_from: { product: 'focal-mechanism' },
+    });
+  });
+
+  it.each([
+    [undefined, '17.63', 0.1763, true],
+    [undefined, '18.86', 0.1886, true],
+    [undefined, '1.669', 1.669, false],
+    ['4.0.1+43.g5acd83d.dirty', '-2.161', 0.11520985356036893, false],
+    ['4.0.1+102.g564a244b', '0.118', 0.118, false],
+    ['4.5.0', '0.448', 0.448, false],
+  ])(
+    'normalizes PGA from version %s and published value %s',
+    async (version, maxpga, expected, legacy) => {
+      const feature = makeFeature('us1', 7);
+      feature.properties.products = {
+        shakemap: [
+          {
+            ...(legacy ? { contents: { 'download/grid.xyz.zip': {} } } : {}),
+            properties: { 'shakemap-code-version': version, maxpga },
+          },
+        ],
+      };
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(feature)));
+
+      const { detail } = await makeService().getEvent('us1', createMockContext());
+      expect(detail?.shakemap?.max_pga).toBeCloseTo(expected, 10);
+    },
+  );
+
   it('projects every product group from a product-rich event', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Response.json(productRichFeature())));
 
@@ -603,6 +768,7 @@ describe('UsgsService.getEvent — product projection (issue #25)', () => {
         derived_depth_km: 15.5,
         nodal_plane_1: { strike: 49.23, dip: 41.32, rake: 102.5 },
         nodal_plane_2: { strike: 212.78, dip: 49.86, rake: 79.22 },
+        nodal_planes_from: { product: 'moment-tensor' },
       },
       ground_failure: { landslide_alert: 'orange', liquefaction_alert: 'red' },
       origin: {

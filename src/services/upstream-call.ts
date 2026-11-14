@@ -53,11 +53,9 @@ export function isTransientUpstream(error: unknown): boolean {
 }
 
 /**
- * Read a 2xx response body. `fetchWithTimeout` keeps its deadline on the body and classifies
- * a read cut short by the attempt timeout or the caller's signal, but rejects with any other
- * read failure as the runtime raised it (cyanheads/mcp-ts-core#819): a connection dropped
- * mid-body. That becomes a retryable `ServiceUnavailable` with a fixed message, as a network
- * failure before the headers does, so no runtime text reaches the caller.
+ * Read a 2xx response body. Preserve timeout and cancellation errors from
+ * `fetchWithTimeout`. Give a dropped body a stable source-specific message and
+ * keep the framework's network failure as the cause for logging.
  */
 export async function readResponseText(
   response: Response,
@@ -66,7 +64,9 @@ export async function readResponseText(
   try {
     return await response.text();
   } catch (err) {
-    if (err instanceof McpError) throw err;
+    if (err instanceof McpError && err.data?.errorSource !== 'FetchNetworkErrorWrapper') {
+      throw err;
+    }
     throw serviceUnavailable(
       `${source} closed the connection before the response was complete.`,
       undefined,

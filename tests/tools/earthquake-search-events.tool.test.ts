@@ -1174,6 +1174,43 @@ describe('earthquakeSearchEvents — an empty first page names the type value US
     expect((result.structuredContent as { notice: string }).notice).toBe(BROADEN);
   });
 
+  it('keeps the paging notice for an empty later EMSC page with a mixed-case filter', async () => {
+    const result = await runToolContract(earthquakeSearchEvents, {
+      source: 'emsc',
+      magnitude_type: 'Mw',
+      offset: 21,
+    });
+
+    const notice =
+      'No events at offset 21 — the previous page was the last one. Lower offset or broaden the filters.';
+    expect(result.structuredContent).toMatchObject({
+      count: 0,
+      queryEcho: { magnitude_type: 'Mw', offset: 21 },
+      notice,
+    });
+    expect(contentText(result)).toContain(`> ${notice}`);
+  });
+
+  it('combines EMSC case guidance with a clamped first page on both surfaces', async () => {
+    const paths = stubUsgs();
+    const result = await runToolContract(earthquakeSearchEvents, {
+      source: 'emsc',
+      magnitude_type: 'Mw',
+      limit: 5000,
+      offset: 1,
+    });
+
+    const notice =
+      'Requested limit 5000; applied limit 1000, the per-call cap. No events matched the query. EMSC matches magnitude_type case-sensitively. Try "mw" if you meant the lowercase type.';
+    expect(result.structuredContent).toMatchObject({
+      count: 0,
+      queryEcho: { magnitude_type: 'Mw', offset: 1, limit: 1000 },
+      notice,
+    });
+    expect(contentText(result)).toContain(`> ${notice}`);
+    expect(paths).toEqual([]);
+  });
+
   it('gives the lookup only what remains of the search call deadline', async () => {
     vi.useFakeTimers();
     // A per-attempt timeout above what the deadline leaves, so only the shared deadline can

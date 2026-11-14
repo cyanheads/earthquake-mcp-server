@@ -10,6 +10,7 @@ import { getUsgsService } from '@/services/usgs/usgs-service.js';
 
 const VALID_TIERS = ['all', '1.0', '2.5', '4.5', 'significant'] as const;
 const VALID_WINDOWS = ['hour', 'day', 'week', 'month'] as const;
+const FEED_TITLE = 'USGS Earthquake Feed';
 const feedParams = z.object({
   magnitude_tier: z.string().describe('Magnitude tier: all, 1.0, 2.5, 4.5, or significant.'),
   time_window: z.string().describe('Time window: hour, day, week, or month.'),
@@ -31,7 +32,7 @@ function isWindow(s: string): s is TimeWindow {
 
 export const earthquakeFeedResource = resource('earthquake://feed/{magnitude_tier}/{time_window}', {
   name: 'earthquake-feed',
-  title: 'USGS Earthquake Feed',
+  title: FEED_TITLE,
   description:
     'Direct access to a USGS real-time earthquake feed as injectable context. magnitude_tier: all | 1.0 | 2.5 | 4.5 | significant. time_window: hour | day | week | month. Returns 100 events per page with totalCount, and next_uri when more events remain. Read next_uri verbatim to continue the retained generation. Snapshots last up to 15 minutes, subject to capacity eviction and process restart. The earthquake_get_feed tool exposes the same generation.',
   mimeType: 'application/json',
@@ -196,6 +197,7 @@ export const earthquakeFeedResource = resource('earthquake://feed/{magnitude_tie
       VALID_WINDOWS.map((window) => ({
         uri: `earthquake://feed/${tier}/${window}`,
         name: `USGS ${tier} earthquakes (${window})`,
+        title: FEED_TITLE,
         description: `USGS real-time feed: ${/^[0-9]/.test(tier) ? `M${tier}+` : tier} events in the last ${window}.`,
         mimeType: 'application/json',
       })),

@@ -20,7 +20,11 @@ import {
   EarthquakeEventSchema,
   formatEvent,
 } from '@/mcp-server/tools/schemas.js';
-import { renderNotice, unlistedValueNotice } from '@/mcp-server/tools/vocabulary-notice.js';
+import {
+  emscMagnitudeCaseNotice,
+  renderNotice,
+  unlistedValueNotice,
+} from '@/mcp-server/tools/vocabulary-notice.js';
 import { getEmscService } from '@/services/emsc/emsc-service.js';
 import { CALL_DEADLINE_MS } from '@/services/upstream-call.js';
 import type { EarthquakeQueryParams } from '@/services/usgs/types.js';
@@ -126,7 +130,7 @@ export const earthquakeSearchEvents = tool('earthquake_search_events', {
       .string()
       .optional()
       .describe(
-        'Guidance when limit was clamped to 1,000 (requested and applied values), when results are empty (how to broaden filters, or on USGS each supplied event_type, magnitude_type, or product_type value USGS does not list, with the listed value it likely meant), or when more pages remain (the next offset). Absent when none applies.',
+        'Guidance when limit was clamped to 1,000, when the page is empty, or when more pages remain. On an empty first page, USGS may name unlisted type filters and EMSC may suggest a lowercase magnitude_type spelling. Absent when none applies.',
       ),
     ignoredFilters: z
       .array(z.string().describe('Name of an input filter that was not applied.'))
@@ -419,11 +423,11 @@ export const earthquakeSearchEvents = tool('earthquake_search_events', {
     if (count === 0 && offset > 1)
       pageNotice = `No events at offset ${offset} — the previous page was the last one. Lower offset or broaden the filters.`;
     else if (count === 0) {
-      // USGS matches a type value outside its vocabulary against nothing; name that cause
-      // instead of suggesting a wider window.
-      const unlisted =
-        input.source === 'usgs' ? await unlistedValueNotice(params, ctx, deadline) : undefined;
-      pageNotice = `No events matched the query. ${unlisted ?? 'Try broadening the time range, lowering min_magnitude, or expanding the radius.'}`;
+      const filterNotice =
+        input.source === 'usgs'
+          ? await unlistedValueNotice(params, ctx, deadline)
+          : emscMagnitudeCaseNotice(params.magnitudeType);
+      pageNotice = `No events matched the query. ${filterNotice ?? 'Try broadening the time range, lowering min_magnitude, or expanding the radius.'}`;
     } else if (truncated)
       pageNotice =
         (result.totalCount != null

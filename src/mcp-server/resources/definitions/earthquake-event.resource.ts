@@ -14,7 +14,7 @@ export const earthquakeEventResource = resource('earthquake://event/{event_id}',
   name: 'earthquake-event',
   title: 'Earthquake Event',
   description:
-    'Earthquake event detail by USGS event ID or EMSC event ID (e.g. "20190706_0000043") as injectable context. Returns the normalized event; a USGS event adds the analysis products only the single-event response holds: PAGER alert, ShakeMap ground motion, DYFI felt reports, moment tensor, ground-failure alerts, origin quality, and finite-fault rupture dimensions. Groups with no projected field are omitted; EMSC publishes none of them. Use event IDs from earthquake_get_feed or earthquake_search_events results.',
+    'Earthquake event detail by USGS event ID or EMSC event ID (e.g. "20190706_0000043") as injectable context. Returns the normalized event; a USGS event adds the analysis products only the single-event response holds: PAGER alert, ShakeMap ground motion, DYFI felt reports, focal mechanism from a moment tensor or a standalone focal-mechanism product, ground-failure alerts, origin quality, and finite-fault rupture dimensions. Groups with no projected field are omitted; EMSC publishes none of them. Use event IDs from earthquake_get_feed or earthquake_search_events results.',
   mimeType: 'application/json',
 
   params: z.object({

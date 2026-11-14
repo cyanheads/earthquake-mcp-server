@@ -4,6 +4,7 @@
  */
 
 import { createMockContext } from '@cyanheads/mcp-ts-core/testing';
+import { marked } from 'marked';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { earthquakeGetEvent } from '@/mcp-server/tools/definitions/earthquake-get-event.tool.js';
 import type { EarthquakeEventOutput } from '@/mcp-server/tools/schemas.js';
@@ -151,9 +152,10 @@ describe('earthquakeGetEvent — security', () => {
     // format() must not throw and must not eval the injection
     const blocks = earthquakeGetEvent.format!({ event: xssEvent });
     expect(blocks).toHaveLength(1);
-    const text = (blocks[0] as { text: string }).text;
-    expect(text).toContain('<img');
-    expect(text).toContain('__proto__');
+    const html = marked.parse((blocks[0] as { text: string }).text, { async: false });
+    expect(html).toContain('&lt;img src=x onerror=alert(1)&gt;');
+    expect(html).toContain(xssEvent.place);
+    expect(html).not.toContain('<img');
   });
 });
 

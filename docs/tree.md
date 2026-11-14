@@ -1,6 +1,6 @@
 # earthquake-mcp-server - Directory Structure
 
-Generated on: 2026-11-04 04:52:30
+Generated on: 2026-11-14 06:07:31
 
 ```text
 earthquake-mcp-server/
@@ -171,9 +171,11 @@ earthquake-mcp-server/
 │   │   ├── usgs/
 │   │   │   ├── aftershock-forecast.ts
 │   │   │   ├── event-includes.ts
+│   │   │   ├── moment-tensor.ts
 │   │   │   ├── pager-estimates.ts
 │   │   │   ├── product-fields.ts
 │   │   │   ├── quakeml.ts
+│   │   │   ├── shakemap-maxima.ts
 │   │   │   ├── types.ts
 │   │   │   └── usgs-service.ts
 │   │   ├── feed-snapshots.ts

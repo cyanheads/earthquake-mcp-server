@@ -1,10 +1,6 @@
 /**
- * @fileoverview Explains a zero USGS search or count caused by a type filter value USGS does
- * not list. `event_type`, `magnitude_type`, and `product_type` are open strings that USGS
- * matches case-insensitively against its published vocabulary, answering any other value with
- * zero events; the notice names each unlisted value and the listed values it most likely
- * meant. Shared by earthquake_search_events and earthquake_count_events so the sentences read
- * identically on both, with the renderer both tools' content[] trailers draw a notice with.
+ * @fileoverview Shared type-filter guidance for empty USGS and EMSC results, with
+ * the renderer both tools' content[] trailers use for notices.
  * @module mcp-server/tools/vocabulary-notice
  */
 
@@ -96,15 +92,15 @@ export async function unlistedValueNotice(
   return vocabulary && unlistedValueSentences(params, vocabulary);
 }
 
-/**
- * A tool's one-line notice as the content[] blockquote, escaped because it can quote
- * caller-supplied values. Each whitespace-free run is escaped on its own, which keeps the
- * escape linear in the notice's length until cyanheads/mcp-ts-core#809 ships; collapse this
- * to one `escapeMarkdownInline(notice)` call then. No escape decision reaches past
- * whitespace, so the runs read back as the whole line would, at worst with a redundant
- * backslash before a run's leading block marker.
- */
+/** Suggest an alternate spelling without inferring why EMSC found no matches. */
+export function emscMagnitudeCaseNotice(magnitudeType: string | undefined): string | undefined {
+  if (magnitudeType === undefined) return;
+  const lowercase = magnitudeType.toLowerCase();
+  if (lowercase === magnitudeType) return;
+  return `EMSC matches magnitude_type case-sensitively. Try ${JSON.stringify(lowercase)} if you meant the lowercase type.`;
+}
+
+/** Escape caller-supplied text when rendering a raw notice as a content[] blockquote. */
 export function renderNotice(notice: string): string {
-  const runs = notice.split(/(\s+)/);
-  return `> ${runs.map((run, index) => (index % 2 === 0 ? escapeMarkdownInline(run) : run)).join('')}`;
+  return `> ${escapeMarkdownInline(notice)}`;
 }

@@ -281,13 +281,15 @@ describe('formatEvent', () => {
     expect(formatEvent(fullEvent).join('\n')).not.toContain('Associated IDs');
   });
 
-  it('renders location coordinates with 4 decimal places', () => {
-    const lines = formatEvent(fullEvent);
-    const text = lines.join('\n');
-    // 35.7695 → 35.7695 (4 decimal places)
-    expect(text).toContain('35.7695');
-    // -117.5993 → -117.5993
-    expect(text).toContain('-117.5993');
+  it.each([
+    [35.7695, -117.5993, '**Location:** 35.7695°, -117.5993°'],
+    [35.04, -117.5993333, '**Location:** 35.04°, -117.5993333°'],
+    [0, 0, '**Location:** 0°, 0°'],
+  ])('renders the published coordinate values %s and %s', (latitude, longitude, line) => {
+    const event = EarthquakeEventSchema.parse({ ...fullEvent, latitude, longitude });
+    expect(event.latitude).toBe(latitude);
+    expect(event.longitude).toBe(longitude);
+    expect(formatEvent(event)).toContain(line);
   });
 
   it('returns an array of strings (not a single string)', () => {
@@ -381,8 +383,8 @@ describe('formatEvent — null impact fields reach content[] (issue #17)', () =>
       time: emscEvent.time,
       updated: emscEvent.updated,
       place: emscEvent.place,
-      latitude: '38.8000',
-      longitude: '-122.8000',
+      latitude: '38.8',
+      longitude: '-122.8',
       depth_km: '**Depth:** unknown',
       felt: 'DYFI felt reports',
       cdi: 'CDI',
@@ -459,9 +461,10 @@ describe('EarthquakeEventSchema — event_type (issue #24)', () => {
     },
   );
 
-  it('leaves the plain "earthquake" classification out of the rendered text', () => {
+  it('renders an ordinary earthquake when the source publishes its classification', () => {
     const text = formatEvent({ ...fullEvent, event_type: 'earthquake' }).join('\n');
-    expect(text).not.toContain('**Event type:**');
+    expect(text).toContain('**Event type:** earthquake');
+    expect(text).not.toContain('certainty:');
   });
 
   it('omits the line entirely when the source published no classification', () => {
@@ -471,17 +474,20 @@ describe('EarthquakeEventSchema — event_type (issue #24)', () => {
 });
 
 describe('EarthquakeEventSchema — event_certainty (issue #35)', () => {
-  it('keeps an ordinary earthquake the source is sure of out of the rendered text', () => {
-    const text = formatEvent({
+  it('renders both classification fields of an ordinary EMSC earthquake', () => {
+    const event = EarthquakeEventSchema.parse({
       ...fullEvent,
+      source_catalog: 'EMSC-RTS',
+      title: 'M 7.1 - SOUTHERN CALIFORNIA',
       event_type: 'earthquake',
       event_certainty: 'known',
-    }).join('\n');
-    expect(text).not.toContain('**Event type:**');
+    });
+    expect(event).toMatchObject({ event_type: 'earthquake', event_certainty: 'known' });
+    expect(formatEvent(event)).toContain('**Event type:** earthquake (certainty: known)');
   });
 
   it.each(['suspected', 'unknown', 'unreported'] as const)(
-    'renders a %s earthquake, which an ordinary one would have hidden',
+    'renders a %s earthquake with its published certainty',
     (certainty) => {
       const text = formatEvent({
         ...fullEvent,
@@ -514,6 +520,16 @@ describe('EarthquakeEventSchema — event_certainty (issue #35)', () => {
     expect(text).not.toContain('certainty:');
   });
 
+  it('does not assume a classification when EMSC publishes only certainty', () => {
+    const text = formatEvent({
+      ...sparseEvent,
+      source_catalog: 'EMSC-RTS',
+      event_certainty: 'suspected',
+    }).join('\n');
+    expect(text).toContain('suspected');
+    expect(text).not.toMatch(/\*\*Event type:\*\* earthquake/);
+  });
+
   it('accepts an event with no certainty and rejects a value outside the axis', () => {
     expect(EarthquakeEventSchema.safeParse(sparseEvent).success).toBe(true);
     expect(
@@ -523,6 +539,18 @@ describe('EarthquakeEventSchema — event_certainty (issue #35)', () => {
 });
 
 describe('formatEventDetail (issue #25)', () => {
+  it('distinguishes nodal provenance source from code', () => {
+    const source = formatEventDetail({
+      moment_tensor: { nodal_planes_from: { product: 'moment-tensor', source: 'ab' } },
+    }).join('\n');
+    const code = formatEventDetail({
+      moment_tensor: { nodal_planes_from: { product: 'moment-tensor', code: 'ab' } },
+    }).join('\n');
+    expect(source).toContain('Nodal planes from: moment-tensor / source: ab');
+    expect(code).toContain('Nodal planes from: moment-tensor / code: ab');
+    expect(source).not.toBe(code);
+  });
+
   const fullDetail: EarthquakeDetailOutput = {
     losspager: {
       alert_level: 'red',

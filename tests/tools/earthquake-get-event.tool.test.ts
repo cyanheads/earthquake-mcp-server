@@ -241,6 +241,26 @@ describe('earthquakeGetEvent', () => {
     expect(text).not.toContain('%g');
   });
 
+  it('renders preferred tensor metadata separately from fallback plane provenance', () => {
+    const blocks = earthquakeGetEvent.format!({
+      event: sampleEvent,
+      detail: {
+        moment_tensor: {
+          ...sampleDetail.moment_tensor,
+          magnitude: 7.1,
+          magnitude_type: 'Mww',
+          percent_double_couple: 0.97,
+          source: 'ci',
+          nodal_planes_from: { product: 'moment-tensor', source: 'us', code: 'us_70004bn0_mww' },
+        },
+      },
+    });
+    const text = JSON.stringify(blocks);
+    expect(text).toContain('Magnitude: 7.1 | Magnitude type: Mww | Double-couple fraction: 0.97');
+    expect(text).toContain('Tensor source: ci');
+    expect(text).toContain('Nodal planes from: moment-tensor / source: us / code: us_70004bn0_mww');
+  });
+
   it('formats sparse event without fabricating missing fields', () => {
     const output = { event: sparseEvent };
     const blocks = earthquakeGetEvent.format!(output);
@@ -541,7 +561,7 @@ describe('earthquakeGetEvent — include rendering', () => {
     expect(lines).toContain('| 100000 | 10000000 | red | 0.000011332245432704724 |');
     expect(lines).toContain('| 100 | 1000 | orange | 0.35322181682545284 |');
     expect(lines).toContain(
-      '| Country | MMI 1 | MMI 2 | MMI 3 | MMI 4 | MMI 5 | MMI 6 | MMI 7 | MMI 8 | MMI 9 | MMI 10 |',
+      '| Country or region | MMI 1 | MMI 2 | MMI 3 | MMI 4 | MMI 5 | MMI 6 | MMI 7 | MMI 8 | MMI 9 | MMI 10 |',
     );
     expect(lines).toContain(
       '| Total | 0 | 0 | 3221021 | 1877984 | 2595241 | 555396 | 140964 | 11406 | 0 | 0 |',
@@ -568,7 +588,9 @@ describe('earthquakeGetEvent — include rendering', () => {
     });
     expect(output).toContain('Fatality alert: not published | Economic alert: orange\n\n');
     expect(output).toContain('| 0 | 1 |  | 0.5 |');
-    expect(output).toContain('| Country | MMI 5 | MMI 6 |\n|---|---|---|\n| Total | 10 | 2 |');
+    expect(output).toContain(
+      '| Country or region | MMI 5 | MMI 6 |\n|---|---|---|\n| Total | 10 | 2 |',
+    );
     expect(output).toContain('_PAGER lists no country rows._');
     expect(output).not.toContain('United Kingdom');
   });
@@ -582,15 +604,14 @@ describe('earthquakeGetEvent — include rendering', () => {
           mmi: [7],
           population: [5],
           countries: [
-            { country_code: 'UK', population: [3] },
+            { country_code: 'UK', country_name: 'Areas assigned to no country', population: [3] },
             { country_code: 'M|X', population: [2] },
           ],
         },
       },
     });
-    expect(output).toContain('| UK | 3 |');
+    expect(output).toContain('| UK (Areas assigned to no country) | 3 |');
     expect(output).toContain('| M\\|X | 2 |');
-    expect(output).toContain('_"UK" marks areas assigned to no country, not the United Kingdom._');
   });
 
   it('explains not_published as a missing product or missing files', () => {

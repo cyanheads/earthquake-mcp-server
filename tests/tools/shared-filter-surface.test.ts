@@ -20,6 +20,7 @@ import { earthquakeSearchEvents } from '@/mcp-server/tools/definitions/earthquak
 import { earthquakeFilterFields } from '@/mcp-server/tools/query-params.js';
 import type { EarthquakeEventOutput } from '@/mcp-server/tools/schemas.js';
 import {
+  emscMagnitudeCaseNotice,
   renderNotice,
   unlistedValueNotice,
   unlistedValueSentences,
@@ -770,6 +771,22 @@ describe('unlistedValueSentences — the vocabulary check both tools share (issu
   });
 });
 
+describe('emscMagnitudeCaseNotice', () => {
+  it.each([undefined, 'mw', 'mww', '123'])('leaves %s without a suggestion', (type) => {
+    expect(emscMagnitudeCaseNotice(type)).toBeUndefined();
+  });
+
+  it.each([
+    ['Mw', '"mw"'],
+    ['ML', '"ml"'],
+    ['A"\nB', '"a\\"\\nb"'],
+  ])('suggests the lowercase spelling of %s', (type, spelling) => {
+    expect(emscMagnitudeCaseNotice(type)).toBe(
+      `EMSC matches magnitude_type case-sensitively. Try ${spelling} if you meant the lowercase type.`,
+    );
+  });
+});
+
 describe('renderNotice — caller text in a notice stays text on content[] (issue #66)', () => {
   it.each([
     'event_type "*quake* `x`" is not a listed USGS event type.',
@@ -788,9 +805,9 @@ describe('renderNotice — caller text in a notice stays text on content[] (issu
     );
   });
 
-  it('adds at most a redundant backslash before a block marker inside the line', () => {
+  it('keeps a hyphen inside the line as ordinary text', () => {
     expect(renderNotice('event_type "a - b" is not listed.')).toBe(
-      '> event_type "a \\- b" is not listed.',
+      '> event_type "a - b" is not listed.',
     );
   });
 });

@@ -69,8 +69,8 @@ Seismic data from USGS ComCat and the EMSC SeismicPortal. Fetch real-time earthq
 
 - Search `usgs` or `emsc` by time, magnitude, depth, radius, or bounding box. A radius requires `latitude`, `longitude`, and `radius_km` together; box edges are independently optional, support antimeridian bounds up to ±360°, and intersect a supplied circle.
 - Returns normalized events with `event_type`, EMSC's `event_certainty`, and USGS's `associated_ids` (other network IDs merged into the event). `ignoredFilters` names unsupported filters; `queryEcho` reports the effective query.
-- Both search and count accept open `magnitude_type` values on either source; EMSC matches its own lowercase types (`mb`, `mw`) exactly and has no `mww`. `product_type` (required product, e.g. `moment-tensor`) and `review_status` (`automatic` or `reviewed`) apply only to USGS; EMSC names them in `ignoredFilters`. Blank values mean omitted.
-- `event_type`, `magnitude_type`, and `product_type` stay open strings; USGS matches them case-insensitively, and `event_type` takes a comma-separated list. USGS answers a value outside its published vocabulary with zero events, so when a USGS search's first page or a USGS count comes back empty, `notice` names each unlisted value and the listed values it equals once case and `-`, `_`, and spaces are ignored: `product_type "moment_tensor"` suggests `"moment-tensor"`. The vocabulary read is one attempt within the call's deadline, cached for 24 hours; if it fails, the zero returns as it would without the check. EMSC publishes no vocabulary and is not checked.
+- Both search and count accept open `magnitude_type` values on either source; EMSC matches case-sensitively, including lowercase `mb` and `mw` and historical uppercase `ML` and `MD`. `product_type` (required product, e.g. `moment-tensor`) and `review_status` (`automatic` or `reviewed`) apply only to USGS; EMSC names them in `ignoredFilters`. Blank values mean omitted.
+- `event_type`, `magnitude_type`, and `product_type` stay open strings; USGS matches them case-insensitively, and `event_type` takes a comma-separated list. USGS answers a value outside its published vocabulary with zero events, so when a USGS search's first page or a USGS count comes back empty, `notice` names each unlisted value and the listed values it equals once case and `-`, `_`, and spaces are ignored: `product_type "moment_tensor"` suggests `"moment-tensor"`. The vocabulary read is one attempt within the call's deadline, cached for 24 hours; if it fails, the zero returns as it would without the check. EMSC publishes no vocabulary; a zero count or empty first search page suggests the lowercase spelling of a mixed- or uppercase `magnitude_type`, without changing the requested value.
 - `min_mmi` (ShakeMap intensity, Modified Mercalli) and `min_cdi` (DYFI community intensity), each 1–12, select events by how strongly they shook, which a magnitude floor or `alert_level` misses. Both apply only to USGS: an event without a ShakeMap or DYFI reports never matches, and EMSC names them in `ignoredFilters`.
 - Date-only bounds (including expanded year/year-month forms) mean midnight at the start of the named day on both sources: `2026-10-10` becomes `2026-10-10T00:00:00`. Explicit time and timezone suffixes are preserved; unpadded date components are padded. Offsetless times use UTC for the 30-day default. `queryEcho` shows the exact effective bounds.
 - Sort by time or magnitude in either direction. Each call requests `limit` events upstream (default 15, set by `DEFAULT_LIMIT`) and returns them all, fewer only on the last page. A `limit` above 1,000 returns 1,000 with a notice naming the requested and applied values; with `EARTHQUAKE_CLAMP_LIMITS=false` it is rejected instead. `queryEcho.limit` reports the applied limit. Continue with the returned `nextOffset` (offset plus the events returned, counting from 1) and the same filters, limit, and order. Search pages read the current catalog, so upstream edits can affect later pages.
@@ -100,10 +100,13 @@ Seismic data from USGS ComCat and the EMSC SeismicPortal. Fetch real-time earthq
   | `magnitudes` | Event-level magnitudes from the preferred `phase-data` product's QuakeML, with a station count where published | One, shared with `arrivals` |
   | `arrivals` | Every phase arrival of that document's preferred origin, joined to its pick and sorted nearest first | One, shared with `magnitudes` |
   | `aftershock_forecast` | The USGS Operational Aftershock Forecast: each window's probability of an aftershock at or above each magnitude, its expected-count range, and the chance of one as large as the mainshock | One |
-  | `pager` | The PAGER estimates behind the alert, from the preferred `losspager` product's JSON files: the fatality and economic-loss alert levels with every probability bracket (economic bounds in millions of USD), PAGER's impact statements, and the people exposed at each shaking intensity, in total and per country | Two, or three when the product publishes impact statements |
+  | `pager` | The PAGER estimates behind the alert, from the preferred `losspager` product's JSON files: the fatality and economic-loss alert levels with every probability bracket (economic bounds in millions of USD), PAGER's impact statements, and the people exposed at each shaking intensity, in total and by country or region | Two, or three when the product publishes impact statements |
 
 - A requested group that is not returned is listed in `unavailable_includes`: `not_published` when the event has no such product (every group on an EMSC event) or its product lacks the files the group reads (PAGER products published before the JSON files existed), `fetch_failed` when the download failed, returned HTML, did not parse, pointed outside the configured USGS origin, or answered with a redirect. The event, `detail`, and other groups still return; cancellation propagates. The event request and its product downloads share one 50-second deadline.
-- Blank IDs fail locally; canonical IDs and aliases match case-insensitively. ShakeMap includes the producer's `code_version` when published.
+- PAGER exposure rows retain the published `country_code` and add `country_name` for `XF` (California), `EU` (Central/Eastern United States), `WU` (Western United States), and `UK` (areas assigned to no country).
+- Blank IDs fail locally. Canonical IDs and aliases match case-insensitively.
+- ShakeMap reports `max_pga` in g and `max_pgv` in cm/s, normalizing known legacy encodings. `code_version` identifies the producer version when published.
+- `detail.moment_tensor` can include nodal planes from a standalone `focal-mechanism`. `nodal_planes_from` identifies the product supplying the planes. Tensor metadata comes from the preferred moment tensor when available, and `percent_double_couple` remains the published 0–1 fraction.
 
 ---
 
@@ -217,7 +220,7 @@ MCP_TRANSPORT_TYPE=http MCP_HTTP_PORT=3010 bun run start:http
 
 ### Prerequisites
 
-- [Bun v1.4.0](https://bun.sh/) or higher.
+- [Bun v1.4.4](https://bun.sh/) or higher.
 - No API keys required — USGS and EMSC data is fully public.
 
 ### Installation
@@ -248,13 +251,15 @@ All configuration is validated at startup via Zod schemas in `src/config/server-
 |:---|:---|:---|
 | `MCP_TRANSPORT_TYPE` | Transport: `stdio` or `http` | `stdio` |
 | `MCP_HTTP_PORT` | HTTP server port | `3010` |
-| `MCP_HTTP_ENDPOINT_PATH` | HTTP endpoint path where the MCP server is mounted | `/mcp` |
-| `MCP_PUBLIC_URL` | Public origin override for TLS-terminating reverse-proxy deployments | none |
+| `MCP_HTTP_ENDPOINT_PATH` | HTTP path where the MCP server is mounted | `/mcp` |
+| `MCP_PUBLIC_URL` | Public HTTP(S) base URL for reverse proxies, without credentials, a query, or a fragment | none |
 | `MCP_SESSION_MODE` | HTTP sessions: `stateful`, `stateless`, or `auto` (resolves to stateful). Overrides the `createApp()` declaration; Docker and `.env.example` also pin stateless. | `stateless` (declared in `src/index.ts`) |
 | `MCP_AUTH_MODE` | Authentication: `none`, `jwt`, or `oauth` | `none` |
+| `MCP_JWT_EXPECTED_AUDIENCE` | Audience required in JWT mode when set. JWT mode logs a startup warning if this is unset. | none |
+| `MCP_JWT_EXPECTED_ISSUER` | Issuer required in JWT mode when set | none |
 | `MCP_LOG_LEVEL` | Log level (`debug`, `info`, `warning`, `error`, etc.) | `info` |
 | `MCP_GC_PRESSURE_INTERVAL_MS` | Opt-in Bun-only forced-GC pressure loop (ms). Try `60000` if heap growth is observed under sustained HTTP load. | `0` (disabled) |
-| `LOGS_DIR` | Directory for log files on Node.js and Bun | `<project-root>/logs` |
+| `LOGS_DIR` | Directory for log files on Node.js and Bun. Relative paths resolve from the server's package root. | `<server-package-root>/logs` |
 | `LOG_TOOL_FAILURE_PAYLOADS` | Log failed tool arguments and results, redacted by key name. Secrets inside free-form values remain. | `false` |
 | `LOG_TOOL_FAILURE_PAYLOAD_MAX_BYTES` | UTF-8 byte cap per logged failure payload | `16384` |
 | `STORAGE_PROVIDER_TYPE` | Storage backend: `in-memory`, `filesystem`, `supabase`, `cloudflare-kv/r2/d1` | `in-memory` |

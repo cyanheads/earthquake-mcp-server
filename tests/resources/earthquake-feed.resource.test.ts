@@ -179,6 +179,7 @@ describe('earthquakeFeedResource', () => {
     for (const r of listing.resources) {
       expect(r).toHaveProperty('uri');
       expect(r).toHaveProperty('name');
+      expect(r.title).toBe('USGS Earthquake Feed');
       expect(r.uri).toMatch(/^earthquake:\/\/feed\//);
     }
   });

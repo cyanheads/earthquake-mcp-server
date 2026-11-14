@@ -13,7 +13,11 @@ import {
   ignoredUsgsFilters,
   invertedRange,
 } from '@/mcp-server/tools/query-params.js';
-import { renderNotice, unlistedValueNotice } from '@/mcp-server/tools/vocabulary-notice.js';
+import {
+  emscMagnitudeCaseNotice,
+  renderNotice,
+  unlistedValueNotice,
+} from '@/mcp-server/tools/vocabulary-notice.js';
 import { getEmscService } from '@/services/emsc/emsc-service.js';
 import { CALL_DEADLINE_MS } from '@/services/upstream-call.js';
 import type { EarthquakeQueryParams } from '@/services/usgs/types.js';
@@ -150,7 +154,7 @@ export const earthquakeCountEvents = tool('earthquake_count_events', {
       .string()
       .optional()
       .describe(
-        'On a USGS count of zero, names each supplied event_type, magnitude_type, or product_type value USGS does not list, which matches no events, with the listed value it likely meant. Absent otherwise.',
+        'On a count of zero, names supplied event_type, magnitude_type, or product_type values USGS does not list, with likely matches, or suggests a lowercase magnitude_type spelling for EMSC. Absent when neither applies.',
       ),
   },
 
@@ -360,9 +364,11 @@ export const earthquakeCountEvents = tool('earthquake_count_events', {
     const ignoredFilters = ignoredUsgsFilters(input, input.source);
     if (ignoredFilters.length > 0) ctx.enrich({ ignoredFilters });
 
-    // USGS counts zero for a type value outside its vocabulary; name the value, not a bare zero.
-    if (input.source === 'usgs' && result.count === 0) {
-      const notice = await unlistedValueNotice(params, ctx, deadline);
+    if (result.count === 0) {
+      const notice =
+        input.source === 'usgs'
+          ? await unlistedValueNotice(params, ctx, deadline)
+          : emscMagnitudeCaseNotice(params.magnitudeType);
       if (notice) ctx.enrich.notice(notice);
     }
 

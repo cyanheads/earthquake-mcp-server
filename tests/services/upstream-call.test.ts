@@ -163,9 +163,11 @@ describe('readResponseText — a connection dropped mid-body', () => {
     expect(err.data?.reason).toBeUndefined();
     expect(isTransientUpstream(err)).toBe(true);
     expect(JSON.stringify({ message: err.message, data: err.data })).not.toMatch(ENGINE_TEXT);
-    // The framework hands the read error back unclassified (cyanheads/mcp-ts-core#819).
-    expect(err.cause).toBeInstanceOf(Error);
-    expect(err.cause).not.toBeInstanceOf(McpError);
+    expect(err.cause).toBeInstanceOf(McpError);
+    expect(err.cause).toMatchObject({
+      data: { errorSource: 'FetchNetworkErrorWrapper' },
+      cause: expect.any(Error),
+    });
   });
 });
 

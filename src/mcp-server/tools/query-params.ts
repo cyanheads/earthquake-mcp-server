@@ -207,7 +207,7 @@ export const earthquakeFilterFields = {
     .trim()
     .optional()
     .describe(
-      'Magnitude type, e.g. "mb" or "mww"; both sources. USGS matches case-insensitively; EMSC matches its own lowercase types ("mb", "mw") case-sensitively and has no "mww". Blank means omitted.',
+      'Magnitude type, e.g. "mb" or "mww"; both sources. USGS matches case-insensitively. EMSC matches its own types case-sensitively, including lowercase "mb" and "mw" and historical uppercase "ML" and "MD". Blank means omitted.',
     ),
   product_type: z
     .string()

@@ -686,6 +686,47 @@ describe('earthquakeCountEvents — a zero names the type value USGS does not li
     expect(result.structuredContent).not.toHaveProperty('notice');
   });
 
+  it('preserves a valid uppercase EMSC filter on a positive count', async () => {
+    const base = 'https://www.seismicportal.eu';
+    vi.spyOn(emscModule, 'getEmscService').mockReturnValue(
+      new emscModule.EmscService({} as AppConfig, {} as StorageService, base, 5000),
+    );
+    const fetchCount = vi.fn<typeof fetch>(async () => Response.json({ count: 3 }));
+    vi.stubGlobal('fetch', fetchCount);
+
+    const result = await runToolContract(earthquakeCountEvents, {
+      source: 'emsc',
+      magnitude_type: 'ML',
+    });
+
+    expect(fetchCount).toHaveBeenCalledOnce();
+    expect(String(fetchCount.mock.calls[0]?.[0])).toContain('magnitudetype=ML');
+    expect(result.structuredContent).toMatchObject({
+      count: 3,
+      queryEcho: { magnitude_type: 'ML' },
+    });
+    expect(result.structuredContent).not.toHaveProperty('notice');
+    expect(contentText(result)).not.toContain('case-sensitively');
+  });
+
+  it('suggests lowercase for an empty EMSC count on both surfaces', async () => {
+    const paths = stubUsgs(0);
+    const result = await runToolContract(earthquakeCountEvents, {
+      source: 'emsc',
+      magnitude_type: 'MW',
+    });
+
+    const notice =
+      'EMSC matches magnitude_type case-sensitively. Try "mw" if you meant the lowercase type.';
+    expect(result.structuredContent).toMatchObject({
+      count: 0,
+      queryEcho: { magnitude_type: 'MW' },
+      notice,
+    });
+    expect(contentText(result)).toContain(`> ${notice}`);
+    expect(paths).toEqual([]);
+  });
+
   it('stays silent when every supplied value is listed', async () => {
     const paths = stubUsgs(0);
     const result = await runToolContract(earthquakeCountEvents, { product_type: 'Moment-Tensor' });

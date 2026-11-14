@@ -4,7 +4,7 @@ description: Gates and workflows for the earthquake_* tools (USGS ComCat and EMS
 license: Apache-2.0
 metadata:
   author: cyanheads
-  version: "1.1"
+  version: "1.2"
 ---
 
 ## Scope
@@ -14,7 +14,7 @@ Catalog records of past seismic events from two independent global catalogs, plu
 - **Not a forecast service.** The only forward-looking numbers are the USGS aftershock forecasts attached to some events. **Not a tsunami warning service:** the `tsunami` field flags a large oceanic event; tsunami.gov has warning status.
 - **No geocoding, no place filter.** The tools take coordinates. `place` ("12 km NE of …") is display text that no input matches against. Resolve "near X" to latitude/longitude with a geocoding tool first, then search or count within a radius.
 - **The feed can't be scoped by area.** `earthquake_get_feed` returns one global USGS tier for a rolling window ("Past Week" means the 7 days before generation, not the calendar week). For a place-scoped question, use `earthquake_search_events` with a radius and an explicit start.
-- **Which catalog holds small events depends on the region.** M2.5+ in 2025 (`start_time` 2025-01-01, `end_time` 2026-01-01): a box over Italy (latitude 36 to 47, longitude 6 to 19) returned 41 USGS events and 633 EMSC; one over Japan (latitude 30 to 46, longitude 128 to 146) 806 and 1,120; one over California (latitude 32 to 42, longitude −125 to −114) 1,224 and 1,221. At M4+ the Italy box converged (25 vs 30). For small events outside the US, query EMSC, and always say which catalog a count came from.
+- **Which catalog holds small events depends on the region.** M2.5+ in 2025 (`start_time` 2025-01-01, `end_time` 2026-01-01): a box over Italy (latitude 36 to 47, longitude 6 to 19) returned 41 USGS events and 633 EMSC; one over Japan (latitude 30 to 46, longitude 128 to 146) 806 and 1,120; one over California (latitude 32 to 42, longitude −125 to −114) 1,224 and 1,211. At M4+ the Italy box converged (25 vs 30). For small events outside the US, query EMSC, and always say which catalog a count came from.
 
 ## Identifiers
 
@@ -37,8 +37,8 @@ Catalog records of past seismic events from two independent global catalogs, plu
 ## Workflows
 
 **How bad was it.** Find the event (search within a radius and an explicit window, or take it from the feed), then call `earthquake_get_event`.
-- **PAGER alert:** an *estimate* from modeled shaking and exposed population. The color is whichever is higher of the fatality alert and the economic-loss alert: green 0 deaths / under $1M, yellow 1–99 / $1M–$100M, orange 100–999 / $100M–$1B, red 1,000+ / $1B+. Add `include: ['pager']` to see which one drove it: both alert levels, the probability of each fatality and loss bracket (economic bounds in millions of USD), and the people exposed at each shaking intensity, per country (`UK` marks areas assigned to no country). Report a bracket with its probability, never as a single figure; PAGER revises them as data arrive.
-- **ShakeMap intensity:** modeled. **DYFI:** public reports.
+- **PAGER alert:** an *estimate* from modeled shaking and exposed population. The color is whichever is higher of the fatality alert and the economic-loss alert: green 0 deaths / under $1M, yellow 1–99 / $1M–$100M, orange 100–999 / $100M–$1B, red 1,000+ / $1B+. Add `include: ['pager']` to see which one drove it: both alert levels, the probability of each fatality and loss bracket (economic bounds in millions of USD), and the people exposed at each shaking intensity, by country or region. Read `country_name` for PAGER-specific codes `XF`, `EU`, `WU`, and `UK`; `UK` marks areas assigned to no country and `GB` is the United Kingdom. Report a bracket with its probability, never as a single figure; PAGER revises them as data arrive.
+- **ShakeMap intensity:** modeled. Peak acceleration `max_pga` is in g and peak velocity `max_pgv` is in cm/s. **DYFI:** public reports.
 - **Tsunami:** a `tsunami` of 1 sends the reader to tsunami.gov; it is not a warning in itself.
 
 **Aftershock odds.** Call `earthquake_get_event` with the `aftershock_forecast` group. USGS publishes these for few events: fewer than 1 in 20 M5+ events carried one in the year to October 2026, and most of those were in the US and its Pacific territories.
@@ -48,6 +48,7 @@ Catalog records of past seismic events from two independent global catalogs, plu
 
 **Does the solution hold up.** On `earthquake_get_event`:
 - **Preferred origin:** `detail.origin` carries azimuthal gap, station count, errors, and depth type for it.
+- **Focal mechanism:** `detail.moment_tensor.nodal_planes_from` identifies the product supplying the planes, including standalone focal-mechanism products. Either nodal plane can be the fault.
 - **`origins`:** returns every origin product filed for the event, preferred first. `ci38457511` has five: `ci` (preferred), `us`, a second `us` row carrying the ISC-GEM solution, and solutions from the tsunami warning centers `pt` and `at`, both at 100 km with no depth type. Weigh the network solutions; a tsunami-center quick solution is not a disagreement about depth.
 - **`magnitudes`:** compares scales type by type.
 - **`arrivals`:** request only when the phase picks themselves are the question. A large event returns hundreds of rows: `nc72282711` returns 681, a response of about 200 KB.
