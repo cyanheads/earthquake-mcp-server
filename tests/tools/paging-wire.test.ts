@@ -41,7 +41,15 @@ type Reply = {
 };
 let upstream: Server;
 let child: ChildProcessWithoutNullStreams;
-let mode = 'normal';
+let mode:
+  | 'normal'
+  | '502'
+  | '501'
+  | 'html'
+  | 'timeout'
+  | 'empty'
+  | 'short'
+  | { cancel: AbortController } = 'normal';
 let calls = 0;
 let id = 0;
 let edited = false;
@@ -94,6 +102,10 @@ beforeAll(async () => {
     calls++;
     const url = new URL(req.url!, 'http://127.0.0.1');
     requests.push(url);
+    if (typeof mode === 'object') {
+      mode.cancel.abort();
+      return;
+    }
     if (mode === '502' || mode === '501') {
       res.writeHead(Number(mode));
       res.end('<html>PRIVATE_UPSTREAM_BODY</html>');
@@ -103,7 +115,7 @@ beforeAll(async () => {
       res.end('<html>PRIVATE_UPSTREAM_BODY</html>');
       return;
     }
-    if (mode === 'timeout' || mode === 'cancel') return;
+    if (mode === 'timeout') return;
     res.setHeader('Content-Type', 'application/json');
     if (url.pathname === '/usgs/fdsnws/event/1/application.json') {
       res.end(fixture('application.json'));
@@ -641,7 +653,7 @@ describe('paging wire', () => {
       oversize = false;
     }
   });
-  it.each(['502', '501', 'html', 'timeout'])(
+  it.each(['502', '501', 'html', 'timeout'] as const)(
     'maps real %s fetch failures to safe resource errors',
     async (failure) => {
       mode = failure;
@@ -674,9 +686,8 @@ describe('paging wire', () => {
     const base = `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`;
     initUsgsService({} as AppConfig, createInMemoryStorage(), `${base}/usgs`, 1000);
     const controller = new AbortController();
-    mode = 'cancel';
+    mode = { cancel: controller };
     const before = calls;
-    const timer = setTimeout(() => controller.abort(), 100);
     try {
       await expect(
         earthquakeFeedResource.handler(
@@ -686,7 +697,6 @@ describe('paging wire', () => {
       ).rejects.toMatchObject({ code: -32011 });
       expect(calls - before).toBe(1);
     } finally {
-      clearTimeout(timer);
       mode = 'normal';
     }
   });
